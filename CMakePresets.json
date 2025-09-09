@@ -1,0 +1,35 @@
+{
+  "version": 6,
+  "configurePresets": [
+    {
+      "name": "arm64-release",
+      "generator": "Ninja",
+      "binaryDir": "build/arm64",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/toolchain-aarch64.cmake",
+        "CMAKE_INSTALL_PREFIX": "${sourceDir}/out/arm64"
+      }
+    },
+    {
+      "name": "x86-debug",
+      "generator": "Ninja",
+      "binaryDir": "build/x86-debug",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_INSTALL_PREFIX": "${sourceDir}/out/x86"
+      }
+    }
+  ],
+  "buildPresets": [
+    { "name": "arm64", "configurePreset": "arm64-release" },
+    { "name": "x86-debug", "configurePreset": "x86-debug" }
+  ],
+  "testPresets": [
+    {
+      "name": "x86-debug",
+      "configurePreset": "x86-debug",
+      "output": { "outputOnFailure": true }
+    }
+  ]
+}

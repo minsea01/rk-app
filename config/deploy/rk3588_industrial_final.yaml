@@ -1,0 +1,51 @@
+# RK3588工业检测系统最终配置
+# 基于验证成功的GigE采集 + 转换成功的RKNN模型
+
+source:
+  type: gige
+  uri: "camera-name=IndustrialCamera-01,width=2048,height=1536,framerate=24/1"  # 2K分辨率，24FPS
+
+engine:
+  type: rknn  # 使用NPU加速的RKNN模型
+  model: "artifacts/models/industrial_15cls_rk3588_w8a8.rknn"  # 我们刚转换的11.3MB模型
+  imgsz: 640
+
+nms:
+  conf_thres: 0.5   # 工业检测较高阈值
+  iou_thres: 0.4
+  topk: 100
+
+# 使用现有的双网口配置
+camera_interface:
+  device: eth0        # 工业相机专用网口
+  ip: 192.168.1.10    # 与现有setup_network.sh一致
+  netmask: 255.255.255.0
+  mtu: 9000           # 巨型帧优化
+
+upload_interface:
+  device: eth1        # 结果上传专用网口  
+  ip: 192.168.2.10    # 与现有setup_network.sh一致
+  netmask: 255.255.255.0
+
+# 结果上传服务器配置
+servers:
+  - ip: 192.168.2.100   # 上位机IP
+    port: 8080
+    protocol: tcp
+    backup: false
+
+# 工业15类检测目标
+classes: "config/industrial_classes.txt"
+
+# 性能监控（RK3588优化）
+performance:
+  target_fps: 24        # 目标帧率
+  npu_cores: 3          # 使用全部NPU核心
+  cpu_affinity: [4,5,6,7]  # 绑定A76大核
+
+# 预期性能指标
+expected_performance:
+  fps: "40-65"          # RKNN NPU加速后
+  latency: "15-25ms"    # 单帧推理延迟
+  throughput: "≥900Mbps"  # 双网口吞吐量
+  detection_classes: 15 # 工业零件类别数

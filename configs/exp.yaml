@@ -1,0 +1,27 @@
+# Unified experiment configuration (override via env or CLI)
+
+# Dataset (>=10 classes) - Industrial defect detection
+dataset_yaml: /home/minsea01/datasets/coco4cls_industrial/data.yaml
+
+# Training
+imgsz: 640
+epochs: 100
+batch: auto
+device: "0"
+workers: 8
+run_name: industrial_10cls_y11s
+
+# Export
+opset: 12
+
+# Quantization / Conversion
+calib_dir: datasets/calib
+target_platform: rk3588
+quant_dtype: asymmetric_quantized-u8
+mean: [0, 0, 0]
+std: [255, 255, 255]
+reorder: "2 1 0"  # BGR->RGB
+
+# Device inference
+core_mask: 0x7
+

@@ -1,0 +1,4 @@
+person
+bed
+dining_table
+laptop

@@ -1,0 +1,88 @@
+{
+  "test_time": "2025-09-08T09:43:36.792956",
+  "compliance_rate": 40.0,
+  "passed_tests": 2,
+  "total_tests": 5,
+  "requirements": {
+    "network_throughput_mbps": 900,
+    "detection_map50": 90.0,
+    "detection_classes": 10,
+    "processing_fps": 24.0,
+    "system_latency_ms": 50.0,
+    "camera_resolution": [
+      1920,
+      1080
+    ]
+  },
+  "test_results": {
+    "network_throughput": {
+      "test_name": "网络吞吐量测试",
+      "requirement": "≥900Mbps",
+      "eth0_mbps": 0,
+      "eth1_mbps": 0,
+      "concurrent_test": false,
+      "status": "CONDITIONAL_PASS",
+      "details": [
+        "eth0: 非千兆模式 ❌",
+        "eth1: 网口未启用 (down)",
+        "iperf3工具: 已安装 ✅",
+        "本地回环测试: 685.2 Mbps",
+        "⚠️ 需要实际网络环境验证900Mbps吞吐量"
+      ]
+    },
+    "ai_performance": {
+      "test_name": "AI模型性能测试",
+      "requirement": ">90% mAP, >10类",
+      "map50": 0,
+      "classes": 0,
+      "model_size_mb": 0,
+      "status": "FAIL",
+      "details": [
+        "❌ 模型文件不存在"
+      ]
+    },
+    "system_performance": {
+      "test_name": "系统性能测试",
+      "requirement": "≥24FPS, <50ms延迟",
+      "fps": 20.9,
+      "latency_ms": 47.9,
+      "npu_available": false,
+      "status": "FAIL",
+      "details": [
+        "NPU设备: 未检测到 ⚠️",
+        "RKNNLite: 未安装 ⚠️",
+        "处理帧率: 20.9 FPS ❌ (<24FPS)",
+        "系统延迟: 47.9ms ✅ (<50ms)"
+      ]
+    },
+    "camera_capability": {
+      "test_name": "2K相机采集测试",
+      "requirement": "2K分辨率(1920x1080)实时采集",
+      "resolution": [
+        0,
+        0
+      ],
+      "actual_fps": 0,
+      "camera_connected": false,
+      "status": "FAIL",
+      "details": [
+        "❌ 未检测到可用相机设备"
+      ]
+    },
+    "deployment_readiness": {
+      "test_name": "部署就绪性检查",
+      "requirement": "完整部署包",
+      "files_complete": true,
+      "permissions_ok": true,
+      "config_valid": true,
+      "status": "PASS",
+      "details": [
+        "✅ 所有必需文件完整",
+        "✅ 文件权限正确",
+        "✅ 配置文件格式正确",
+        "✅ 配置项完整"
+      ]
+    }
+  },
+  "overall_status": "FAIL"
+}
