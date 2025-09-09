@@ -38,11 +38,11 @@ artifacts/
 *.plan
 *.wts
 
-# Large libraries (keep compressed versions)
+# Large libraries and models (>100MB)
 libs/onnxruntime-*/
+libs/*.tgz
 third_party/onnxruntime/onnxruntime-*/
-!libs/*.tgz
-!third_party/*.tgz
+third_party/*.tgz
 
 # Logs and temp files
 *.log
