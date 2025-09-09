@@ -1,0 +1,25 @@
+source:
+  type: folder
+  uri: "/home/minsea01/datasets/coco4cls_yolo/images/val"
+
+engine:
+  type: onnx
+  model: "/home/minsea01/models/industrial_16cls_640.onnx"
+  imgsz: 640
+
+nms:
+  conf_thres: 0.25
+  iou_thres: 0.60
+  topk: 1000
+
+perf:
+  warmup: 5
+  async: false
+
+output:
+  type: tcp
+  ip: "127.0.0.1"
+  port: 9000
+
+classes: "config/classes_16.txt"
+

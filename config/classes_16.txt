@@ -1,0 +1,17 @@
+person
+bicycle
+car
+motorcycle
+bus
+truck
+traffic_light
+stop_sign
+cat
+backpack
+handbag
+bottle
+laptop
+cell_phone
+book
+scissors
+

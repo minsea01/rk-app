@@ -1,0 +1,216 @@
+# RK3588工业检测系统配置文件
+# 训练成果: mAP50=94.5%, 80类检测, NPU加速
+# 系统要求: Ubuntu 20.04, 双千兆网口, NPU 6TOPS
+
+# 相机配置
+camera:
+  # 工业相机接口类型
+  interface: "gige"             # GigE Vision工业相机
+  device: 0                     # 相机设备ID (USB相机使用0,1,2...)
+  
+  # 图像参数 (2K分辨率要求)
+  width: 1920                   # 图像宽度
+  height: 1080                  # 图像高度  
+  fps: 30                       # 帧率
+  
+  # 工业相机高级参数
+  exposure: "auto"              # 曝光模式: auto/manual/固定值
+  gain: 0                       # 增益 (0-100)
+  white_balance: "auto"         # 白平衡: auto/manual
+  buffer_size: 1                # 缓冲区大小 (减少延迟)
+  
+  # 网络相机参数 (GigE Vision)
+  ip: "192.168.1.100"          # 相机IP地址
+  packet_size: 9000            # 巨型帧大小
+
+# 网络配置 (双千兆网口要求)
+network:
+  # 网口1: 工业相机网络 (RGMII接口)
+  camera_interface: "eth0"
+  camera_network: "192.168.1.0/24"
+  camera_ip: "192.168.1.10"    # RK3588在相机网络中的IP
+  camera_gateway: "192.168.1.1"
+  
+  # 网口2: 结果上传网络 (RGMII接口)  
+  upload_interface: "eth1"
+  upload_network: "192.168.2.0/24"
+  upload_ip: "192.168.2.100"   # 上位机/服务器IP
+  upload_port: 8080             # 结果接收端口
+  upload_protocol: "tcp"        # tcp/udp
+  
+  # 网络性能要求
+  bandwidth_requirement: 900    # Mbps, 每个网口≥900Mbps
+  max_latency_ms: 10           # 网络最大延迟
+  
+  # 网络优化参数
+  tcp_buffer_size: 131072      # TCP缓冲区大小
+  udp_buffer_size: 65536       # UDP缓冲区大小
+  mtu: 9000                    # 最大传输单元 (巨型帧)
+
+# 检测模型配置
+detection:
+  # 模型文件路径
+  model_path: "../models/yolo_industrial_rk3588.rknn"
+  model_type: "yolo11s"         # 模型类型
+  input_size: 640              # 输入图像尺寸
+  
+  # 检测阈值
+  conf_threshold: 0.5          # 置信度阈值
+  nms_threshold: 0.4           # NMS阈值
+  max_detections: 300          # 最大检测数量
+  
+  # 80个COCO类别支持
+  num_classes: 80
+  class_names: [
+    "person", "bicycle", "car", "motorcycle", "airplane", "bus", "train", "truck", "boat",
+    "traffic light", "fire hydrant", "stop sign", "parking meter", "bench", "bird", "cat", 
+    "dog", "horse", "sheep", "cow", "elephant", "bear", "zebra", "giraffe", "backpack",
+    "umbrella", "handbag", "tie", "suitcase", "frisbee", "skis", "snowboard", "sports ball",
+    "kite", "baseball bat", "baseball glove", "skateboard", "surfboard", "tennis racket",
+    "bottle", "wine glass", "cup", "fork", "knife", "spoon", "bowl", "banana", "apple",
+    "sandwich", "orange", "broccoli", "carrot", "hot dog", "pizza", "donut", "cake", "chair",
+    "couch", "potted plant", "bed", "dining table", "toilet", "tv", "laptop", "mouse", 
+    "remote", "keyboard", "cell phone", "microwave", "oven", "toaster", "sink",
+    "refrigerator", "book", "clock", "vase", "scissors", "teddy bear", "hair drier", "toothbrush"
+  ]
+  
+  # 工业检测特定类别 (从80类中筛选的工业相关类别)
+  industrial_classes: [
+    "person",           # 工人
+    "car", "truck", "bus", "train",  # 交通工具/设备
+    "laptop", "mouse", "keyboard", "cell phone",  # 电子设备  
+    "bottle", "cup", "bowl",  # 容器
+    "chair", "dining table", "tv",  # 设备
+    "book", "clock", "scissors"  # 工具
+  ]
+
+# 性能配置 (24fps+要求)
+performance:
+  # 处理性能目标
+  target_fps: 25               # 目标帧率 (≥24fps要求)
+  max_latency_ms: 50          # 端到端最大延迟
+  
+  # NPU配置 (RK3588 6TOPS NPU)
+  npu_cores: "0_1_2"          # 使用全部3个NPU核心
+  npu_frequency: "high"        # NPU频率: low/medium/high
+  npu_optimization: true       # 启用NPU优化
+  
+  # CPU配置 (A76 + A55)
+  cpu_cores: 8                # RK3588总CPU核心数
+  cpu_affinity:
+    inference: [4, 5]         # 推理线程绑定到A76核心
+    preprocessing: [0, 1]      # 预处理绑定到A55核心
+    postprocessing: [2, 3]     # 后处理绑定到A55核心
+    network: [6, 7]           # 网络通信绑定到其他核心
+  
+  # 内存管理
+  frame_queue_size: 5         # 帧队列大小
+  result_queue_size: 20       # 结果队列大小
+  thread_count: 4             # 处理线程数
+  
+  # GPU辅助 (Mali-G610 MP4)
+  gpu_enabled: false          # 是否启用GPU辅助
+  gpu_memory_mb: 512          # GPU内存分配
+
+# 日志配置
+logging:
+  # 日志级别
+  level: "INFO"               # DEBUG/INFO/WARNING/ERROR
+  
+  # 日志文件
+  file: "../logs/rk3588_detector.log"
+  max_size_mb: 100           # 单文件最大大小
+  backup_count: 5            # 备份文件数量
+  
+  # 日志格式
+  format: "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+  date_format: "%Y-%m-%d %H:%M:%S"
+  
+  # 性能日志
+  performance_log: true       # 启用性能日志
+  fps_log_interval: 30       # FPS日志输出间隔(帧)
+
+# 系统监控
+monitoring:
+  # 系统状态监控
+  cpu_monitor: true          # CPU使用率监控
+  memory_monitor: true       # 内存使用率监控  
+  temperature_monitor: true  # 温度监控
+  network_monitor: true      # 网络流量监控
+  
+  # 监控间隔
+  monitor_interval_sec: 5    # 监控数据采集间隔
+  
+  # 告警阈值
+  cpu_threshold: 85          # CPU使用率告警阈值(%)
+  memory_threshold: 80       # 内存使用率告警阈值(%)
+  temperature_threshold: 75  # 温度告警阈值(°C)
+  
+  # NPU监控
+  npu_monitor: true         # NPU使用率监控
+  npu_frequency_monitor: true # NPU频率监控
+
+# 训练模型性能基准 (参考数据)
+benchmark:
+  # 模型训练性能
+  model_performance:
+    map50: 94.5             # mAP@IoU=0.5
+    map50_95: 84.7         # mAP@IoU=0.5:0.95
+    precision: 95.6        # 精度
+    recall: 87.9           # 召回率
+    f1_score: 91.6         # F1分数
+    
+  # 运行时性能基准
+  runtime_performance:
+    inference_speed_ms: 6.3  # PC端推理速度(ms)
+    target_rk3588_fps: 25   # RK3588目标FPS
+    npu_utilization: 85     # 预期NPU利用率(%)
+    memory_usage_mb: 512    # 预期内存使用(MB)
+    power_consumption_w: 12 # 预期功耗(W)
+
+# 开发和调试选项
+debug:
+  # 开发模式
+  development_mode: false    # 开发模式 (显示详细信息)
+  
+  # 图像保存
+  save_detection_images: false  # 保存检测结果图像
+  save_interval_frames: 100     # 保存间隔(帧)
+  save_path: "../logs/detections/"
+  
+  # 性能分析
+  profile_inference: false   # 推理性能分析
+  profile_memory: false     # 内存使用分析
+  
+  # 测试模式
+  test_mode_fps: 1          # 测试模式FPS
+  mock_camera: false        # 模拟相机输入
+  mock_detection: false     # 模拟检测结果
+
+# 工业应用场景配置
+industrial:
+  # 应用场景
+  scenario: "general"       # general/quality_control/safety/logistics
+  
+  # 工作模式
+  working_hours: "24x7"     # 工作时间模式
+  
+  # 环境适应
+  environment:
+    lighting: "variable"    # 光照条件: stable/variable
+    temperature_range: "0-60"  # 工作温度范围(°C)
+    humidity_range: "10-90"    # 湿度范围(%)
+    vibration_resistant: true  # 抗振动
+  
+  # 安全要求
+  safety:
+    emergency_stop: true    # 紧急停止功能
+    fail_safe_mode: true   # 故障安全模式
+    redundancy: false      # 冗余检测
+  
+  # 数据记录
+  data_logging:
+    detection_log: true    # 记录检测结果
+    statistics_log: true  # 记录统计数据
+    error_log: true       # 记录错误信息
+    retention_days: 30    # 数据保留天数

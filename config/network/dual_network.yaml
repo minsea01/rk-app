@@ -1,0 +1,26 @@
+# Dual NIC configuration (example)
+
+camera_interface:
+  device: eth0
+  ip: 192.168.1.100
+  netmask: 255.255.255.0
+  mtu: 9000  # jumbo frames for GigE Vision
+
+upload_interface:
+  device: eth1
+  ip: 10.0.0.100
+  netmask: 255.255.255.0
+
+# Result upload servers (primary + backup)
+servers:
+  - ip: 10.0.0.200
+    port: 9001
+    backup: true
+  - ip: 10.0.0.201
+    port: 9002
+
+# Example of how to use with current TcpOutput (string config):
+#   "10.0.0.200:9001,iface:eth1,file:/tmp/dets.jsonl"
+# Or bind to local IP if SO_BINDTODEVICE is not allowed:
+#   "10.0.0.200:9001,bind_ip:10.0.0.100"
+

@@ -1,0 +1,24 @@
+source:
+  type: gige                # folder|video|rtsp|gige
+  uri: "camera-name=Aravis-Fake-GV01,width=512,height=512,framerate=25/1"
+
+engine:
+  type: onnx                # onnx|rknn
+  model: "artifacts/models/best.onnx"
+  imgsz: 640
+
+nms:
+  conf_thres: 0.25
+  iou_thres: 0.60
+  topk: 1000
+
+perf:
+  warmup: 5
+  async: false
+
+output:
+  type: tcp                 # tcp|udp|file
+  ip: "127.0.0.1"
+  port: 9000
+
+classes: "config/industrial_classes.txt"

@@ -1,0 +1,70 @@
+# Build & output directories
+/build/
+/out/
+/CMakeFiles/
+/CMakeCache.txt
+/*.code-workspace
+compile_commands.json
+cmake-build-*/
+
+# VS Code settings
+.vscode/*
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/settings.json
+
+# Python environments
+.venv/
+venv/
+env/
+.env
+.python-version
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Model files and artifacts
+datasets/
+runs/
+artifacts/
+*.onnx
+*.pt
+*.rknn
+*.engine
+*.plan
+*.wts
+
+# Large libraries (keep compressed versions)
+libs/onnxruntime-*/
+third_party/onnxruntime/onnxruntime-*/
+!libs/*.tgz
+!third_party/*.tgz
+
+# Logs and temp files
+*.log
+*.tmp
+*.swp
+*.bak
+.DS_Store
+*~
+
+# Results and outputs
+results/
+outputs/
+checkpoints/
+wandb/
+mlruns/
+
+# IDE and editors
+.idea/
+*.suo
+*.vcxproj.user
+*.sln
+
+# System files
+Thumbs.db
+.directory

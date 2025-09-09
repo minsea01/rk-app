@@ -1,0 +1,34 @@
+# 双网口工业视觉系统测试配置
+
+# 相机采集网口
+camera:
+  interface: eth0
+  ip: 192.168.1.100
+  netmask: 255.255.255.0
+  mtu: 9000
+  # GigE Vision 相机地址
+  camera_ip: 192.168.1.200
+
+# 结果上传网口  
+upload:
+  interface: eth1
+  ip: 10.0.0.100
+  netmask: 255.255.255.0
+  
+# 测试服务器配置
+test_servers:
+  - name: "primary"
+    config: "10.0.0.200:9001,bind_ip:10.0.0.100,iface:eth1"
+    
+  - name: "backup" 
+    config: "10.0.0.201:9002,bind_ip:10.0.0.100,iface:eth1"
+    
+  - name: "file_only"
+    config: "127.0.0.1:9999,file:/tmp/detection_results.jsonl"
+
+# 性能目标
+performance:
+  target_fps: 24
+  input_resolution: "2K (2048x1536)"
+  inference_resolution: "640x640" 
+  max_latency_ms: 42

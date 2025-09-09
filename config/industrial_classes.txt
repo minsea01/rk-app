@@ -1,0 +1,15 @@
+screw
+bolt
+nut
+washer
+gear
+bearing
+spring
+pipe
+valve
+pump
+motor
+sensor
+connector
+circuit_board
+cable

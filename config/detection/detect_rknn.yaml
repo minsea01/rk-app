@@ -1,0 +1,24 @@
+source:
+  type: folder
+  uri: "/data/images/test"
+
+engine:
+  type: rknn
+  model: "artifacts/models/industrial_15cls_rk3588_w8a8.rknn"
+  imgsz: 640
+
+nms:
+  conf_thres: 0.25
+  iou_thres: 0.60
+  topk: 1000
+
+perf:
+  warmup: 5
+  async: false
+
+output:
+  type: tcp
+  ip: "127.0.0.1"
+  port: 9000
+
+classes: "config/industrial_classes.txt"
