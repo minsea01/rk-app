@@ -43,6 +43,7 @@ libs/onnxruntime-*/
 libs/*.tgz
 third_party/onnxruntime/onnxruntime-*/
 third_party/*.tgz
+.third_party/aravis/
 
 # Logs and temp files
 *.log
