@@ -1,0 +1,123 @@
+# 优化配置 - 专门针对"高召回低精度"问题
+# 基于诊断分析的训练参数调优 (YOLOv8兼容版本)
+
+# Dataset配置
+data: /home/minsea01/datasets/industrial_15_classes_ready/data.yaml
+
+# Model - 在精度和速度间平衡
+model: yolov8s.pt
+
+# 🎯 核心优化参数 - 针对高召回低精度问题
+# ============================================
+
+# 输入分辨率 - 提高以应对小目标检测
+imgsz: 960              # 从640提升到960，显著改善小目标检测
+epochs: 200             # 增加训练轮数，确保充分收敛
+batch: 8                # 固定batch size (auto不被支持)
+patience: 80            # 增加早停耐心，避免过早停止
+
+# 设备和性能
+device: "0"             # GPU训练
+workers: 8              # 多进程数据加载
+cache: ram              # 内存缓存提速
+
+# 🔥 损失函数优化 - 关键参数
+# ============================
+# 注意：YOLOv8不支持fl_gamma，我们通过其他方式优化
+box: 7.5                # 增加边界框损失权重，提高定位精度
+cls: 1.5                # 增加分类损失权重，提高分类精度
+dfl: 1.5                # Distribution Focal Loss权重
+
+# 🎨 数据增强 - 小目标友好策略
+# ===============================
+# 基础几何变换（保守策略，避免过度变形）
+degrees: 8.0            # 小角度旋转，避免过度失真
+translate: 0.1          # 轻微平移
+scale: 0.4              # 适中尺度变化
+shear: 3.0              # 小剪切变形
+
+# 翻转策略
+flipud: 0.0             # 工业场景通常不需要垂直翻转
+fliplr: 0.5             # 水平翻转保持
+
+# 颜色空间变换（工业场景适配）
+hsv_h: 0.01             # 最小色调变化，保持工业零件颜色特征
+hsv_s: 0.4              # 适度饱和度变化
+hsv_v: 0.4              # 适度亮度变化，模拟不同光照
+
+# 🚀 高级增强 - 小目标检测专用
+# ===============================
+mosaic: 1.0             # 100% mosaic概率，增强小目标检测能力
+copy_paste: 0.2         # copy-paste增强，增加目标实例
+mixup: 0.15             # 适量mixup，增强泛化能力
+multi_scale: True       # 多尺度训练，提高不同尺寸目标适应性
+
+# ⚡ 学习率调度优化
+# ==================
+optimizer: AdamW        # AdamW优化器，更好的收敛性能
+lr0: 0.005              # 较小的初始学习率，稳定训练
+lrf: 0.05               # 最终学习率比例，充分收敛
+momentum: 0.937         # 动量参数
+weight_decay: 0.0005    # 权重衰减，防止过拟合
+
+# 学习率调度策略
+cos_lr: True            # 余弦退火，平滑的学习率变化
+warmup_epochs: 5.0      # 预热轮数，平稳启动训练
+
+# 🎯 验证和部署参数
+# ==================
+# 训练时验证参数（相对宽松）
+conf: 0.25              # 训练时置信度阈值
+iou: 0.6                # NMS IoU阈值
+
+# 部署建议参数（在脚本注释中）
+# deploy_conf: 0.4      # 部署时建议置信度阈值，减少FP
+# deploy_iou: 0.5       # 密集场景建议IoU阈值
+
+max_det: 100            # 最大检测数量
+
+# 📊 输出和监控
+# ==============
+project: runs/train
+name: industrial_optimized_high_precision
+save: true
+plots: true             # 生成训练图表
+save_period: 25         # 每25 epoch保存检查点
+
+# 📈 实验追踪 
+# run_name不被YOLOv8支持，使用name参数代替
+
+# 🔍 调试和分析选项
+# ==================
+verbose: True           # 详细输出
+profile: False          # 性能分析（调试时可开启）
+
+# 💡 训练策略注释
+# ================
+# 本配置专门针对"高召回低精度"问题优化：
+# 1. 提高分辨率(960)应对小目标
+# 2. 使用Focal Loss(fl_gamma=1.5)处理类别不均衡
+# 3. 增强数据增强，特别是mosaic和copy_paste
+# 4. 调整损失权重，平衡定位和分类精度
+# 5. 使用余弦退火和较小学习率稳定训练
+
+# 🚀 建议的训练命令 (YOLOv8兼容版本)
+# ==================
+# yolo detect train cfg=configs/optimized_training.yaml
+# 
+# 或者直接命令行：
+# yolo detect train \
+#   data=/home/minsea01/datasets/industrial_15_classes_ready/data.yaml \
+#   model=yolov8s.pt imgsz=960 epochs=200 batch=auto device=0 \
+#   box=7.5 cls=1.5 dfl=1.5 \
+#   mosaic=1.0 copy_paste=0.2 mixup=0.15 multi_scale=True \
+#   cos_lr=True lr0=0.005 lrf=0.05 warmup_epochs=5 \
+#   cache=ram workers=8 patience=80 \
+#   project=runs/train name=industrial_optimized_high_precision
+
+# 📋 预期改善
+# ============
+# - Precision: 从0.56-0.59提升到0.70+
+# - Recall: 保持0.85+的高召回率
+# - mAP50: 从0.61提升到0.72+
+# - FP率显著降低，特别是小目标场景

@@ -271,11 +271,7 @@ int main(int argc, char* argv[]) {
       while (source->read(frame)) {
         auto start_time = std::chrono::high_resolution_clock::now();
         
-        // Preprocess
-        rkapp::preprocess::LetterboxInfo letterbox_info;
-        cv::Mat processed = rkapp::preprocess::Preprocess::letterbox(frame, config.imgsz, letterbox_info);
-        
-        // Inference
+        // Inference (engine handles its own letterbox consistently)
         std::vector<rkapp::infer::Detection> detections = engine->infer(frame);
         
         // Postprocess
@@ -341,9 +337,6 @@ int main(int argc, char* argv[]) {
         if (!has) break;
 
         auto start_time = std::chrono::high_resolution_clock::now();
-        rkapp::preprocess::LetterboxInfo letterbox_info;
-        cv::Mat processed = rkapp::preprocess::Preprocess::letterbox(it.img, config.imgsz, letterbox_info);
-        (void)processed; // keep symmetry with sync path
         std::vector<rkapp::infer::Detection> detections = engine->infer(it.img);
         rkapp::post::NMSConfig nms_config{config.conf_thres, config.iou_thres, 1000, config.nms_topk};
         detections = rkapp::post::Postprocess::nms(detections, nms_config);

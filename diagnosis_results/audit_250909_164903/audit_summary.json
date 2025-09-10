@@ -1,0 +1,61 @@
+{
+  "dataset_yaml": "/home/minsea01/datasets/mvtec_industrial/data.yaml",
+  "names": [
+    "bottle",
+    "cable",
+    "capsule",
+    "carpet",
+    "grid",
+    "hazelnut",
+    "leather",
+    "metal_nut",
+    "pill",
+    "screw",
+    "tile",
+    "toothbrush",
+    "transistor",
+    "wood",
+    "zipper"
+  ],
+  "num_classes": 15,
+  "train": {
+    "images": "/home/minsea01/datasets/mvtec_industrial/images/train",
+    "labels": "/home/minsea01/datasets/mvtec_industrial/labels/train",
+    "files_total": 100,
+    "files_empty": [],
+    "images_without_labels": [],
+    "labels_without_images": [],
+    "id_counts": {
+      "2": 20,
+      "4": 20,
+      "3": 20,
+      "1": 20,
+      "0": 20
+    },
+    "format_errors": [],
+    "invalid_ids": [],
+    "out_of_range_ids": [],
+    "coords_outside_unit": [],
+    "zero_area_boxes": []
+  },
+  "val": {
+    "images": "/home/minsea01/datasets/mvtec_industrial/images/val",
+    "labels": "/home/minsea01/datasets/mvtec_industrial/labels/val",
+    "files_total": 50,
+    "files_empty": [],
+    "images_without_labels": [],
+    "labels_without_images": [],
+    "id_counts": {
+      "2": 10,
+      "4": 10,
+      "1": 10,
+      "3": 10,
+      "0": 10
+    },
+    "format_errors": [],
+    "invalid_ids": [],
+    "out_of_range_ids": [],
+    "coords_outside_unit": [],
+    "zero_area_boxes": []
+  }
+}

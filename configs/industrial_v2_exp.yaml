@@ -1,0 +1,69 @@
+# 优化的训练配置 - 工业检测专用
+# 针对RK3588 NPU优化（24+ FPS目标）
+
+# Dataset - 15类工业检测
+dataset_yaml: /home/minsea01/datasets/industrial_15_classes_ready/data.yaml
+
+# Model - 使用YOLOv8s平衡精度和速度
+model: yolov8s.pt
+
+# Training parameters - 优化收敛和精度
+imgsz: 640              # RK3588 NPU友好的输入尺寸
+epochs: 150             # 充分训练确保收敛
+batch: 8                # 适合6GB GPU内存
+patience: 50            # 早停机制
+device: "0"             # GPU训练
+workers: 8              # 多进程数据加载
+
+# 优化器设置
+optimizer: AdamW        # 更好的收敛性
+lr0: 0.001             # 较小的初始学习率
+lrf: 0.01              # 学习率衰减
+momentum: 0.937
+weight_decay: 0.0005
+warmup_epochs: 5.0     # 增加warmup
+
+# Loss权重 - 提高召回率
+box: 7.5
+cls: 1.0               # 增加分类损失权重
+dfl: 1.5
+
+# 数据增强 - 工业场景适配
+hsv_h: 0.01            # 减少色调变化
+hsv_s: 0.5             # 减少饱和度变化
+hsv_v: 0.3             # 减少亮度变化
+degrees: 10.0          # 小角度旋转
+translate: 0.1
+scale: 0.3             # 减少尺度变化
+shear: 5.0             # 小剪切变形
+flipud: 0.0            # 不垂直翻转
+fliplr: 0.5            # 水平翻转
+mosaic: 0.8            # 增加mosaic概率
+mixup: 0.1             # 适量mixup
+copy_paste: 0.1        # copy-paste增强
+
+# Export设置 - RKNN量化准备
+format: onnx
+opset: 12
+simplify: true
+dynamic: false         # 固定输入形状便于RKNN转换
+
+# Validation设置
+conf: 0.25             # 置信度阈值
+iou: 0.6               # NMS IoU阈值
+max_det: 100           # 最大检测数量
+
+# Quantization准备
+target_platform: rk3588
+quant_dtype: asymmetric_quantized-u8
+core_mask: 0x7         # 使用所有3个NPU核心
+
+# 输出设置
+project: runs/train
+name: industrial_15cls_v2_y8s
+save: true
+plots: true
+save_period: 25        # 每25 epoch保存检查点
+
+# 实验追踪
+run_name: industrial_15cls_v2_y8s_150ep_640px

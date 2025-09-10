@@ -67,7 +67,7 @@ install(TARGETS rk_app RUNTIME DESTINATION bin)
 
 # 测试配置（默认仅在非交叉编译时启用）。在受限网络下禁用自动拉取。
 option(ENABLE_TESTS "Enable building tests" ON)
-option(FETCH_GTEST "Fetch GoogleTest if not found" OFF)
+option(FETCH_GTEST "Fetch GoogleTest if not found" ON)
 include(CTest)
 if(BUILD_TESTING AND ENABLE_TESTS AND NOT CMAKE_CROSSCOMPILING)
   message(STATUS "Building tests for native host")
@@ -139,7 +139,7 @@ endif()
 if (ENABLE_ONNX)
     add_library(rkapp_infer_onnx src/infer/onnx/OnnxEngine.cpp)
     target_include_directories(rkapp_infer_onnx PUBLIC include)
-    target_link_libraries(rkapp_infer_onnx PUBLIC ${OpenCV_LIBS})
+    target_link_libraries(rkapp_infer_onnx PUBLIC ${OpenCV_LIBS} rkapp_core)
 
     # Prefer external ORT if ORT_HOME is set; fallback to third_party
     if(DEFINED ENV{ORT_HOME})
