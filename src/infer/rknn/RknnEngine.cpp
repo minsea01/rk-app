@@ -4,6 +4,8 @@
 #include <fstream>
 #include <cstring>
 #include <algorithm>
+#include <cmath>
+#include <numeric>
 
 #if RKNN_PLATFORM
 #include <rknn_api.h>
@@ -53,6 +55,19 @@ bool RknnEngine::init(const std::string& model_path, int img_size){
 #endif
   if(ret != RKNN_SUCC){ std::cerr << "rknn_init=" << ret << std::endl; return false; }
 
+  // Try to configure NPU core mask if supported by SDK and user specified a non-zero mask
+#if defined(RKNN_CONFIG_NPU_CORE_MASK)
+  if (core_mask_ != 0) {
+    int cm = static_cast<int>(core_mask_);
+    int cfg_ret = rknn_config(impl_->ctx, RKNN_CONFIG_NPU_CORE_MASK, &cm);
+    if (cfg_ret != RKNN_SUCC) {
+      std::cerr << "[RknnEngine] rknn_config(NPU_CORE_MASK) failed: " << cfg_ret << std::endl;
+    } else {
+      std::cout << "[RknnEngine] NPU core mask configured: 0x" << std::hex << core_mask_ << std::dec << std::endl;
+    }
+  }
+#endif
+
   ret = rknn_query(impl_->ctx, RKNN_QUERY_IN_OUT_NUM, &impl_->io_num, sizeof(impl_->io_num));
   if(ret != RKNN_SUCC){ std::cerr << "query io_num=" << ret << std::endl; return false; }
 
@@ -66,30 +81,29 @@ bool RknnEngine::init(const std::string& model_path, int img_size){
   impl_->out_elems = 1;
   for(uint32_t i=0;i<impl_->out_attr.n_dims;i++) impl_->out_elems *= impl_->out_attr.dims[i];
   
-  // Get the channel dimension (assuming last dim contains features: x,y,w,h,[obj,]cls0,cls1,...)
+  // Determine output layout generically and postpone class inference to runtime
   int last_dim = std::max(0, (int)impl_->out_attr.n_dims - 1);
   int64_t C = impl_->out_attr.dims[last_dim];
-  // Infer number of classes: default to C-4 (x,y,w,h + classes)
-  // If your export includes objness, set has_objness_=true and use C-5.
-  has_objness_ = false;
-  num_classes_ = (int)(C - 4);
-  
-  if (num_classes_ <= 0 || num_classes_ > 1024) {
-    std::cerr << "[RknnEngine] Invalid classes inferred: " << num_classes_ << std::endl;
-    return false;
+  // Layout: try (1, N, C) and (1, C, N)
+  if (impl_->out_attr.n_dims >= 3) {
+    int64_t d1 = impl_->out_attr.dims[1];
+    int64_t d2 = impl_->out_attr.dims[2];
+    if (d2 == C) {
+      impl_->out_c = (int)C;
+      impl_->out_n = (int)d1;
+    } else if (d1 == C) {
+      impl_->out_c = (int)C;
+      impl_->out_n = (int)d2;
+    } else {
+      // Fallback: assume last dim is C and product/ C is N
+      impl_->out_c = (int)C;
+      int64_t total = impl_->out_elems;
+      int64_t N = total / C;
+      impl_->out_n = (int)N;
+    }
   }
-  
-  // Determine output layout (N,C or C,N)
-  if(impl_->out_attr.dims[1] == C){ 
-    impl_->out_c = C; 
-    impl_->out_n = impl_->out_attr.dims[2]; 
-  } else if(impl_->out_attr.dims[2] == C){ 
-    impl_->out_c = C; 
-    impl_->out_n = impl_->out_attr.dims[1]; 
-  } else { 
-    std::cerr << "Unexpected output shape for C=" << C << std::endl; 
-    return false; 
-  }
+  // Defer num_classes_ until we inspect C in infer()
+  num_classes_ = -1;
 #else
   std::cout << "RknnEngine: RKNN platform not enabled at build time" << std::endl;
 #endif
@@ -134,28 +148,151 @@ std::vector<Detection> RknnEngine::infer(const cv::Mat& image){
     logits.swap(trans);
   }
 
-  // Decode to detections (assume [1,8,8400])
+  // Decode to detections. Support two heads:
+  // 1) YOLOv8 DFL head: C >= 64 (4*16 + num_classes)
+  // 2) Raw head: [cx,cy,w,h,(obj),cls...]
   std::vector<Detection> dets;
-  int N = impl_->out_n; // 8400
-  int C = impl_->out_c; // 8
-  for(int i=0;i<N;i++){
-    float cx = logits[0*N + i];
-    float cy = logits[1*N + i];
-    float w  = logits[2*N + i];
-    float h  = logits[3*N + i];
-    float max_conf = 0.f; int best = 0;
-    for(int c=0;c<C-4;c++){
-      float conf = logits[(4+c)*N + i];
-      if(conf > max_conf){ max_conf = conf; best = c; }
+  int N = impl_->out_n;
+  int C = impl_->out_c;
+
+  auto sigmoid = [](float x){ return 1.0f / (1.0f + std::exp(-x)); };
+
+  if (C >= 64) {
+    // DFL path (assume reg_max=16)
+    const int reg_max = 16;
+    int cls_ch = C - 4 * reg_max;
+    if (num_classes_ < 0) num_classes_ = cls_ch;
+    // Prepare strides and per-anchor stride map for imgsz=input_size_
+    const int strides[3] = {8,16,32};
+    std::vector<float> stride_map(N, 0.0f);
+    {
+      int idx = 0;
+      for (int s : strides) {
+        int fm = input_size_ / s;
+        int count = fm * fm;
+        for (int k = 0; k < count && idx < N; ++k) stride_map[idx++] = (float)s;
+      }
+      if (idx != N) {
+        // try reverse order
+        idx = 0;
+        for (int si = 2; si >= 0; --si) {
+          int s = strides[si];
+          int fm = input_size_ / s;
+          int count = fm * fm;
+          for (int k = 0; k < count && idx < N; ++k) stride_map[idx++] = (float)s;
+        }
+      }
+      // If still mismatch, fallback to approximate by nearest scale (uniform)
+      if ((int)stride_map.size() != N || stride_map[0] == 0.0f) {
+        float s = (float)strides[0];
+        std::fill(stride_map.begin(), stride_map.end(), s);
+      }
     }
-    if(max_conf > 0.25f){
-      Detection d;
-      float scale = letterbox_info.scale, dx = letterbox_info.dx, dy = letterbox_info.dy;
-      d.x = (cx - w/2 - dx) / scale;
-      d.y = (cy - h/2 - dy) / scale;
-      d.w = w / scale; d.h = h / scale;
-      d.confidence = max_conf; d.class_id = best; d.class_name = "class_" + std::to_string(best);
-      dets.push_back(d);
+    // Build anchor centers (cx,cy) for the same ordering assumption
+    std::vector<float> anchor_cx(N, 0.0f), anchor_cy(N, 0.0f);
+    {
+      int idx = 0;
+      bool filled = false;
+      for (int pass = 0; pass < 2 && !filled; ++pass) {
+        // pass 0: 8->16->32, pass 1: 32->16->8
+        int order[3] = {8,16,32};
+        if (pass == 1) { order[0]=32; order[1]=16; order[2]=8; }
+        idx = 0;
+        for (int s : order) {
+          int fm = input_size_ / s;
+          for (int iy = 0; iy < fm; ++iy) {
+            for (int ix = 0; ix < fm; ++ix) {
+              if (idx >= N) break;
+              anchor_cx[idx] = (ix + 0.5f) * s;
+              anchor_cy[idx] = (iy + 0.5f) * s;
+              ++idx;
+            }
+          }
+        }
+        if (idx == N) filled = true;
+      }
+      if (!filled) {
+        // Fallback fill with grid of stride 8
+        idx = 0; int s = 8; int fm = input_size_ / s;
+        for (int iy = 0; iy < fm && idx < N; ++iy)
+          for (int ix = 0; ix < fm && idx < N; ++ix) {
+            anchor_cx[idx] = (ix + 0.5f) * s;
+            anchor_cy[idx] = (iy + 0.5f) * s;
+            ++idx;
+          }
+      }
+    }
+
+    // Decode distributions to l,t,r,b
+    auto dfl_softmax_project = [&](int base_c, int i)->std::array<float,4> {
+      std::array<float,4> out{};
+      for (int side = 0; side < 4; ++side) {
+        int ch0 = base_c + side * reg_max; // channel start for this side
+        // softmax over reg_max at position i
+        float maxv = -1e30f;
+        for (int k = 0; k < reg_max; ++k) maxv = std::max(maxv, logits[(ch0 + k)*N + i]);
+        float denom = 0.f;
+        float probs[16];
+        for (int k = 0; k < reg_max; ++k) { float v = std::exp(logits[(ch0 + k)*N + i] - maxv); probs[k] = v; denom += v; }
+        float proj = 0.f;
+        for (int k = 0; k < reg_max; ++k) proj += probs[k] * (float)k;
+        out[side] = (denom > 0.f) ? (proj / denom) : 0.f;
+      }
+      return out; // in grid units
+    };
+
+    // For each anchor, compute bbox and class
+    for (int i = 0; i < N; ++i) {
+      auto dfl = dfl_softmax_project(0, i); // 0..63
+      float s = stride_map[i];
+      // scale distances by stride
+      float l = dfl[0] * s, t = dfl[1] * s, r = dfl[2] * s, b = dfl[3] * s;
+      float x1 = anchor_cx[i] - l;
+      float y1 = anchor_cy[i] - t;
+      float x2 = anchor_cx[i] + r;
+      float y2 = anchor_cy[i] + b;
+      // class scores
+      float best_conf = 0.f; int best_cls = 0;
+      for (int c = 0; c < cls_ch; ++c) {
+        float conf = sigmoid(logits[(4*reg_max + c)*N + i]);
+        if (conf > best_conf) { best_conf = conf; best_cls = c; }
+      }
+      if (best_conf >= 0.25f) {
+        Detection d;
+        float scale = letterbox_info.scale, dx = letterbox_info.dx, dy = letterbox_info.dy;
+        float w = x2 - x1, h = y2 - y1;
+        d.x = (x1 - dx) / scale; d.y = (y1 - dy) / scale;
+        d.w = w / scale; d.h = h / scale;
+        d.confidence = best_conf; d.class_id = best_cls; d.class_name = "class_" + std::to_string(best_cls);
+        dets.push_back(d);
+      }
+    }
+  } else {
+    // Raw path
+    if (num_classes_ < 0) num_classes_ = std::max(0, C - 5); // assume objness present; if not, handled by loop
+    for(int i=0;i<N;i++){
+      float cx = logits[0*N + i];
+      float cy = logits[1*N + i];
+      float w  = logits[2*N + i];
+      float h  = logits[3*N + i];
+      int cls_offset = 4;
+      float obj = 1.0f;
+      if (C >= 5) { obj = sigmoid(logits[4*N + i]); cls_offset = 5; }
+      float max_conf = 0.f; int best = 0;
+      for(int c=0; c < (C - cls_offset); c++){
+        float conf = sigmoid(logits[(cls_offset + c)*N + i]);
+        if(conf > max_conf){ max_conf = conf; best = c; }
+      }
+      float conf = obj * (max_conf > 0 ? max_conf : 1.0f);
+      if(conf > 0.25f){
+        Detection d;
+        float scale = letterbox_info.scale, dx = letterbox_info.dx, dy = letterbox_info.dy;
+        d.x = (cx - w/2 - dx) / scale;
+        d.y = (cy - h/2 - dy) / scale;
+        d.w = w / scale; d.h = h / scale;
+        d.confidence = conf; d.class_id = best; d.class_name = "class_" + std::to_string(best);
+        dets.push_back(d);
+      }
     }
   }
   return dets;

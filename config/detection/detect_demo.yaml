@@ -1,0 +1,24 @@
+source:
+  type: folder               # 使用本地图片文件夹模拟实时处理
+  uri: "/home/minsea01/datasets/coco128/images/train2017"
+
+engine:
+  type: onnx                 # onnx|rknn
+  model: "artifacts/models/best.onnx"
+  imgsz: 640
+
+nms:
+  conf_thres: 0.25
+  iou_thres: 0.60
+  topk: 1000
+
+perf:
+  warmup: 5
+  async: false
+
+output:
+  type: tcp                  # tcp|udp|file
+  ip: "127.0.0.1"
+  port: 9000
+
+classes: "config/industrial_classes.txt"

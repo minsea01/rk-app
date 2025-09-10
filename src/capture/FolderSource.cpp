@@ -20,7 +20,7 @@ bool FolderSource::open(const std::string& folder_path) {
   image_files_.clear();
   current_index_ = 0;
 
-  std::vector<std::string> extensions = {".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".webp"};
+  std::vector<std::string> extensions = {".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".webp", ".pgm", ".ppm"};
 
   for (const auto& entry : fs::directory_iterator(folder_path_)) {
     if (entry.is_regular_file()) {

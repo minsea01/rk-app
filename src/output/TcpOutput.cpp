@@ -6,6 +6,7 @@
 #include <arpa/inet.h>
 #include <unistd.h>
 #include <net/if.h>
+#include <netinet/tcp.h>
 
 namespace rkapp::output {
 
@@ -54,6 +55,14 @@ bool TcpOutput::open(const std::string& config) {
             return false;
         }
 
+        // Enable TCP_NODELAY to reduce latency unless explicitly disabled via option later (not implemented yet)
+        {
+            int flag = 1;
+            if (setsockopt(socket_fd_, IPPROTO_TCP, TCP_NODELAY, &flag, sizeof(flag)) != 0) {
+                std::perror("TcpOutput: TCP_NODELAY failed");
+            }
+        }
+
         // If bind_ip_ provided, bind local source address before connect
         if (!bind_ip_.empty()) {
             struct sockaddr_in local{};
@@ -96,6 +105,18 @@ bool TcpOutput::open(const std::string& config) {
         } else {
             tcp_connected_ = true;
             std::cout << "Connected to TCP server " << server_ip_ << ":" << server_port_ << std::endl;
+            // Optionally enlarge send buffer if env provided: RKAPP_TCP_SNDBUF (bytes)
+            const char* env_snd = std::getenv("RKAPP_TCP_SNDBUF");
+            if (env_snd) {
+                int sz = std::atoi(env_snd);
+                if (sz > 0) {
+                    if (setsockopt(socket_fd_, SOL_SOCKET, SO_SNDBUF, &sz, sizeof(sz)) != 0) {
+                        std::perror("TcpOutput: SO_SNDBUF failed");
+                    } else {
+                        std::cout << "TcpOutput: SO_SNDBUF set to " << sz << std::endl;
+                    }
+                }
+            }
         }
 
         // Open file output if specified

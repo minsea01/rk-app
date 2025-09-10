@@ -30,17 +30,31 @@ bool GigeSource::open(const std::string& uri) {
       camera_name = uri.substr(start, comma - start);
       // 解析其他参数并构建caps
       std::string params = uri.substr(comma + 1);
+      // 若未显式指定format，默认灰度以降低带宽与CPU负载
+      if (params.find("format=") == std::string::npos) {
+        params = std::string("format=GRAY8,") + params;
+      }
       caps_filter = "video/x-raw," + params;
     } else {
       camera_name = uri.substr(start);
-      caps_filter = "video/x-raw";
+      // 默认灰度
+      caps_filter = "video/x-raw,format=GRAY8";
     }
   } else {
     camera_name = uri;
-    caps_filter = "video/x-raw";
+    caps_filter = "video/x-raw,format=GRAY8"; // 默认灰度
   }
-  
-  std::string pipeline_desc = "aravissrc camera-name=\"" + camera_name + "\" ! " + caps_filter + " ! videoconvert ! video/x-raw,format=BGR ! appsink name=sink sync=false max-buffers=2 drop=true";
+
+  // 如果用户已指定 format=GRAY8，则避免多余的 videoconvert->BGR，直接推给 appsink
+  bool want_gray8 = (caps_filter.find("format=GRAY8") != std::string::npos);
+  std::string pipeline_desc;
+  if (want_gray8) {
+    pipeline_desc = "aravissrc camera-name=\"" + camera_name + "\" ! " + caps_filter +
+                    " ! appsink name=sink caps=video/x-raw,format=GRAY8 sync=false max-buffers=2 drop=true";
+  } else {
+    pipeline_desc = "aravissrc camera-name=\"" + camera_name + "\" ! " + caps_filter +
+                    " ! videoconvert ! video/x-raw,format=BGR ! appsink name=sink sync=false max-buffers=2 drop=true";
+  }
   GError* err = nullptr;
   GstElement* pipeline = gst_parse_launch(pipeline_desc.c_str(), &err);
   if (!pipeline) {
@@ -91,9 +105,15 @@ bool GigeSource::read(cv::Mat& frame) {
   GstCaps* caps = gst_sample_get_caps(sample);
   GstStructure const* s = gst_caps_get_structure(caps, 0);
   int width=0,height=0; gst_structure_get_int(s, "width", &width); gst_structure_get_int(s, "height", &height);
+  const gchar* fmt = gst_structure_get_string(s, "format");
   GstMapInfo map; gst_buffer_map(buffer, &map, GST_MAP_READ);
-  cv::Mat img(height, width, CV_8UC3, (void*)map.data);
-  img.copyTo(frame);
+  if (fmt && g_strcmp0(fmt, "GRAY8") == 0) {
+    cv::Mat img(height, width, CV_8UC1, (void*)map.data);
+    img.copyTo(frame);
+  } else {
+    cv::Mat img(height, width, CV_8UC3, (void*)map.data);
+    img.copyTo(frame);
+  }
   gst_buffer_unmap(buffer, &map);
   gst_sample_unref(sample);
   if (size_.width==0) size_ = {width,height};
