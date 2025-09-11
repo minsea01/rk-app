@@ -69,3 +69,8 @@ mlruns/
 # System files
 Thumbs.db
 .directory
+
+# AI assistant files
+.claude/
+CLAUDE.md
+GEMINI.md
