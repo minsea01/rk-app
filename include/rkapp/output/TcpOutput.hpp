@@ -1,6 +1,7 @@
 #pragma once
 
 #include "rkapp/output/IOutput.hpp"
+#include <chrono>
 #include <fstream>
 #include <netinet/in.h>
 
@@ -19,12 +20,17 @@ public:
   OutputType getType() const override;
 
 private:
+  bool setup_socket();
+  bool attemptReconnect();
+  void closeSocket();
+
   std::string server_ip_ = "127.0.0.1";
   int server_port_ = 9000;
   int socket_fd_ = -1;
   struct sockaddr_in server_addr_{};
   bool tcp_connected_ = false;
   bool is_opened_ = false;
+  bool endpoint_configured_ = false;
 
   // Optional NIC/source binding
   // - bind_interface_: try SO_BINDTODEVICE (requires CAP_NET_RAW/root). Example: "eth1"
@@ -36,6 +42,9 @@ private:
   bool enable_file_output_ = false;
   std::string file_path_;
   std::ofstream file_output_;
+
+  std::chrono::steady_clock::time_point last_reconnect_attempt_{};
+  bool has_reconnect_attempt_ = false;
 };
 
 } // namespace rkapp::output
