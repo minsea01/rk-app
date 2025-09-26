@@ -1,5 +1,6 @@
 #include "rkapp/preprocess/Preprocess.hpp"
 #include <algorithm>
+#include <cstring>
 
 namespace rkapp::preprocess {
 

@@ -1,4 +1,5 @@
 #pragma once
+#include <atomic>
 #include <chrono>
 #include <ctime>
 #include <iomanip>
@@ -8,7 +9,7 @@
 
 namespace rklog {
 enum Level { TRACE = 0, DEBUG, INFO, WARN, ERROR };
-inline Level g_level = INFO;
+inline std::atomic<Level> g_level{INFO};
 inline std::mutex g_mu;
 
 inline const char* lvlstr(Level l) {
@@ -23,7 +24,8 @@ inline const char* lvlstr(Level l) {
 
 template <typename... A>
 inline void write(Level l, const char* file, int line, const A&... a) {
-  if (l < g_level) return;
+  const Level current = g_level.load(std::memory_order_relaxed);
+  if (l < current) return;
   std::ostringstream os; (void)std::initializer_list<int>{(os << a, 0)...};
   auto t = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
   std::lock_guard<std::mutex> lk(g_mu);

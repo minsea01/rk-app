@@ -36,6 +36,13 @@ set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
 
 # 主程序
 add_executable(rk_app src/main.cpp)
+if(YAML_CPP_FOUND)
+  target_link_libraries(rk_app PRIVATE ${YAML_CPP_LIBRARIES})
+  target_include_directories(rk_app PRIVATE ${YAML_CPP_INCLUDE_DIRS})
+  target_compile_definitions(rk_app PRIVATE RKAPP_HAVE_YAMLCPP=1)
+else()
+  message(WARNING "yaml-cpp not found; rk_app will use minimal fallback config parser")
+endif()
 
 # 示例算法库: PID
 add_library(pid_lib src/pid.cpp include/pid.h)
