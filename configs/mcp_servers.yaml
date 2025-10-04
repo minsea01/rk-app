@@ -1,0 +1,26 @@
+version: 0.1
+servers:
+  filesystem:
+    type: builtin
+    tools: [read_file, write_file, glob, patch]
+  shell:
+    type: builtin
+    tools: [run]
+  http-client:
+    type: builtin
+    tools: [get, post]
+  ffprobe:
+    type: command
+    commands:
+      probe: "ffprobe -v error -show_streams -show_format -print_format json \"${INPUT}\""
+    outputs: [json]
+  iperf3:
+    type: command
+    commands:
+      server: "iperf3 -s -p ${PORT}"
+      client: "iperf3 -c ${HOST} -p ${PORT} -t ${DURATION} -J"
+    outputs: [json]
+  artifacts:
+    type: filesystem
+    base_dir: artifacts
+
