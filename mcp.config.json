@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "dev-tools": {
+      "command": "python3",
+      "args": ["-m", "mcp_dev"],
+      "env": { "WORKDIR": "." }
+    },
+    "git-summary": {
+      "command": "python3",
+      "args": ["-m", "mcp_git_summary"],
+      "env": { "WORKDIR": "." }
+    }
+  }
+}
+

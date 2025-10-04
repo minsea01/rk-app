@@ -1,0 +1,2 @@
+timestamp,iperf3_mbps,ffprobe_width,ffprobe_height,ffprobe_fps,ffprobe_codec
+1759547396,0.0,1920,1080,30.0,h264

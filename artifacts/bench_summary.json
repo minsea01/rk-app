@@ -1,0 +1,9 @@
+{
+  "timestamp": 1759547396,
+  "iperf3_bits_per_second": 0,
+  "iperf3_mbps": 0.0,
+  "ffprobe_width": 1920,
+  "ffprobe_height": 1080,
+  "ffprobe_fps": 30.0,
+  "ffprobe_codec": "h264"
+}

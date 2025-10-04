@@ -1,0 +1,20 @@
+# Central place to record toolchain versions.
+
+# ML frameworks
+ultralytics = "8.2.79"
+torch = "2.8.0"
+onnx = "1.16.0"
+
+# Rockchip toolchains
+rknn_toolkit2 = "1.7.5"
+rknn_toolkit_lite2 = "1.7.5"
+
+# Runtime OS images
+ubuntu_host = "20.04"
+ubuntu_runtime = "24.04"
+
+# Other utilities
+opencv_python = "4.10.0"
+numpy = "1.26.4"
+tqdm = "4.67.1"
+
