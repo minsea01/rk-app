@@ -1,10 +1,10 @@
 source:
   type: folder
-  uri: "/home/minsea/datasets/coco4cls_yolo/images/val"
+  uri: "datasets/coco/images/val"
 
 engine:
   type: onnx
-  model: "/home/minsea/models/industrial_16cls_640.onnx"
+  model: "artifacts/models/yolo11n_416.onnx"
   imgsz: 640
 
 nms:
