@@ -6,6 +6,7 @@ import cv2
 import numpy as np
 
 from apps.utils.yolo_post import letterbox, postprocess_yolov8
+from apps.exceptions import RKNNError, PreprocessError, InferenceError, ModelLoadError
 
 
 def decode_predictions(pred, imgsz, conf_thres, iou_thres, head='auto', ratio_pad=(1.0, (0.0, 0.0)), orig_shape=None):
@@ -102,31 +103,56 @@ def main():
 
     try:
         from rknnlite.api import RKNNLite
-    except Exception as e:
+    except ImportError as e:
         raise SystemExit(f"rknn-toolkit-lite2 not installed on device. pip install rknn-toolkit-lite2. Error: {e}")
+    except (AttributeError, TypeError) as e:
+        raise SystemExit(f"rknn-toolkit-lite2 version incompatible. Error: {e}")
 
     rknn = RKNNLite()
-    print(f'Loading RKNN: {args.model}')
-    ret = rknn.load_rknn(str(args.model))
-    if ret != 0:
-        raise SystemExit('load_rknn failed')
 
+    # Load RKNN model
+    print(f'Loading RKNN: {args.model}')
+    if not args.model.exists():
+        raise ModelLoadError(f"Model file not found: {args.model}")
+
+    try:
+        ret = rknn.load_rknn(str(args.model))
+        if ret != 0:
+            raise ModelLoadError(f'Failed to load RKNN model: {args.model}')
+    except Exception as e:
+        raise ModelLoadError(f'Error loading RKNN model: {e}')
+
+    # Initialize runtime
     print(f'Initializing runtime, core_mask={hex(args.core_mask)}')
-    ret = rknn.init_runtime(core_mask=args.core_mask)
-    if ret != 0:
-        raise SystemExit('init_runtime failed')
+    try:
+        ret = rknn.init_runtime(core_mask=args.core_mask)
+        if ret != 0:
+            raise RKNNError(f'Failed to initialize RKNN runtime with core_mask={hex(args.core_mask)}')
+    except Exception as e:
+        raise RKNNError(f'Error initializing RKNN runtime: {e}')
 
     class_names = load_labels(args.names)
 
     if args.source and args.source.exists():
-        img0 = cv2.imread(str(args.source))
-        if img0 is None:
-            raise SystemExit(f'Failed to read image: {args.source}')
-        img, r, d = letterbox(img0, args.imgsz)
+        # Load and preprocess image
+        try:
+            img0 = cv2.imread(str(args.source))
+            if img0 is None:
+                raise PreprocessError(f'Failed to read image: {args.source}')
+            img, r, d = letterbox(img0, args.imgsz)
+        except PreprocessError:
+            raise
+        except Exception as e:
+            raise PreprocessError(f'Error preprocessing image: {e}')
+
+        # Run inference
         # RKNN preproc set to BGR->RGB and /255 in conversion; feed BGR uint8
         input_data = img
         t0 = time.time()
-        outputs = rknn.inference(inputs=[input_data])
+        try:
+            outputs = rknn.inference(inputs=[input_data])
+        except Exception as e:
+            raise InferenceError(f'RKNN inference failed: {e}')
         dt = (time.time() - t0) * 1000
         print(f'Inference time: {dt:.2f} ms')
         pred = outputs[0]
@@ -145,19 +171,27 @@ def main():
         return
 
     # Fallback to camera
-    cap = cv2.VideoCapture(0)
-    if not cap.isOpened():
-        raise SystemExit('Failed to open camera (/dev/video0)')
+    try:
+        cap = cv2.VideoCapture(0)
+        if not cap.isOpened():
+            raise PreprocessError('Failed to open camera (/dev/video0)')
+    except Exception as e:
+        raise PreprocessError(f'Error opening camera: {e}')
+
     fps_hist = []
     try:
         while True:
             ret, img0 = cap.read()
             if not ret:
                 break
-            img, r, d = letterbox(img0, args.imgsz)
-            t0 = time.time()
-            outputs = rknn.inference(inputs=[img])
-            pred = outputs[0]
+            try:
+                img, r, d = letterbox(img0, args.imgsz)
+                t0 = time.time()
+                outputs = rknn.inference(inputs=[img])
+                pred = outputs[0]
+            except Exception as e:
+                print(f'Warning: Inference error: {e}')
+                continue
             if pred.ndim == 2:
                 pred = pred[None, ...]
             boxes, confs, cls_ids = decode_predictions(pred, args.imgsz, args.conf, args.iou, args.head, (r, d), img0.shape[:2])
