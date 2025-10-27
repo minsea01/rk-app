@@ -137,7 +137,7 @@ def preprocess_from_array_board(img: np.ndarray, target_size: int = None) -> np.
 
     Args:
         img: Input image as numpy array (HWC, BGR, uint8)
-        target_size: Target_size: Target image size (square). Defaults to ModelConfig.DEFAULT_SIZE.
+        target_size: Target image size (square). Defaults to ModelConfig.DEFAULT_SIZE.
 
     Returns:
         Preprocessed image in NHWC format, uint8
