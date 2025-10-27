@@ -9,21 +9,27 @@ import numpy as np
 from pathlib import Path
 from typing import Union
 
+from apps.config import ModelConfig
+from apps.exceptions import PreprocessError
 
-def preprocess_onnx(img_path: Union[str, Path], target_size: int = 416) -> np.ndarray:
+
+def preprocess_onnx(img_path: Union[str, Path], target_size: int = None) -> np.ndarray:
     """Preprocess image for ONNX Runtime inference.
 
     Args:
         img_path: Path to input image
-        target_size: Target image size (square)
+        target_size: Target image size (square). Defaults to ModelConfig.DEFAULT_SIZE.
 
     Returns:
         Preprocessed image in NCHW format, float32, 0-255 range
         Shape: (1, 3, target_size, target_size)
     """
+    if target_size is None:
+        target_size = ModelConfig.DEFAULT_SIZE
+
     img = cv2.imread(str(img_path))
     if img is None:
-        raise ValueError(f"Failed to load image: {img_path}")
+        raise PreprocessError(f"Failed to load image: {img_path}")
 
     inp = cv2.resize(img, (target_size, target_size))
     inp = inp[..., ::-1]  # BGR -> RGB
@@ -32,20 +38,23 @@ def preprocess_onnx(img_path: Union[str, Path], target_size: int = 416) -> np.nd
     return inp.astype(np.float32)
 
 
-def preprocess_rknn_sim(img_path: Union[str, Path], target_size: int = 416) -> np.ndarray:
+def preprocess_rknn_sim(img_path: Union[str, Path], target_size: int = None) -> np.ndarray:
     """Preprocess image for RKNN PC simulator inference.
 
     Args:
         img_path: Path to input image
-        target_size: Target image size (square)
+        target_size: Target image size (square). Defaults to ModelConfig.DEFAULT_SIZE.
 
     Returns:
         Preprocessed image in NHWC format, float32, 0-255 range
         Shape: (1, target_size, target_size, 3)
     """
+    if target_size is None:
+        target_size = ModelConfig.DEFAULT_SIZE
+
     img = cv2.imread(str(img_path))
     if img is None:
-        raise ValueError(f"Failed to load image: {img_path}")
+        raise PreprocessError(f"Failed to load image: {img_path}")
 
     inp = cv2.resize(img, (target_size, target_size))
     inp = inp[..., ::-1]  # BGR -> RGB
@@ -53,12 +62,12 @@ def preprocess_rknn_sim(img_path: Union[str, Path], target_size: int = 416) -> n
     return np.ascontiguousarray(inp).astype(np.float32)
 
 
-def preprocess_board(img_path: Union[str, Path], target_size: int = 416) -> np.ndarray:
+def preprocess_board(img_path: Union[str, Path], target_size: int = None) -> np.ndarray:
     """Preprocess image for on-device RKNN inference.
 
     Args:
         img_path: Path to input image
-        target_size: Target image size (square)
+        target_size: Target image size (square). Defaults to ModelConfig.DEFAULT_SIZE.
 
     Returns:
         Preprocessed image in NHWC format, uint8, 0-255 range
@@ -68,9 +77,12 @@ def preprocess_board(img_path: Union[str, Path], target_size: int = 416) -> np.n
         The RKNN model should have mean/std preprocessing configured
         during conversion to handle BGR->RGB and normalization.
     """
+    if target_size is None:
+        target_size = ModelConfig.DEFAULT_SIZE
+
     img = cv2.imread(str(img_path))
     if img is None:
-        raise ValueError(f"Failed to load image: {img_path}")
+        raise PreprocessError(f"Failed to load image: {img_path}")
 
     inp = cv2.resize(img, (target_size, target_size))
     # Note: Keep as BGR uint8 if model has reorder configured
@@ -79,17 +91,20 @@ def preprocess_board(img_path: Union[str, Path], target_size: int = 416) -> np.n
     return np.ascontiguousarray(inp).astype(np.uint8)
 
 
-def preprocess_from_array_onnx(img: np.ndarray, target_size: int = 416) -> np.ndarray:
+def preprocess_from_array_onnx(img: np.ndarray, target_size: int = None) -> np.ndarray:
     """Preprocess numpy array for ONNX Runtime inference.
 
     Args:
         img: Input image as numpy array (HWC, BGR, uint8)
-        target_size: Target image size (square)
+        target_size: Target image size (square). Defaults to ModelConfig.DEFAULT_SIZE.
 
     Returns:
         Preprocessed image in NCHW format, float32
         Shape: (1, 3, target_size, target_size)
     """
+    if target_size is None:
+        target_size = ModelConfig.DEFAULT_SIZE
+
     inp = cv2.resize(img, (target_size, target_size))
     inp = inp[..., ::-1]  # BGR -> RGB
     inp = inp.transpose(2, 0, 1)  # HWC -> CHW
@@ -97,34 +112,40 @@ def preprocess_from_array_onnx(img: np.ndarray, target_size: int = 416) -> np.nd
     return inp.astype(np.float32)
 
 
-def preprocess_from_array_rknn_sim(img: np.ndarray, target_size: int = 416) -> np.ndarray:
+def preprocess_from_array_rknn_sim(img: np.ndarray, target_size: int = None) -> np.ndarray:
     """Preprocess numpy array for RKNN PC simulator inference.
 
     Args:
         img: Input image as numpy array (HWC, BGR, uint8)
-        target_size: Target image size (square)
+        target_size: Target image size (square). Defaults to ModelConfig.DEFAULT_SIZE.
 
     Returns:
         Preprocessed image in NHWC format, float32
         Shape: (1, target_size, target_size, 3)
     """
+    if target_size is None:
+        target_size = ModelConfig.DEFAULT_SIZE
+
     inp = cv2.resize(img, (target_size, target_size))
     inp = inp[..., ::-1]  # BGR -> RGB
     inp = np.expand_dims(inp, axis=0)
     return np.ascontiguousarray(inp).astype(np.float32)
 
 
-def preprocess_from_array_board(img: np.ndarray, target_size: int = 416) -> np.ndarray:
+def preprocess_from_array_board(img: np.ndarray, target_size: int = None) -> np.ndarray:
     """Preprocess numpy array for on-device RKNN inference.
 
     Args:
         img: Input image as numpy array (HWC, BGR, uint8)
-        target_size: Target image size (square)
+        target_size: Target_size: Target image size (square). Defaults to ModelConfig.DEFAULT_SIZE.
 
     Returns:
         Preprocessed image in NHWC format, uint8
         Shape: (1, target_size, target_size, 3)
     """
+    if target_size is None:
+        target_size = ModelConfig.DEFAULT_SIZE
+
     inp = cv2.resize(img, (target_size, target_size))
     inp = np.expand_dims(inp, axis=0)
     return np.ascontiguousarray(inp).astype(np.uint8)
