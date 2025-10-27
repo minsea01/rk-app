@@ -3,34 +3,23 @@
 ONNX vs RKNN 精度对拍脚本
 对比ONNX和RKNN模拟器的推理输出差异
 """
+import sys
+from pathlib import Path
+
+# Add project root to path for imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
 import onnxruntime as ort
 from rknn.api import RKNN
-import cv2
 import numpy as np
-from pathlib import Path
 import json
 
-def preprocess_for_onnx(img_path):
-    """ONNX预处理: NCHW, float32, 0-255"""
-    img = cv2.imread(str(img_path))
-    inp = cv2.resize(img, (640, 640))
-    inp = inp[..., ::-1]  # BGR -> RGB
-    inp = inp.transpose(2, 0, 1)  # HWC -> CHW
-    inp = np.expand_dims(inp, axis=0)  # (3,640,640) -> (1,3,640,640)
-    return inp.astype(np.float32)
-
-def preprocess_for_rknn(img_path):
-    """RKNN预处理: NHWC, float32"""
-    img = cv2.imread(str(img_path))
-    inp = cv2.resize(img, (640, 640))
-    inp = inp[..., ::-1]  # BGR -> RGB
-    inp = np.expand_dims(inp, axis=0)  # (640,640,3) -> (1,640,640,3)
-    return inp.astype(np.float32)
+from apps.utils.preprocessing import preprocess_onnx, preprocess_rknn_sim
 
 def run_onnx_inference(model_path, img_path):
     """ONNX推理"""
     sess = ort.InferenceSession(str(model_path))
-    inp = preprocess_for_onnx(img_path)
+    inp = preprocess_onnx(img_path, target_size=416)
     outputs = sess.run(None, {sess.get_inputs()[0].name: inp})
     return outputs[0]
 
@@ -45,7 +34,7 @@ def run_rknn_inference(model_path, img_path):
     rk.init_runtime()
 
     # 推理
-    inp = preprocess_for_rknn(img_path)
+    inp = preprocess_rknn_sim(img_path, target_size=416)
     outputs = rk.inference(inputs=[inp], data_format='nhwc')
 
     rk.release()
@@ -75,7 +64,7 @@ def compare_outputs(onnx_out, rknn_out):
     return stats
 
 def main():
-    onnx_model = Path('yolo11n.onnx')
+    onnx_model = Path('artifacts/models/yolo11n_416.onnx')
     test_images = list(Path('datasets/coco/calib_images').glob('*.jpg'))[:20]  # 测试20张
 
     print(f'Testing {len(test_images)} images...\n')

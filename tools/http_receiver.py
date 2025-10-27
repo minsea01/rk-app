@@ -1,16 +1,46 @@
 #!/usr/bin/env python3
-import argparse, json
+import argparse
+import json
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 class Handler(BaseHTTPRequestHandler):
+    # Maximum allowed payload size (10MB)
+    MAX_CONTENT_LENGTH = 10 * 1024 * 1024
+
     def do_POST(self):
-        length = int(self.headers.get('content-length', '0'))
+        # Validate Content-Length header
+        try:
+            length = int(self.headers.get('content-length', '0'))
+        except (ValueError, TypeError):
+            self.send_response(400)  # Bad Request
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            self.wfile.write(b'{"error":"Invalid Content-Length header"}')
+            return
+
+        # Check payload size limit
+        if length > self.MAX_CONTENT_LENGTH:
+            self.send_response(413)  # Payload Too Large
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            self.wfile.write(b'{"error":"Payload too large"}')
+            return
+
+        # Read and parse body
         body = self.rfile.read(length)
         try:
             data = json.loads(body.decode('utf-8'))
-        except Exception:
-            data = {'raw': body.decode('utf-8', errors='ignore')}
+        except json.JSONDecodeError as e:
+            # Not valid JSON, store as raw text
+            data = {'raw': body.decode('utf-8', errors='ignore'), 'parse_error': str(e)}
+        except UnicodeDecodeError as e:
+            # Binary data or invalid encoding
+            data = {'raw': body.hex(), 'encoding_error': str(e)}
+
+        # Log the received data
         print(json.dumps({'path': self.path, 'data': data}, ensure_ascii=False))
+
+        # Send success response
         self.send_response(200)
         self.send_header('Content-Type', 'application/json')
         self.end_headers()
