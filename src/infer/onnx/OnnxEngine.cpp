@@ -1,8 +1,8 @@
 #include "rkapp/infer/OnnxEngine.hpp"
 #include "rkapp/preprocess/Preprocess.hpp"
-#include <iostream>
-#include <onnxruntime_cxx_api.h>
+#include "log.hpp"
 #include <algorithm>
+#include <onnxruntime_cxx_api.h>
 
 namespace rkapp::infer {
 
@@ -17,7 +17,8 @@ struct OnnxEngine::Impl {
 
   static std::vector<Detection> parseOutput(Ort::Value& output,
                                             const rkapp::preprocess::LetterboxInfo& letterbox_info,
-                                            cv::Size original_size) {
+                                            cv::Size original_size,
+                                            const DecodeParams& params) {
     std::vector<Detection> detections;
     auto shape = output.GetTensorTypeAndShapeInfo().GetShape();
     float* data = output.GetTensorMutableData<float>();
@@ -38,7 +39,16 @@ struct OnnxEngine::Impl {
       }
     }
 
-    for (int i = 0; i < std::min(num_detections, 8400); i++) {
+    if (num_detections <= 0 || num_classes < 0) {
+      return detections;
+    }
+
+    int limit = num_detections;
+    if (params.max_boxes > 0) {
+      limit = std::min(limit, params.max_boxes);
+    }
+
+    for (int i = 0; i < limit; i++) {
       float cx, cy, w, h;
       if (shape[1] < 20) {
         cx = data[0 * num_detections + i];
@@ -68,7 +78,7 @@ struct OnnxEngine::Impl {
         if (conf > max_conf) { max_conf = conf; best_class = c; }
       }
 
-      if (max_conf > 0.25f) {
+      if (max_conf >= params.conf_thres) {
         Detection det;
         float scale = letterbox_info.scale, dx = letterbox_info.dx, dy = letterbox_info.dy;
         det.x = (cx - w/2 - dx) / scale;
@@ -83,6 +93,9 @@ struct OnnxEngine::Impl {
         det.class_id = best_class;
         det.class_name = "class_" + std::to_string(best_class);
         detections.push_back(det);
+        if (params.max_boxes > 0 && static_cast<int>(detections.size()) >= params.max_boxes) {
+          break;
+        }
       }
     }
     return detections;
@@ -98,8 +111,8 @@ bool OnnxEngine::init(const std::string& model_path, int img_size) {
     input_size_ = img_size;
     impl_ = std::make_unique<Impl>();
 
-    std::cout << "OnnxEngine: Initializing with model " << model_path_
-              << " (size: " << input_size_ << ")" << std::endl;
+    LOGI("OnnxEngine: Initializing with model ", model_path_,
+         " (size: ", input_size_, ")");
 
     impl_->env = std::make_unique<Ort::Env>(ORT_LOGGING_LEVEL_WARNING, "OnnxEngine");
     Ort::SessionOptions session_options;
@@ -107,7 +120,7 @@ bool OnnxEngine::init(const std::string& model_path, int img_size) {
     session_options.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
 
     // Try CUDA if available
-    std::cout << "OnnxEngine: Attempting CUDA provider..." << std::endl;
+    LOGI("OnnxEngine: Attempting CUDA provider...");
     try {
       OrtCUDAProviderOptions cuda_opts{};
       cuda_opts.device_id = 0;
@@ -115,10 +128,10 @@ bool OnnxEngine::init(const std::string& model_path, int img_size) {
       cuda_opts.do_copy_in_default_stream = 1;
       session_options.AppendExecutionProvider_CUDA(cuda_opts);
       impl_->use_cuda = true;
-      std::cout << "OnnxEngine: CUDA provider added" << std::endl;
+      LOGI("OnnxEngine: CUDA provider added");
     } catch (const std::exception& e) {
       impl_->use_cuda = false;
-      std::cout << "OnnxEngine: CUDA provider unavailable, CPU fallback: " << e.what() << std::endl;
+      LOGW("OnnxEngine: CUDA provider unavailable, CPU fallback: ", e.what());
     }
 
     impl_->session = std::make_unique<Ort::Session>(*impl_->env, model_path_.c_str(), session_options);
@@ -137,16 +150,16 @@ bool OnnxEngine::init(const std::string& model_path, int img_size) {
     }
 
     is_initialized_ = true;
-    std::cout << "OnnxEngine: Initialized successfully" << std::endl;
+    LOGI("OnnxEngine: Initialized successfully");
     return true;
   } catch (const Ort::Exception& e) {
-    std::cerr << "OnnxEngine init error: " << e.what() << std::endl;
+    LOGE("OnnxEngine init error: ", e.what());
     return false;
   }
 }
 
 std::vector<Detection> OnnxEngine::infer(const cv::Mat& image) {
-  if (!is_initialized_) { std::cerr << "OnnxEngine: Not initialized!" << std::endl; return {}; }
+  if (!is_initialized_) { LOGE("OnnxEngine: Not initialized!"); return {}; }
   try {
     rkapp::preprocess::LetterboxInfo letterbox_info;
     cv::Mat processed = rkapp::preprocess::Preprocess::letterbox(image, input_size_, letterbox_info);
@@ -166,14 +179,19 @@ std::vector<Detection> OnnxEngine::infer(const cv::Mat& image) {
     auto outputs = impl_->session->Run(Ort::RunOptions{nullptr},
                                        in_names.data(), inputs.data(), inputs.size(),
                                        out_names.data(), out_names.size());
-    if (outputs.empty()) return {};
-    return Impl::parseOutput(outputs[0], letterbox_info, image.size());
+    if (outputs.empty()) {
+      LOGW("OnnxEngine inference returned no outputs");
+      return {};
+    }
+    return Impl::parseOutput(outputs[0], letterbox_info, image.size(), decode_params_);
   } catch (const Ort::Exception& e) {
-    std::cerr << "OnnxEngine inference error: " << e.what() << std::endl; return {}; }
+    LOGE("OnnxEngine inference error: ", e.what());
+    return {};
+  }
 }
 
 void OnnxEngine::warmup() {
-  if (!is_initialized_) { std::cerr << "OnnxEngine: Cannot warmup - not initialized!" << std::endl; return; }
+  if (!is_initialized_) { LOGW("OnnxEngine: Cannot warmup - not initialized!"); return; }
   cv::Mat dummy(input_size_, input_size_, CV_8UC3, cv::Scalar(128,128,128));
   (void)infer(dummy);
 }
@@ -185,10 +203,14 @@ void OnnxEngine::release() {
   impl_->memory_info.reset();
   impl_.reset();
   is_initialized_ = false;
-  std::cout << "OnnxEngine: Released" << std::endl;
+  LOGI("OnnxEngine: Released");
 }
 
 int OnnxEngine::getInputWidth() const { return input_size_; }
 int OnnxEngine::getInputHeight() const { return input_size_; }
+
+void OnnxEngine::setDecodeParams(const DecodeParams& params) {
+  decode_params_ = params;
+}
 
 } // namespace rkapp::infer

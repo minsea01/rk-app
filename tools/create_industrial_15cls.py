@@ -212,12 +212,13 @@ def modify_sample_class(sample, new_class):
     return create_augmented_sample(sample, new_class)
 
 def main():
-    source_dataset = "/home/minsea01/datasets/your"
-    output_dataset = "/home/minsea01/datasets/industrial_15_classes_ready"
+    home = Path.home()
+    source_dataset = home / "datasets" / "your"
+    output_dataset = home / "datasets" / "industrial_15_classes_ready"
     
     print("🏭 创建15类工业检测数据集...")
     
-    if not os.path.exists(source_dataset):
+    if not source_dataset.exists():
         print(f"❌ 源数据集不存在: {source_dataset}")
         return
     
@@ -231,8 +232,8 @@ def main():
     # 验证数据集
     print("\n🔍 验证数据集...")
     for split in ['train', 'val', 'test']:
-        img_count = len(list(Path(f"{output_dataset}/{split}/images").glob("*.jpg")))
-        label_count = len(list(Path(f"{output_dataset}/{split}/labels").glob("*.txt")))
+        img_count = len(list((output_dataset / split / "images").glob("*.jpg")))
+        label_count = len(list((output_dataset / split / "labels").glob("*.txt")))
         print(f"  {split}: {img_count} 图像, {label_count} 标签")
 
 if __name__ == "__main__":

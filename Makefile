@@ -1,7 +1,7 @@
 # Simple orchestration for training, export, conversion, and evidence collection
 
 # Defaults (override with env, e.g., make DATA_YAML=...)
-DATA_YAML ?= $(shell yq -r '.dataset_yaml' configs/exp.yaml 2>/dev/null || echo /home/minsea01/datasets/coco80_yolo/data.yaml)
+DATA_YAML ?= $(shell yq -r '.dataset_yaml' configs/exp.yaml 2>/dev/null || echo $(HOME)/datasets/coco80_yolo/data.yaml)
 RUN_NAME  ?= $(shell yq -r '.run_name' configs/exp.yaml 2>/dev/null || echo coco80_y8s)
 IMG_SIZE  ?= $(shell yq -r '.imgsz' configs/exp.yaml 2>/dev/null || echo 640)
 EPOCHS    ?= $(shell yq -r '.epochs' configs/exp.yaml 2>/dev/null || echo 100)
@@ -15,18 +15,19 @@ CALIB_DIR ?= $(shell yq -r '.calib_dir' configs/exp.yaml 2>/dev/null || echo dat
 TRAIN_IMG ?= yolov8-train:cu121
 BUILD_IMG ?= rknn-build:1.7.5
 
-# Artifacts
-BEST_PT   ?= runs/train/$(RUN_NAME)/weights/best.pt
-ONNX_OUT  ?= artifacts/models/best.onnx
-RKNN_INT8 ?= artifacts/models/yolov8s_int8.rknn
-RKNN_FP16 ?= artifacts/models/yolov8s_fp16.rknn
+# Model artifacts (prefix can be overridden)
+MODEL_PREFIX ?= yolo11n
+BEST_PT      ?= runs/train/$(RUN_NAME)/weights/best.pt
+ONNX_OUT     ?= artifacts/models/$(MODEL_PREFIX).onnx
+RKNN_INT8    ?= artifacts/models/$(MODEL_PREFIX)_int8.rknn
+RKNN_FP16    ?= artifacts/models/$(MODEL_PREFIX)_fp16.rknn
 
-.PHONY: train export convert-int8 convert-fp16 all collect
+.PHONY: train export convert-int8 convert-fp16 all collect validate
 
 train:
 	@echo "[TRAIN] data=$(DATA_YAML) run=$(RUN_NAME)" 
 	docker run --rm -it --gpus all -v "$$PWD":/work -w /work \
-	  -v /home/minsea01/datasets:/home/minsea01/datasets $(TRAIN_IMG) \
+	  -v $(HOME)/datasets:$(HOME)/datasets $(TRAIN_IMG) \
 	  python tools/train_yolov8.py --data $(DATA_YAML) --model yolov8s.pt \
 	  --imgsz $(IMG_SIZE) --epochs $(EPOCHS) --batch $(BATCH) --device $(DEVICE) \
 	  --workers $(WORKERS) --project runs/train --name $(RUN_NAME)
@@ -58,6 +59,11 @@ COMPARE_IMG ?=
 compare:
 	@echo "[COMPARE] ONNX vs RKNN(sim)"
 	python tools/pc_compare.py --onnx $(ONNX_OUT) $(if $(COMPARE_IMG),--img $(COMPARE_IMG),) --imgsz $(IMG_SIZE)
+
+VALIDATE_IMG ?= assets/test.jpg
+validate:
+	@echo "[VALIDATE] onnx=$(ONNX_OUT) rknn=$(RKNN_INT8) img=$(VALIDATE_IMG)"
+	python scripts/validate_models.py --onnx $(ONNX_OUT) --rknn $(RKNN_INT8) --image $(VALIDATE_IMG) --imgsz $(IMG_SIZE)
 
 .PHONY: calib
 CALIB_SRC ?=

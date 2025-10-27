@@ -21,6 +21,7 @@ public:
 
   // 可选：设置NPU核心掩码（例如：1<<0, 1<<1, 1<<2）。若运行库不支持，将被忽略。
   void setCoreMask(uint32_t core_mask) { core_mask_ = core_mask; }
+  void setDecodeParams(const DecodeParams& params) override;
 
   // 添加类别数访问接口
   int num_classes() const { return num_classes_; }
@@ -42,7 +43,7 @@ private:
   int num_classes_ = -1;
   bool has_objness_ = true;  // Most YOLO exports include objectness score
   std::vector<std::string> class_names_;
+  DecodeParams decode_params_;
 };
 
 } // namespace rkapp::infer
-

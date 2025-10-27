@@ -14,6 +14,12 @@ struct Detection {
     std::string class_name; // class name
 };
 
+struct DecodeParams {
+    float conf_thres = 0.25f;
+    float iou_thres = 0.45f;
+    int max_boxes = 0;          // 0 or negative means unlimited
+};
+
 class IInferEngine {
 public:
     virtual ~IInferEngine() = default;
@@ -25,6 +31,8 @@ public:
     
     virtual int getInputWidth() const = 0;
     virtual int getInputHeight() const = 0;
+
+    virtual void setDecodeParams(const DecodeParams& params) { (void)params; }
 };
 
 using InferEnginePtr = std::unique_ptr<IInferEngine>;

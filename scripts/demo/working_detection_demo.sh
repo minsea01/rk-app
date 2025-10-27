@@ -1,17 +1,18 @@
 #!/bin/bash
 # 真实工作的检测演示 - 使用本地图片避免GigE连接问题
 
-cd /home/minsea01/dev/rk-projects/rk-app
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "$ROOT_DIR"
 
 echo "RK3588工业检测系统 - 实际运行演示"
 echo "============================================================"
 
 # 检查是否有可用的测试图片
 TEST_IMAGES=""
-if [ -d "/home/minsea01/datasets/coco128/images/train2017" ]; then
-    TEST_IMAGES="/home/minsea01/datasets/coco128/images/train2017"
-elif [ -d "/home/minsea01/datasets/coco/images/val" ]; then
-    TEST_IMAGES="/home/minsea01/datasets/coco/images/val"  
+if [ -d "$HOME/datasets/coco128/images/train2017" ]; then
+    TEST_IMAGES="$HOME/datasets/coco128/images/train2017"
+elif [ -d "$HOME/datasets/coco/images/val" ]; then
+    TEST_IMAGES="$HOME/datasets/coco/images/val"
 elif [ -d "datasets/calib" ]; then
     TEST_IMAGES="datasets/calib"
 else
@@ -20,7 +21,8 @@ else
 fi
 
 echo "测试图片目录: $TEST_IMAGES"
-echo "图片数量: $(ls $TEST_IMAGES/*.jpg 2>/dev/null | wc -l)"
+IMG_COUNT=$(find "$TEST_IMAGES" -maxdepth 1 -type f -name '*.jpg' 2>/dev/null | wc -l)
+echo "图片数量: $IMG_COUNT"
 
 # 创建临时配置文件
 cat > /tmp/demo_config.yaml << EOF

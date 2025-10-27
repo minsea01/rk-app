@@ -85,6 +85,11 @@ class TestConfigHelpers:
         assert config['size'] == 640
         assert config['max_detections'] == ModelConfig.MAX_DETECTIONS_640
 
+    def test_get_detection_config_invalid_size(self):
+        """Test get_detection_config with unsupported size."""
+        with pytest.raises(ValueError):
+            get_detection_config(size=320)
+
     def test_get_rknn_config(self):
         """Test get_rknn_config."""
         config = get_rknn_config()

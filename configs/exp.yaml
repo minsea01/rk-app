@@ -1,7 +1,7 @@
 # Unified experiment configuration (override via env or CLI)
 
 # Dataset (>=10 classes) - Industrial defect detection
-dataset_yaml: /home/minsea01/datasets/coco4cls_industrial/data.yaml
+dataset_yaml: datasets/coco4cls_industrial/data.yaml
 
 # Training
 imgsz: 640

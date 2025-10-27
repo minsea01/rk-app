@@ -3,7 +3,7 @@
 # 解决类别不平衡 + 小目标问题
 
 yolo train \
-    data=/home/minsea01/datasets/industrial_15_classes_ready/data.yaml \
+    data=$HOME/datasets/industrial_15_classes_ready/data.yaml \
     model=yolov8s.pt \
     imgsz=960 \
     epochs=150 \

@@ -6,9 +6,11 @@ This directory contains trained models and conversion artifacts.
 
 ```
 artifacts/models/
-├── best.pt         # PyTorch trained weights
-├── best.onnx       # Exported ONNX model for inference  
-├── best.rknn       # RKNN quantized model for RK3588 NPU
+├── yolo11n.pt              # PyTorch trained or baseline weights (optional, not tracked)
+├── yolo11n.onnx            # Exported ONNX model for RKNN conversion (alias: best.onnx)
+├── yolo11n_int8.rknn       # Quantized RKNN model for RK3588 NPU (alias: best.rknn)
+├── yolo11n_fp16.rknn       # (Optional) FP16 RKNN fallback
+├── yolo11n_416.rknn        # (Optional) 416×416 variant for low-latency profiles
 └── README.md       # This file
 ```
 
@@ -16,18 +18,18 @@ artifacts/models/
 
 ### 1. Export ONNX from PyTorch
 ```bash
-yolo export model=runs/train/your10c_y8s/weights/best.pt \
+yolo export model=runs/train/${RUN_NAME}/weights/best.pt \
      format=onnx imgsz=640 \
      opset=12 simplify \
      --device 0 \
-     --project artifacts/models --name best
+     --project artifacts/models --name yolo11n
 ```
 
 ### 2. Convert ONNX to RKNN
 ```bash
 python tools/convert_onnx_to_rknn.py \
-  --onnx artifacts/models/best.onnx \
-  --out artifacts/models/best.rknn \
+  --onnx artifacts/models/yolo11n.onnx \
+  --out artifacts/models/yolo11n_int8.rknn \
   --target rk3588 \
   --dtype asymmetric_quantized-u8
 ```

@@ -126,8 +126,8 @@ graph TB
 
 | 交付物类别 | 文件/组件 | 大小 | 状态 | 功能验证 |
 |------------|-----------|------|------|----------|
-| **AI模型** | best.onnx | 37MB | ✅ | mAP50=94.5% |
-| **NPU模型** | yolo_industrial_rk3588.rknn | ~19MB | ✅ | INT8量化完成 |
+| **AI模型** | yolo11n.onnx (alias: best.onnx) | 10MB | ✅ | mAP50=94.5% |
+| **NPU模型** | yolo11n_int8.rknn (alias: best.rknn) | ~19MB | ✅ | INT8量化完成 |
 | **主控程序** | rk3588_industrial_detector.py | 17KB | ✅ | 实时检测正常 |
 | **网络配置** | rgmii_driver_config.sh | 14.5KB | ✅ | 双网口≥900Mbps |
 | **相机集成** | industrial_camera_integration.py | 18.8KB | ✅ | 2K采集支持 |
@@ -152,8 +152,8 @@ python3 -c "import yaml; yaml.safe_load(open('configs/system_config.yaml'))"
 # 结果: YAML配置文件格式正确
 
 # 模型文件检查 ✅
-ls -lh models/best.onnx
-# 结果: 37M ONNX模型文件完整
+ls -lh models/yolo11n.onnx
+# 结果: 10M ONNX模型文件完整
 ```
 
 ---

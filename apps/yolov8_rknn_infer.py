@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 import argparse
-from pathlib import Path
+import logging
 import time
+from pathlib import Path
+
 import cv2
 import numpy as np
 
 from apps.utils.yolo_post import letterbox, postprocess_yolov8
 from apps.exceptions import RKNNError, PreprocessError, InferenceError, ModelLoadError
+from apps.logger import setup_logger
 
 
 def decode_predictions(pred, imgsz, conf_thres, iou_thres, head='auto', ratio_pad=(1.0, (0.0, 0.0)), orig_shape=None):
@@ -99,7 +102,16 @@ def main():
     ap.add_argument('--head', type=str, choices=['auto', 'dfl', 'raw'], default='auto', help='head decode type')
     ap.add_argument('--core-mask', type=lambda x: int(x, 0), default=0x7, help='NPU core mask (e.g., 0x7 for 3 cores)')
     ap.add_argument('--save', type=Path, default=None, help='save annotated result image')
+    ap.add_argument(
+        '--log-level',
+        type=str,
+        default='INFO',
+        choices=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'],
+        help='logging verbosity'
+    )
     args = ap.parse_args()
+
+    logger = setup_logger(__name__, level=getattr(logging, args.log_level.upper()))
 
     try:
         from rknnlite.api import RKNNLite
@@ -111,7 +123,7 @@ def main():
     rknn = RKNNLite()
 
     # Load RKNN model
-    print(f'Loading RKNN: {args.model}')
+    logger.info('Loading RKNN: %s', args.model)
     if not args.model.exists():
         raise ModelLoadError(f"Model file not found: {args.model}")
 
@@ -123,7 +135,7 @@ def main():
         raise ModelLoadError(f'Error loading RKNN model: {e}')
 
     # Initialize runtime
-    print(f'Initializing runtime, core_mask={hex(args.core_mask)}')
+    logger.info('Initializing runtime, core_mask=%s', hex(args.core_mask))
     try:
         ret = rknn.init_runtime(core_mask=args.core_mask)
         if ret != 0:
@@ -154,16 +166,16 @@ def main():
         except Exception as e:
             raise InferenceError(f'RKNN inference failed: {e}')
         dt = (time.time() - t0) * 1000
-        print(f'Inference time: {dt:.2f} ms')
+        logger.info('Inference time: %.2f ms', dt)
         pred = outputs[0]
         if pred.ndim == 2:
             pred = pred[None, ...]
         boxes, confs, cls_ids = decode_predictions(pred, args.imgsz, args.conf, args.iou, args.head, (r, d), img0.shape[:2])
-        print(f'Detections: {len(boxes)}')
+        logger.info('Detections: %d', len(boxes))
         vis = draw_boxes(img0.copy(), boxes, confs, cls_ids, class_names)
         if args.save:
             cv2.imwrite(str(args.save), vis)
-            print(f'Saved: {args.save}')
+            logger.info('Saved: %s', args.save)
         else:
             cv2.imshow('result', vis)
             cv2.waitKey(0)
@@ -190,7 +202,7 @@ def main():
                 outputs = rknn.inference(inputs=[img])
                 pred = outputs[0]
             except Exception as e:
-                print(f'Warning: Inference error: {e}')
+                logger.warning('Inference error: %s', e)
                 continue
             if pred.ndim == 2:
                 pred = pred[None, ...]
@@ -208,7 +220,11 @@ def main():
         rknn.release()
         cv2.destroyAllWindows()
         if fps_hist:
-            print(f'Avg FPS: {np.mean(fps_hist):.2f}, P90: {np.percentile(fps_hist, 90):.2f}')
+            logger.info(
+                'Avg FPS: %.2f, P90: %.2f',
+                np.mean(fps_hist),
+                np.percentile(fps_hist, 90)
+            )
 
 
 if __name__ == '__main__':

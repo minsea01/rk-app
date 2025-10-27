@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Params
-DS_YAML=${1:-/home/minsea01/datasets/coco80.yaml}
+DS_YAML=${1:-$HOME/datasets/coco80.yaml}
 EPOCHS=${EPOCHS:-50}
 IMG=${IMG:-640}
 BATCH=${BATCH:-16}
@@ -20,7 +20,7 @@ echo "[Train] classes: $CLASSES"
 # Preflight: validate dataset YAML presence and contents
 if [ ! -f "$DS_YAML" ]; then
   echo "[ERROR] Dataset YAML not found: $DS_YAML" >&2
-  echo "        Please point to an existing data.yaml (e.g., /home/minsea01/datasets/coco80.yaml)" >&2
+  echo "        Please point to an existing data.yaml (e.g., $HOME/datasets/coco80.yaml)" >&2
   exit 3
 fi
 

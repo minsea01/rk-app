@@ -36,31 +36,50 @@ def setup_logger(
     logger = logging.getLogger(name)
     logger.setLevel(level)
 
-    # Avoid adding duplicate handlers if logger already configured
-    if logger.handlers:
-        return logger
-
-    # Create formatter
+    # Create formatter shared across handlers
     formatter = logging.Formatter(
         '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
         datefmt='%Y-%m-%d %H:%M:%S'
     )
 
-    # Console handler
+    # Manage console handler
+    existing_console_handlers = [
+        handler for handler in logger.handlers
+        if isinstance(handler, logging.StreamHandler) and getattr(handler, 'stream', None) is sys.stdout
+    ]
     if console:
-        console_handler = logging.StreamHandler(sys.stdout)
-        console_handler.setLevel(level)
-        console_handler.setFormatter(formatter)
-        logger.addHandler(console_handler)
+        if not existing_console_handlers:
+            console_handler = logging.StreamHandler(sys.stdout)
+            console_handler.setFormatter(formatter)
+            logger.addHandler(console_handler)
+            existing_console_handlers.append(console_handler)
+    else:
+        for handler in existing_console_handlers:
+            logger.removeHandler(handler)
 
-    # File handler
+    # Manage file handler
     if log_file:
         log_file = Path(log_file)
         log_file.parent.mkdir(parents=True, exist_ok=True)
-        file_handler = logging.FileHandler(log_file)
-        file_handler.setLevel(level)
-        file_handler.setFormatter(formatter)
-        logger.addHandler(file_handler)
+        existing_file_handler = next(
+            (
+                handler for handler in logger.handlers
+                if isinstance(handler, logging.FileHandler)
+                and Path(getattr(handler, 'baseFilename', '')) == log_file
+            ),
+            None
+        )
+        if existing_file_handler is None:
+            file_handler = logging.FileHandler(log_file)
+            file_handler.setFormatter(formatter)
+            logger.addHandler(file_handler)
+    # Ensure all handlers share the configured level and formatter
+    for handler in logger.handlers:
+        handler.setLevel(level)
+        if isinstance(handler, logging.StreamHandler) and getattr(handler, 'stream', None) is sys.stdout:
+            handler.setFormatter(formatter)
+        elif isinstance(handler, logging.FileHandler):
+            handler.setFormatter(formatter)
 
     return logger
 
