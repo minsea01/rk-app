@@ -193,12 +193,12 @@ class ComplianceValidator:
                 try:
                     import yaml
                     config_files = [
-                        "../configs/system_config.yaml",
-                        "/home/minsea01/datasets/coco128/data.yaml"
+                        Path(__file__).resolve().parents[2] / "configs" / "system_config.yaml",
+                        Path.home() / "datasets" / "coco128" / "data.yaml",
                     ]
                     
                     for config_file in config_files:
-                        if Path(config_file).exists():
+                        if config_file.exists():
                             with open(config_file, 'r') as f:
                                 config = yaml.safe_load(f)
                             

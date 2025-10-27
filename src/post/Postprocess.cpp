@@ -2,7 +2,10 @@
 #include <fstream>
 #include <sstream>
 #include <algorithm>
+#include <cmath>
 #include <iostream>
+#include <limits>
+#include "log.hpp"
 
 namespace rkapp::post {
 
@@ -12,10 +15,36 @@ std::vector<rkapp::infer::Detection> Postprocess::nms(
     
     std::vector<rkapp::infer::Detection> result;
     
-    // Filter by confidence threshold
+    const float min_box = config.min_box_size > 0.0f ? config.min_box_size : 0.0f;
+    const float max_box = config.max_box_size > 0.0f ? config.max_box_size : 0.0f;
+    const float min_ar = config.min_aspect_ratio > 0.0f ? config.min_aspect_ratio : 0.0f;
+    const float max_ar = config.max_aspect_ratio > 0.0f ? config.max_aspect_ratio : 0.0f;
+    constexpr float kEps = 1e-6f;
+
+    // Filter by confidence / geometry
     std::vector<rkapp::infer::Detection> filtered;
     for (const auto& det : detections) {
         if (det.confidence >= config.conf_thres) {
+            float w = det.w;
+            float h = det.h;
+            if (w <= 0.0f || h <= 0.0f) {
+                continue;
+            }
+            if (min_box > 0.0f && (w < min_box || h < min_box)) {
+                continue;
+            }
+            if (max_box > 0.0f && (w > max_box || h > max_box)) {
+                continue;
+            }
+            if (min_ar > 0.0f || max_ar > 0.0f) {
+                float ratio = h / std::max(w, kEps);
+                if (min_ar > 0.0f && ratio < min_ar) {
+                    continue;
+                }
+                if (max_ar > 0.0f && ratio > max_ar) {
+                    continue;
+                }
+            }
             filtered.push_back(det);
         }
     }
@@ -37,7 +66,8 @@ std::vector<rkapp::infer::Detection> Postprocess::nms(
         if (suppressed[i]) continue;
         
         result.push_back(filtered[i]);
-        if (result.size() >= static_cast<size_t>(config.max_det)) {
+        if (config.max_det > 0 &&
+            result.size() >= static_cast<size_t>(config.max_det)) {
             break;
         }
         
@@ -60,13 +90,20 @@ std::vector<rkapp::infer::Detection> Postprocess::nms(
 void Postprocess::rescaleDetections(
     std::vector<rkapp::infer::Detection>& detections,
     float scale_x, float scale_y, float dx, float dy) {
-    
+    if (std::fabs(scale_x) < 1e-6f || std::fabs(scale_y) < 1e-6f) {
+        LOGE("Postprocess::rescaleDetections: invalid scale factors: ", scale_x, ", ", scale_y);
+        return;
+    }
+
+    const float safe_scale_x = scale_x;
+    const float safe_scale_y = scale_y;
+
     for (auto& det : detections) {
         // Rescale from input image coordinates to original image coordinates
-        det.x = (det.x - dx) / scale_x;
-        det.y = (det.y - dy) / scale_y;
-        det.w = det.w / scale_x;
-        det.h = det.h / scale_y;
+        det.x = (det.x - dx) / safe_scale_x;
+        det.y = (det.y - dy) / safe_scale_y;
+        det.w = det.w / safe_scale_x;
+        det.h = det.h / safe_scale_y;
     }
 }
 

@@ -70,8 +70,8 @@ source venv-ubuntu22/bin/activate
 # 升级 pip
 pip install --upgrade pip
 
-# 安装 RKNN 工具链（兼容 Python 3.10）
-pip install rknn-toolkit2==2.3.2
+# 安装 RKNN 工具链（版本参考 configs/toolchain_versions.toml）
+pip install rknn-toolkit2==1.7.5
 
 # 安装其他依赖
 pip install numpy==1.26.4 \
@@ -79,7 +79,7 @@ pip install numpy==1.26.4 \
             onnxsim \
             onnxruntime \
             opencv-python-headless \
-            ultralytics==8.3.204
+            ultralytics==8.2.79
 
 # 可选：PyTorch（用于模型训练/转换）
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
@@ -113,7 +113,7 @@ ctest --preset x86-debug
 
 | 组件 | Ubuntu 22.04 | Ubuntu 24.04 | 兼容性 |
 |------|--------------|--------------|--------|
-| Python | 3.10 | 3.12 | ✅ RKNN-Toolkit2 2.3.2 支持两者 |
+| Python | 3.10 | 3.12 | ✅ RKNN-Toolkit2 1.7.5 支持两者 |
 | GCC | 11.x | 13.x | ✅ 都支持 C++17 |
 | CMake | 3.22 | 3.28 | ✅ 都满足 >=3.16 要求 |
 | OpenCV | 4.5.4 | 4.6+ | ✅ API 兼容 |
@@ -199,13 +199,13 @@ python3 -c "import onnx; print(f'ONNX {onnx.__version__}')"
 对于 Ubuntu 22.04 系统，推荐使用以下配置：
 
 ```bash
-# Python 依赖版本（已验证兼容）
-rknn-toolkit2==2.3.2
+# Python 依赖版本（已验证兼容，如需更新请同步 configs/toolchain_versions.toml）
+rknn-toolkit2==1.7.5
 numpy==1.26.4
 onnx==1.16.1
 onnxruntime==1.18.1
 opencv-python-headless==4.9.0.80
-ultralytics==8.3.204
+ultralytics==8.2.79
 ```
 
 ## 总结

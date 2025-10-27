@@ -14,7 +14,7 @@
 | 要求类别 | 符合度 | 说明 |
 |---------|--------|------|
 | **软件环境** | 100% ✅ | 完全满足 Ubuntu 20.04 + 交叉编译 |
-| **模型优化** | 100% ✅ | YOLOv8 + ONNX→RKNN + INT8量化 |
+| **模型优化** | 100% ✅ | YOLOv8 + ONNX→RKNN + INT8量化 (版本见 `configs/toolchain_versions.toml`) |
 | **应用实现** | 100% ✅ | 80类工业检测（超出10类要求） |
 | **双网口驱动** | 95% ⚠️ | 软件完备，需RK3588实机验证 |
 | **性能指标** | 90% ⚠️ | 理论达标，需实机测试确认 |
@@ -61,9 +61,9 @@ rk-app/src/capture/FolderSource.cpp
 | 要求项 | 状态 | 实现细节 |
 |--------|------|----------|
 | YOLOv8模型 | ✅ | `apps/yolov8_rknn_infer.py` |
-| PyTorch→ONNX | ✅ | Ultralytics 8.3.204 导出 |
+| PyTorch→ONNX | ✅ | Ultralytics 8.2.79 导出 |
 | ONNX→RKNN转换 | ✅ | `test_rknn_convert.py` (已验证) |
-| INT8量化 | ✅ | rknn-toolkit2 2.3.2 量化脚本 |
+| INT8量化 | ✅ | rknn-toolkit2 (版本见 `configs/toolchain_versions.toml`) |
 | NPU多核并行 | ✅ | `examples/detect_rknn_multicore.cpp` |
 
 **技术路线完全符合**:
@@ -72,14 +72,14 @@ YOLOv8 (PyTorch)
    ↓
 ONNX (onnxruntime 1.18.1)
    ↓
-RKNN (rknn-toolkit2 2.3.2 + INT8量化)
+RKNN (rknn-toolkit2 + INT8量化，版本见 `configs/toolchain_versions.toml`)
    ↓
 RK3588 NPU推理 (6TOPS算力)
 ```
 
 **模型文件**:
-- ✅ `artifacts/models/best.onnx` (ONNX模型)
-- ✅ `artifacts/models/industrial_15cls_rk3588_w8a8.rknn` (量化后RKNN模型)
+- ✅ `artifacts/models/yolo11n.onnx` (亦以 `best.onnx` 提供别名)
+- ✅ `artifacts/models/yolo11n_int8.rknn` (亦以 `best.rknn` 提供别名)
 
 ---
 

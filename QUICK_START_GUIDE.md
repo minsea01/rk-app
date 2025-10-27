@@ -23,7 +23,7 @@ rk-app/
 
 ### **方法1：从项目根目录运行**
 ```bash
-cd /home/minsea01/dev/rk-projects/rk-app
+cd ~/rk-app
 
 # 设置环境
 export LD_LIBRARY_PATH=$PWD/.third_party/aravis/_install/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH
@@ -39,7 +39,7 @@ sudo -E arv-fake-gv-camera-0.10 -i 127.0.0.1 >/tmp/arv_fake.log 2>&1 &
 
 ### **方法2：使用演示脚本**
 ```bash
-cd /home/minsea01/dev/rk-projects/rk-app
+cd ~/rk-app
 
 # 运行完整演示脚本（推荐给老师演示）
 ./scripts/demo/demo_presentation_script.sh
@@ -91,7 +91,7 @@ grep "model:" config/detection/detect.yaml
 ### **Q: 演示脚本路径错误**
 ```bash
 # 确保从项目根目录运行
-cd /home/minsea01/dev/rk-projects/rk-app
+cd ~/rk-app
 ./scripts/demo/demo_presentation_script.sh
 ```
 

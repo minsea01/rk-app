@@ -34,3 +34,38 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Agent Config (contains API key)
+.agent_config.json
+
+# Test & Coverage
+.coverage
+.pytest_cache/
+htmlcov/
+
+# Model files (too large)
+*.onnx
+*.rknn
+
+# Binary files
+*.o
+*.a
+*.so
+out/
+build/
+
+# Temporary
+=*
+.tmp*
+*.tmp
+
+# Generated documentation
+AGENTS.md
+AGENT_SDK_CONFIG_GUIDE.md
+AUTO_TRAINING_GUIDE.md
+FINAL_STATUS.md
+FULL_PROJECT_REPORT.md
+MCP_USAGE_GUIDE.md
+PROGRESS_SUMMARY.md
+README_AGENT.md
+TEST_REPORT.md

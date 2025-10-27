@@ -2,7 +2,7 @@
 YOLO数据集健康检查报告
 ============================================================
 
-数据集路径: /home/minsea01/datasets/industrial_15_classes_ready
+数据集路径: /home/minsea/datasets/industrial_15_classes_ready
 类别数量: 15
 类别名称: screw, bolt, nut, washer, gear, bearing, circuit_board, connector, sensor, cable, valve, pump, motor, pipe, defect
 

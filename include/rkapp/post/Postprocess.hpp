@@ -12,6 +12,10 @@ struct NMSConfig {
     float iou_thres = 0.60f;
     int max_det = 1000;
     int topk = 1000; // 先按置信度截取 Top-K 再做 NMS
+    float min_box_size = 0.0f;     // 最小宽高（像素）
+    float max_box_size = 0.0f;     // 最大宽高（像素），0 表示不限
+    float min_aspect_ratio = 0.0f; // H/W 下界，0 表示不限
+    float max_aspect_ratio = 0.0f; // H/W 上界，0 表示不限
 };
 
 class Postprocess {

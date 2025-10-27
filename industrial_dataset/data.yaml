@@ -1,6 +1,6 @@
 
 # Path to the dataset root directory
-path: /home/minsea01/dev/rk-projects/rk-app/industrial_dataset
+path: /home/minsea/rk-app/industrial_dataset
 
 # Train/val paths relative to 'path'
 train: images/train

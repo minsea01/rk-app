@@ -1,13 +1,17 @@
 #include <iostream>
 #include <chrono>
+#include <atomic>
+#include <cctype>
 #include <filesystem>
 #include <yaml-cpp/yaml.h>
+#include <vector>
 
 #include "rkapp/capture/ISource.hpp"
 #include "rkapp/infer/IInferEngine.hpp"
 #include "rkapp/preprocess/Preprocess.hpp"
 #include "rkapp/post/Postprocess.hpp"
 #include "rkapp/output/IOutput.hpp"
+#include "log.hpp"
 
 // Concrete class headers
 #include "rkapp/capture/FolderSource.hpp"
@@ -37,10 +41,17 @@ struct Config {
     int nms_topk = 1000;
     int warmup = 5;
     bool async = false;
+    std::string log_level = "INFO";
     std::string output_type = "tcp";
     std::string output_ip = "127.0.0.1";
     int output_port = 9000;
+    int output_queue = 0;
     std::string classes_path = "config/classes.txt";
+    std::vector<std::string> inline_class_names;
+    float min_box_size = 0.0f;
+    float max_box_size = 0.0f;
+    float min_aspect_ratio = 0.0f;
+    float max_aspect_ratio = 0.0f;
 };
 
 void printUsage(const char* program_name) {
@@ -52,7 +63,23 @@ void printUsage(const char* program_name) {
     std::cout << "  --json <file>        Save JSON results to file\\n";
     std::cout << "  --warmup <N>         Warmup iterations before timing (default: 5)\\n";
     std::cout << "  --async              Enable async capture->infer pipeline\\n";
+    std::cout << "  --log-level <lvl>    Set log level (TRACE/DEBUG/INFO/WARN/ERROR)\\n";
     std::cout << "  --help               Show this help message\\n";
+}
+
+rklog::Level parseLogLevel(const std::string& level_name) {
+    std::string upper;
+    upper.reserve(level_name.size());
+    for (char c : level_name) {
+        upper.push_back(static_cast<char>(std::toupper(static_cast<unsigned char>(c))));
+    }
+    if (upper == "TRACE") return rklog::TRACE;
+    if (upper == "DEBUG") return rklog::DEBUG;
+    if (upper == "INFO") return rklog::INFO;
+    if (upper == "WARN" || upper == "WARNING") return rklog::WARN;
+    if (upper == "ERROR") return rklog::ERROR;
+    LOGW("Unknown log level '", level_name, "', defaulting to INFO");
+    return rklog::INFO;
 }
 
 Config loadConfig(const std::string& config_path) {
@@ -77,6 +104,24 @@ Config loadConfig(const std::string& config_path) {
                 config.conf_thres = yaml["nms"]["conf_thres"].as<float>(0.25f);
                 config.iou_thres = yaml["nms"]["iou_thres"].as<float>(0.60f);
                 if (yaml["nms"]["topk"]) config.nms_topk = yaml["nms"]["topk"].as<int>(1000);
+                if (yaml["nms"]["min_box_size"]) config.min_box_size = yaml["nms"]["min_box_size"].as<float>(config.min_box_size);
+                if (yaml["nms"]["max_box_size"]) config.max_box_size = yaml["nms"]["max_box_size"].as<float>(config.max_box_size);
+                if (yaml["nms"]["aspect_ratio_range"] && yaml["nms"]["aspect_ratio_range"].IsSequence() && yaml["nms"]["aspect_ratio_range"].size() == 2) {
+                    config.min_aspect_ratio = yaml["nms"]["aspect_ratio_range"][0].as<float>(config.min_aspect_ratio);
+                    config.max_aspect_ratio = yaml["nms"]["aspect_ratio_range"][1].as<float>(config.max_aspect_ratio);
+                }
+            }
+
+            if (yaml["postprocess"]) {
+                const auto& post = yaml["postprocess"];
+                if (post["min_box_size"]) config.min_box_size = post["min_box_size"].as<float>(config.min_box_size);
+                if (post["max_box_size"]) config.max_box_size = post["max_box_size"].as<float>(config.max_box_size);
+                if (post["aspect_ratio_range"] && post["aspect_ratio_range"].IsSequence() && post["aspect_ratio_range"].size() == 2) {
+                    config.min_aspect_ratio = post["aspect_ratio_range"][0].as<float>(config.min_aspect_ratio);
+                    config.max_aspect_ratio = post["aspect_ratio_range"][1].as<float>(config.max_aspect_ratio);
+                }
+                if (post["conf_threshold"]) config.conf_thres = post["conf_threshold"].as<float>(config.conf_thres);
+                if (post["nms_threshold"]) config.iou_thres = post["nms_threshold"].as<float>(config.iou_thres);
             }
 
             if (yaml["perf"]) {
@@ -85,19 +130,62 @@ Config loadConfig(const std::string& config_path) {
             }
             
             if (yaml["output"]) {
-                config.output_type = yaml["output"]["type"].as<std::string>("tcp");
-                config.output_ip = yaml["output"]["ip"].as<std::string>("127.0.0.1");
-                config.output_port = yaml["output"]["port"].as<int>(9000);
+                const auto& out = yaml["output"];
+                config.output_type = out["type"].as<std::string>("tcp");
+                if (out["ip"]) config.output_ip = out["ip"].as<std::string>(config.output_ip);
+                if (out["port"]) config.output_port = out["port"].as<int>(config.output_port);
+                if (out["queue"]) config.output_queue = out["queue"].as<int>(config.output_queue);
+
+                if (out["tcp"]) {
+                    const auto& tcp = out["tcp"];
+                    if (tcp["host"]) config.output_ip = tcp["host"].as<std::string>(config.output_ip);
+                    if (tcp["port"]) config.output_port = tcp["port"].as<int>(config.output_port);
+                    if (tcp["queue"]) config.output_queue = tcp["queue"].as<int>(config.output_queue);
+                }
+        }
+
+        if (yaml["classes"]) {
+            const auto& cls = yaml["classes"];
+            if (cls.IsScalar()) {
+                config.classes_path = cls.as<std::string>("config/classes.txt");
+                config.inline_class_names.clear();
+            } else if (cls.IsSequence()) {
+                config.classes_path.clear();
+                config.inline_class_names.clear();
+                for (const auto& node : cls) {
+                    config.inline_class_names.push_back(node.as<std::string>());
+                }
+            } else if (cls.IsMap()) {
+                if (cls["path"]) {
+                    config.classes_path = cls["path"].as<std::string>("config/classes.txt");
+                }
+                if (cls["names"] && cls["names"].IsSequence()) {
+                    config.inline_class_names.clear();
+                    for (const auto& node : cls["names"]) {
+                        config.inline_class_names.push_back(node.as<std::string>());
+                    }
+                    if (!cls["path"]) {
+                        config.classes_path.clear();
+                    }
+                }
             }
-            
-            config.classes_path = yaml["classes"].as<std::string>("config/classes.txt");
-            
-            std::cout << "Loaded configuration from " << config_path << std::endl;
+        }
+
+        if (yaml["logging"]) {
+            const auto& logging = yaml["logging"];
+            if (logging["level"]) {
+                config.log_level = logging["level"].as<std::string>(config.log_level);
+            }
+        } else if (yaml["log_level"]) {
+            config.log_level = yaml["log_level"].as<std::string>(config.log_level);
+        }
+
+        LOGI("Loaded configuration from ", config_path);
         } else {
-            std::cout << "Configuration file not found: " << config_path << ", using defaults" << std::endl;
+            LOGW("Configuration file not found: ", config_path, ", using defaults");
         }
     } catch (const YAML::Exception& e) {
-        std::cerr << "Error loading config: " << e.what() << std::endl;
+        LOGE("Error loading config: ", e.what());
     }
     
     return config;
@@ -129,6 +217,7 @@ int main(int argc, char* argv[]) {
     std::string source_override;
     std::string save_vis_dir;
     std::string json_output_file;
+    std::string log_level_override;
     
     // Parse command line arguments
     for (int i = 1; i < argc; ++i) {
@@ -145,11 +234,13 @@ int main(int argc, char* argv[]) {
         } else if (arg == "--warmup" && i + 1 < argc) {
             // 延后到配置加载后再应用，这里仅消费一个数值参数防止被误判为未知参数
             ++i; // consume N
+        } else if (arg == "--log-level" && i + 1 < argc) {
+            log_level_override = argv[++i];
         } else if (arg == "--help") {
             printUsage(argv[0]);
             return 0;
         } else {
-            std::cerr << "Unknown argument: " << arg << std::endl;
+            LOGE("Unknown argument: ", arg);
             printUsage(argv[0]);
             return 1;
         }
@@ -158,9 +249,12 @@ int main(int argc, char* argv[]) {
     // Load configuration
     Config config = loadConfig(config_path);
     
-    // Override source if provided
+    // Override source/log level if provided via CLI
     if (!source_override.empty()) {
         config.source_uri = source_override;
+    }
+    if (!log_level_override.empty()) {
+        config.log_level = log_level_override;
     }
 
     // Re-scan argv to pick CLI-only options that override config
@@ -170,19 +264,23 @@ int main(int argc, char* argv[]) {
             config.warmup = std::stoi(argv[++i]);
         } else if (arg == "--async") {
             config.async = true;
+        } else if (arg == "--log-level" && i + 1 < argc) {
+            ++i; // already consumed earlier
         }
     }
     
+    rklog::g_level.store(parseLogLevel(config.log_level), std::memory_order_relaxed);
+
     // Create visualization output directory
     if (!save_vis_dir.empty()) {
         std::filesystem::create_directories(save_vis_dir);
     }
     
-    std::cout << "=== Object Detection Pipeline ===" << std::endl;
-    std::cout << "Source: " << config.source_type << " (" << config.source_uri << ")" << std::endl;
-    std::cout << "Engine: " << config.engine_type << " (" << config.model_path << ")" << std::endl;
-    std::cout << "Input size: " << config.imgsz << std::endl;
-    std::cout << "Thresholds: conf=" << config.conf_thres << ", iou=" << config.iou_thres << std::endl;
+    LOGI("=== Object Detection Pipeline ===");
+    LOGI("Source: ", config.source_type, " (", config.source_uri, ")");
+    LOGI("Engine: ", config.engine_type, " (", config.model_path, ")");
+    LOGI("Input size: ", config.imgsz);
+    LOGI("Thresholds: conf=", config.conf_thres, ", iou=", config.iou_thres);
     
     // Create source
     std::unique_ptr<rkapp::capture::ISource> source;
@@ -194,16 +292,16 @@ int main(int argc, char* argv[]) {
 #ifdef RKAPP_WITH_GIGE
         source = std::make_unique<rkapp::capture::GigeSource>();
 #else
-        std::cerr << "GigE source requested but not built. Rebuild with -DENABLE_GIGE=ON and Aravis installed." << std::endl;
+        LOGE("GigE source requested but not built. Rebuild with -DENABLE_GIGE=ON and Aravis installed.");
         return 1;
 #endif
     } else {
-        std::cerr << "Unsupported source type: " << config.source_type << std::endl;
+        LOGE("Unsupported source type: ", config.source_type);
         return 1;
     }
     
     if (!source->open(config.source_uri)) {
-        std::cerr << "Failed to open source: " << config.source_uri << std::endl;
+        LOGE("Failed to open source: ", config.source_uri);
         return 1;
     }
     
@@ -213,28 +311,28 @@ int main(int argc, char* argv[]) {
 #ifdef RKAPP_WITH_ONNX
         engine = std::make_unique<rkapp::infer::OnnxEngine>();
 #else
-        std::cerr << "ONNX engine requested but not built. Rebuild with -DENABLE_ONNX=ON" << std::endl;
+        LOGE("ONNX engine requested but not built. Rebuild with -DENABLE_ONNX=ON");
         return 1;
 #endif
     } else if (config.engine_type == "rknn") {
 #ifdef RKAPP_WITH_RKNN
         engine = std::make_unique<rkapp::infer::RknnEngine>();
 #else
-        std::cerr << "RKNN engine requested but not built. Rebuild with -DENABLE_RKNN=ON" << std::endl;
+        LOGE("RKNN engine requested but not built. Rebuild with -DENABLE_RKNN=ON");
         return 1;
 #endif
     } else {
-        std::cerr << "Unsupported engine type: " << config.engine_type << std::endl;
+        LOGE("Unsupported engine type: ", config.engine_type);
         return 1;
     }
     
     if (!engine->init(config.model_path, config.imgsz)) {
-        std::cerr << "Failed to initialize inference engine" << std::endl;
+        LOGE("Failed to initialize inference engine");
         return 1;
     }
-    
+
     // Warmup
-    std::cout << "Warmup x" << config.warmup << "..." << std::endl;
+    LOGI("Warmup x", config.warmup, "...");
     for (int i = 0; i < config.warmup; ++i) {
         cv::Mat dummy(config.imgsz, config.imgsz, CV_8UC3, cv::Scalar(128,128,128));
         (void)engine->infer(dummy);
@@ -246,22 +344,40 @@ int main(int argc, char* argv[]) {
         output = std::make_unique<rkapp::output::TcpOutput>();
         
         std::string output_config = config.output_ip + ":" + std::to_string(config.output_port);
+        if (config.output_queue > 0) {
+            output_config += ",queue:" + std::to_string(config.output_queue);
+        }
         if (!json_output_file.empty()) {
             output_config += ",file:" + json_output_file;
         }
         
         if (!output->open(output_config)) {
-            std::cout << "Warning: Failed to open output, continuing without output" << std::endl;
+            LOGW("Failed to open output, continuing without output");
             output.reset();
         }
     }
     
     // Load class names
-    std::vector<std::string> class_names = rkapp::post::Postprocess::loadClassNames(config.classes_path);
+    std::vector<std::string> class_names;
+    if (!config.inline_class_names.empty()) {
+        class_names = config.inline_class_names;
+    } else if (!config.classes_path.empty()) {
+        class_names = rkapp::post::Postprocess::loadClassNames(config.classes_path);
+    }
+
+    rkapp::post::NMSConfig nms_config;
+    nms_config.conf_thres = config.conf_thres;
+    nms_config.iou_thres = config.iou_thres;
+    nms_config.max_det = config.nms_topk > 0 ? config.nms_topk : 1000;
+    nms_config.topk = config.nms_topk;
+    nms_config.min_box_size = config.min_box_size;
+    nms_config.max_box_size = config.max_box_size;
+    nms_config.min_aspect_ratio = config.min_aspect_ratio;
+    nms_config.max_aspect_ratio = config.max_aspect_ratio;
     
-    std::cout << "\\n=== Starting Detection Loop ===" << std::endl;
-    std::cout << "Pipeline created successfully (STUB MODE)" << std::endl;
-    std::cout << "Ready to process frames from: " << config.source_uri << std::endl;
+    LOGI("=== Starting Detection Loop ===");
+    LOGI("Pipeline created successfully (STUB MODE)");
+    LOGI("Ready to process frames from: ", config.source_uri);
     
     // Main processing loop
     cv::Mat frame;
@@ -275,15 +391,14 @@ int main(int argc, char* argv[]) {
         std::vector<rkapp::infer::Detection> detections = engine->infer(frame);
         
         // Postprocess
-        rkapp::post::NMSConfig nms_config{config.conf_thres, config.iou_thres, 1000, config.nms_topk};
         detections = rkapp::post::Postprocess::nms(detections, nms_config);
         rkapp::post::Postprocess::mapClassNames(detections, class_names);
         
         auto end_time = std::chrono::high_resolution_clock::now();
         auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time);
         
-        std::cout << "Frame " << frame_id << ": " << detections.size() 
-                  << " detections (" << duration.count() << "ms)" << std::endl;
+        LOGI("Frame ", frame_id, ": ", detections.size(),
+             " detections (", duration.count(), "ms)");
         
         // Save visualization
         if (!save_vis_dir.empty()) {
@@ -338,12 +453,12 @@ int main(int argc, char* argv[]) {
 
         auto start_time = std::chrono::high_resolution_clock::now();
         std::vector<rkapp::infer::Detection> detections = engine->infer(it.img);
-        rkapp::post::NMSConfig nms_config{config.conf_thres, config.iou_thres, 1000, config.nms_topk};
         detections = rkapp::post::Postprocess::nms(detections, nms_config);
         rkapp::post::Postprocess::mapClassNames(detections, class_names);
         auto end_time = std::chrono::high_resolution_clock::now();
         auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time);
-        std::cout << "Frame " << it.id << ": " << detections.size() << " detections (" << duration.count() << "ms)" << std::endl;
+        LOGI("Frame ", it.id, ": ", detections.size(),
+             " detections (", duration.count(), "ms)");
 
         if (!save_vis_dir.empty()) {
             cv::Mat vis_frame = it.img.clone();

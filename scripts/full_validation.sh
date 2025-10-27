@@ -9,7 +9,8 @@ echo "基于重组后的项目结构"
 echo "============================================================"
 
 # 切换到项目根目录（确保路径正确）
-cd /home/minsea01/dev/rk-projects/rk-app
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT_DIR"
 
 # 第一步：项目完整性检查
 echo ""

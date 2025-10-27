@@ -1,0 +1,25 @@
+source:
+  type: folder
+  uri: "datasets/coco/val2017"
+
+engine:
+  type: onnx
+  model: "artifacts/models/best.onnx"
+  imgsz: 416
+
+nms:
+  conf_thres: 0.25
+  iou_thres: 0.60
+  topk: 1000
+
+perf:
+  warmup: 2
+  async: false
+
+output:
+  type: tcp
+  ip: "127.0.0.1"
+  port: 9000
+
+classes: "config/industrial_classes.txt"
+

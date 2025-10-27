@@ -21,13 +21,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN python3 -m venv /opt/rknn-env
 ENV PATH="/opt/rknn-env/bin:$PATH"
 
-# Install RKNN-Toolkit2 (compatible with Python 3.10)
-ARG RKNN_TOOLKIT2_VER=2.3.2
+# Install RKNN-Toolkit2 (versions tracked in configs/toolchain_versions.toml)
+ARG RKNN_TOOLKIT2_VER=1.7.5
+ARG ULTRALYTICS_VER=8.2.79
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir \
       numpy==1.26.4 Pillow onnx==1.16.1 onnxsim onnxruntime \
       opencv-python-headless \
-      ultralytics==8.3.204 \
+      ultralytics==${ULTRALYTICS_VER} \
       rknn-toolkit2==${RKNN_TOOLKIT2_VER}
 
 # Install PyTorch for model conversion (CPU version for lighter build)

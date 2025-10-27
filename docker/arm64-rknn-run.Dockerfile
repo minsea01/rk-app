@@ -19,6 +19,7 @@ RUN update-alternatives --install /usr/bin/python python /usr/bin/python3.8 1 &&
     update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.8 1
 
 # rknn-toolkit-lite2 is recommended for device-side Python runtime
+# Pin matches configs/toolchain_versions.toml
 ARG RKNN_LITE2_VER=1.7.5
 RUN python -m pip install --no-cache-dir --upgrade pip && \
     python -m pip install --no-cache-dir \
@@ -27,4 +28,3 @@ RUN python -m pip install --no-cache-dir --upgrade pip && \
 
 WORKDIR /app
 CMD ["bash"]
-

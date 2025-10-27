@@ -1,9 +1,13 @@
 import argparse
 import os
 from typing import List
+from pathlib import Path
 
 from ultralytics import YOLO
 import numpy as np
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_OUT_DIR = REPO_ROOT / "runs" / "bench_conf_sweep"
 
 
 def parse_conf_list(conf_list_str: str) -> List[float]:
@@ -20,7 +24,7 @@ def main() -> None:
     parser.add_argument("--half", action="store_true", help="Use half precision (FP16)")
     parser.add_argument("--iou", type=float, default=0.6, help="NMS IoU threshold")
     parser.add_argument("--conf_list", default="0.30,0.40,0.50,0.60,0.65,0.70,0.75", help="Comma-separated confidences to sweep")
-    parser.add_argument("--out_dir", default="/home/minsea01/dev/rk-projects/rk-app/runs/bench_conf_sweep", help="Directory to save sweep results")
+    parser.add_argument("--out_dir", default=str(DEFAULT_OUT_DIR), help="Directory to save sweep results")
     parser.add_argument("--name", default="conf_sweep", help="Subdirectory name for this run")
     args = parser.parse_args()
 

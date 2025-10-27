@@ -19,6 +19,8 @@ public:
   void warmup() override;
   void release() override;
 
+  void setDecodeParams(const DecodeParams& params) override;
+
   int getInputWidth() const override;
   int getInputHeight() const override;
 
@@ -28,7 +30,7 @@ private:
   std::string model_path_;
   int input_size_ = 640;
   bool is_initialized_ = false;
+  DecodeParams decode_params_;
 };
 
 } // namespace rkapp::infer
-

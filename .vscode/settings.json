@@ -1,3 +1,19 @@
 {
-  "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python"
+  "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python",
+  "mcpServers": {
+    "git-summary": {
+      "command": "python3",
+      "args": ["-m", "mcp_git_summary"],
+      "env": {
+        "WORKDIR": "${workspaceFolder}"
+      }
+    },
+    "dev-tools": {
+      "command": "python3",
+      "args": ["-m", "mcp_dev"],
+      "env": {
+        "WORKDIR": "${workspaceFolder}"
+      }
+    }
+  }
 }

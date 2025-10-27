@@ -7,6 +7,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_NEU_ROOT = REPO_ROOT / "temp_data" / "NEU_repo"
+
 
 def _import_yaml():
     import yaml  # type: ignore
@@ -127,7 +130,7 @@ def write_yolo_labels(images_dir: Path, labels_dir: Path, xml_index: Dict[str, P
 def main() -> int:
     ap = argparse.ArgumentParser(description="Convert NEU VOC XML annotations to YOLO labels for an existing dataset")
     ap.add_argument("--data", required=True, help="Path to YOLO data.yaml for the target dataset")
-    ap.add_argument("--neu_root", default="/home/minsea01/dev/rk-projects/rk-app/temp_data/NEU_repo", help="NEU repository root containing ANNOTATIONS/")
+    ap.add_argument("--neu_root", default=str(DEFAULT_NEU_ROOT), help="NEU repository root containing ANNOTATIONS/")
     args = ap.parse_args()
 
     data_yaml = Path(args.data).expanduser().resolve()

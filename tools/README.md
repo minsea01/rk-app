@@ -18,11 +18,11 @@
 
 ```bash
 # 检查当前工业15类数据集
-./tools/quick_diagnosis.sh -d /home/minsea01/datasets/industrial_15_classes_ready/data.yaml
+./tools/quick_diagnosis.sh -d industrial_dataset/data.yaml
 
 # 评估最新训练的模型
 ./tools/quick_diagnosis.sh \
-  -d /home/minsea01/datasets/industrial_15_classes_ready/data.yaml \
+  -d industrial_dataset/data.yaml \
   -m runs/train/industrial_15cls_test5/weights/best.pt \
   -o diagnosis_results_$(date +%Y%m%d_%H%M%S)
 ```
@@ -79,14 +79,14 @@ python tools/model_evaluation.py \
 # 使用专门优化的配置文件
 yolo detect train \
   cfg=configs/optimized_training.yaml \
-  data=/home/minsea01/datasets/industrial_15_classes_ready/data.yaml
+  data=industrial_dataset/data.yaml
 ```
 
 ### 手动配置（针对高召回低精度问题）
 
 ```bash
 yolo detect train \
-  data=/home/minsea01/datasets/industrial_15_classes_ready/data.yaml \
+  data=industrial_dataset/data.yaml \
   model=yolov8s.pt \
   imgsz=960 epochs=200 batch=auto device=0 \
   fl_gamma=1.5 box=7.5 cls=1.5 \

@@ -4,11 +4,15 @@ import time
 import shutil
 from glob import glob
 from typing import List, Tuple
+from pathlib import Path
 
 import numpy as np
 from ultralytics import YOLO
 import onnxruntime as ort
 import torch
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_EXPORT_DIR = REPO_ROOT / "runs" / "export" / "onnx_dynamic_fp16"
 
 
 def run_ort(model_path: str, size: int, batch: int, warmup: int, runs: int, prefer_trt: bool) -> Tuple[float, float, List[str], str]:
@@ -57,7 +61,7 @@ def export_static_onnx(pt_path: str, size: int, batch: int, half: bool, target_d
     # Pick up the just-exported file
     pt_dir = os.path.dirname(pt_path)
     candidate = os.path.join(pt_dir, 'best.onnx')
-    saved = candidate if os.path.isfile(candidate) else find_latest_best_onnx(os.path.expanduser("/home/minsea01/dev/rk-projects/rk-app"))
+    saved = candidate if os.path.isfile(candidate) else find_latest_best_onnx(str(REPO_ROOT))
     if not saved or not os.path.isfile(saved):
         raise FileNotFoundError(f'Exported ONNX not found. looked_for={candidate}')
     try:
@@ -71,7 +75,7 @@ def export_static_onnx(pt_path: str, size: int, batch: int, half: bool, target_d
 def main() -> None:
     parser = argparse.ArgumentParser(description='Export dynamic FP16 ONNX and benchmark with ORT.')
     parser.add_argument('--pt', required=True, help='Path to .pt model')
-    parser.add_argument('--out_dir', default='/home/minsea01/dev/rk-projects/rk-app/runs/export/onnx_dynamic_fp16', help='Export output dir')
+    parser.add_argument('--out_dir', default=str(DEFAULT_EXPORT_DIR), help='Export output dir')
     parser.add_argument('--sizes', default='640,1536', help='Comma-separated sizes to test')
     parser.add_argument('--batches', default='1,4', help='Comma-separated batches to test')
     parser.add_argument('--warmup', type=int, default=50)

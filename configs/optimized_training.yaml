@@ -2,7 +2,7 @@
 # 基于诊断分析的训练参数调优 (YOLOv8兼容版本)
 
 # Dataset配置
-data: /home/minsea01/datasets/industrial_15_classes_ready/data.yaml
+data: industrial_dataset/data.yaml
 
 # Model - 在精度和速度间平衡
 model: yolov8s.pt
@@ -107,7 +107,7 @@ profile: False          # 性能分析（调试时可开启）
 # 
 # 或者直接命令行：
 # yolo detect train \
-#   data=/home/minsea01/datasets/industrial_15_classes_ready/data.yaml \
+#   data=industrial_dataset/data.yaml \
 #   model=yolov8s.pt imgsz=960 epochs=200 batch=auto device=0 \
 #   box=7.5 cls=1.5 dfl=1.5 \
 #   mosaic=1.0 copy_paste=0.2 mixup=0.15 multi_scale=True \

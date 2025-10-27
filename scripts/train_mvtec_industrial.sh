@@ -15,7 +15,7 @@ echo "使用与person detection相同的稳定参数"
 echo ""
 echo "📍 第一阶段：稳定性测试训练（10轮）"
 yolo detect train \
-  data=/home/minsea01/datasets/mvtec_industrial/data.yaml \
+  data=$HOME/datasets/mvtec_industrial/data.yaml \
   model=yolo11s.pt \
   epochs=10 \
   imgsz=640 \
@@ -32,7 +32,7 @@ echo "如果10轮训练稳定，继续完整训练..."
 echo ""  
 echo "📍 第二阶段：完整训练（100轮）"
 yolo detect train \
-  data=/home/minsea01/datasets/mvtec_industrial/data.yaml \
+  data=$HOME/datasets/mvtec_industrial/data.yaml \
   model=yolo11s.pt \
   epochs=100 \
   imgsz=640 \
@@ -46,7 +46,7 @@ yolo detect train \
 
 echo ""
 echo "🎯 训练完成后自动测试："
-echo "yolo detect val model=runs/detect/mvtec_industrial_*/weights/best.pt data=/home/minsea01/datasets/mvtec_industrial/data.yaml"
+echo "yolo detect val model=runs/detect/mvtec_industrial_*/weights/best.pt data=$HOME/datasets/mvtec_industrial/data.yaml"
 
 echo ""
 echo "🔄 为RK3588准备ONNX导出："

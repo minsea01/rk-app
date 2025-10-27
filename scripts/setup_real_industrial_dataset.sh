@@ -14,11 +14,12 @@ echo ""
 echo "2️⃣ 快速开始 - 使用小规模真实数据集："
 
 # 创建一个最小化但真实的工业数据集模板
-mkdir -p /home/minsea01/datasets/real_industrial_10cls/{train,val,test}/{images,labels}
+DATA_ROOT="${DATA_ROOT:-$HOME/datasets/real_industrial_10cls}"
+mkdir -p "$DATA_ROOT"/{train,val,test}/{images,labels}
 
-cat > /home/minsea01/datasets/real_industrial_10cls/data.yaml << 'EOF'
+cat > "$DATA_ROOT/data.yaml" <<EOF
 # 真实工业10类检测数据集
-path: /home/minsea01/datasets/real_industrial_10cls
+path: $DATA_ROOT
 train: train/images
 val: val/images  
 test: test/images
@@ -37,7 +38,7 @@ names:
   9: defect         # 缺陷检测
 EOF
 
-echo "✅ 数据集模板创建完成: /home/minsea01/datasets/real_industrial_10cls/"
+echo "✅ 数据集模板创建完成: ${DATA_ROOT}/"
 echo ""
 echo "3️⃣ 下一步："
 echo "   你需要收集真实的工业图像和标注，或者："

@@ -10,7 +10,7 @@
 
 ### 2. **工业15类检测模型** ✅ 已完成
 - ✅ 训练数据：15类工业零件 (`screw, bolt, nut, washer, gear, bearing, spring, pipe, valve, pump, motor, sensor, connector, circuit_board, cable`)
-- ✅ ONNX模型：`/home/minsea01/models/best_static640.onnx`
+- ✅ ONNX模型：`artifacts/models/best_static640.onnx`
 - ✅ CPU推理验证：~140ms/帧 (7 FPS)，能检测1-4个目标
 - ✅ RKNN转换：`industrial_15cls_rk3588_w8a8.rknn` (11.3 MB)
 - ✅ 预期NPU性能：40-65 FPS (6-9倍性能提升)
@@ -27,7 +27,7 @@
 
 ```bash
 # 1. 使用现有的完整部署脚本
-cd /home/minsea01/dev/rk-projects/rk-app/RK3588_Deploy
+cd ~/rk-app/deploy_rk3588
 sudo ./deploy.sh
 
 # 2. 或者分步部署

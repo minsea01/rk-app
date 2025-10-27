@@ -13,7 +13,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates curl && \
     rm -rf /var/lib/apt/lists/*
 
-# Install RKNN-Toolkit-Lite2 for device runtime
+# Install RKNN-Toolkit-Lite2 for device runtime (see configs/toolchain_versions.toml)
 ARG RKNN_LITE2_VER=1.7.5
 RUN pip3 install --no-cache-dir --break-system-packages \
       numpy Pillow opencv-python-headless \

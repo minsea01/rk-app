@@ -142,16 +142,23 @@ def get_detection_config(size=416):
     """Get detection configuration for a specific input size.
 
     Args:
-        size: Input image size (416 or 640)
+        size: Input image size (currently supports 416 or 640)
 
     Returns:
         dict: Configuration dictionary
     """
+    supported_sizes = {
+        ModelConfig.TARGET_SIZE_416: ModelConfig.MAX_DETECTIONS_416,
+        ModelConfig.TARGET_SIZE_640: ModelConfig.MAX_DETECTIONS_640,
+    }
+    if size not in supported_sizes:
+        raise ValueError(f"Unsupported detection size: {size}. Supported sizes: {list(supported_sizes.keys())}")
+
     return {
         'size': size,
         'conf_threshold': ModelConfig.CONF_THRESHOLD_DEFAULT,
         'iou_threshold': ModelConfig.IOU_THRESHOLD_DEFAULT,
-        'max_detections': ModelConfig.MAX_DETECTIONS_416 if size == 416 else ModelConfig.MAX_DETECTIONS_640,
+        'max_detections': supported_sizes[size],
     }
 
 

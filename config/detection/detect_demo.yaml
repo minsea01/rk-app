@@ -1,6 +1,6 @@
 source:
   type: folder               # 使用本地图片文件夹模拟实时处理
-  uri: "/home/minsea01/datasets/coco128/images/train2017"
+  uri: "/home/minsea/datasets/coco128/images/train2017"
 
 engine:
   type: onnx                 # onnx|rknn

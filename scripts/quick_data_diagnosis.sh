@@ -4,13 +4,14 @@
 
 set -e
 
-DATASET_PATH="${1:-/home/minsea01/datasets/industrial_15_classes_ready}"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+DATASET_PATH="${1:-$ROOT_DIR/industrial_dataset}"
 DATASET_YAML="${DATASET_PATH}/data.yaml"
 
 echo "🔧 快速诊断数据集问题..."
 echo "📁 数据集: $DATASET_PATH"
 
-cd $DATASET_PATH
+cd "$DATASET_PATH"
 
 echo ""
 echo "1️⃣ 空标签文件检查:"

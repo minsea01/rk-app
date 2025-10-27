@@ -2,7 +2,7 @@
 # 针对RK3588 NPU优化（24+ FPS目标）
 
 # Dataset - 15类工业检测
-dataset_yaml: /home/minsea01/datasets/industrial_15_classes_ready/data.yaml
+dataset_yaml: industrial_dataset/data.yaml
 
 # Model - 使用YOLOv8s平衡精度和速度
 model: yolov8s.pt

@@ -18,27 +18,36 @@ echo "   - Output: ${OUTPUT_NAME}.onnx"
 echo "   - NMS: Disabled (for custom post-processing)"
 
 # Activate YOLO training environment
-source /home/minsea01/yolo-train/bin/activate
+YOLO_ENV="${YOLO_ENV:-$HOME/yolo_env}"
+if [ ! -d "$YOLO_ENV" ]; then
+    echo "❌ 未找到YOLO虚拟环境: $YOLO_ENV" >&2
+    echo "   请设置 YOLO_ENV 或先创建虚拟环境 (python -m venv ~/yolo_env)。" >&2
+    exit 1
+fi
+
+source "$YOLO_ENV/bin/activate"
+PYTHON_BIN="$YOLO_ENV/bin/python"
 
 # Export model with fixed parameters
-/home/minsea01/yolo-train/bin/python -c "
+"$PYTHON_BIN" - "$MODEL_PATH" "$IMG_SIZE" "$OPSET" <<'PY'
+import sys
 from ultralytics import YOLO
 
-# Load model
-model = YOLO('$MODEL_PATH')
+model_path = sys.argv[1]
+img_size = int(sys.argv[2])
+opset = int(sys.argv[3])
 
-# Export with fixed parameters
+model = YOLO(model_path)
 model.export(
-    format='onnx',
-    imgsz=$IMG_SIZE,
-    opset=$OPSET,
+    format="onnx",
+    imgsz=img_size,
+    opset=opset,
     simplify=True,
     dynamic=False,  # Static shape for optimization
-    half=False      # Keep FP32 for better compatibility
+    half=False,     # Keep FP32 for better compatibility
 )
-
-print('✅ ONNX export completed')
-"
+print("✅ ONNX export completed")
+PY
 
 # Check if export was successful
 if [ -f "${MODEL_PATH%.*}.onnx" ]; then

@@ -1,5 +1,5 @@
 {
-  "dataset_yaml": "/home/minsea01/datasets/mvtec_industrial/data.yaml",
+  "dataset_yaml": "/home/minsea/datasets/mvtec_industrial/data.yaml",
   "names": [
     "bottle",
     "cable",
@@ -19,8 +19,8 @@
   ],
   "num_classes": 15,
   "train": {
-    "images": "/home/minsea01/datasets/mvtec_industrial/images/train",
-    "labels": "/home/minsea01/datasets/mvtec_industrial/labels/train",
+    "images": "/home/minsea/datasets/mvtec_industrial/images/train",
+    "labels": "/home/minsea/datasets/mvtec_industrial/labels/train",
     "files_total": 100,
     "files_empty": [],
     "images_without_labels": [],
@@ -39,8 +39,8 @@
     "zero_area_boxes": []
   },
   "val": {
-    "images": "/home/minsea01/datasets/mvtec_industrial/images/val",
-    "labels": "/home/minsea01/datasets/mvtec_industrial/labels/val",
+    "images": "/home/minsea/datasets/mvtec_industrial/images/val",
+    "labels": "/home/minsea/datasets/mvtec_industrial/labels/val",
     "files_total": 50,
     "files_empty": [],
     "images_without_labels": [],
