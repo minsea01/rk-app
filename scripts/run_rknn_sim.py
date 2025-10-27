@@ -2,10 +2,17 @@
 """
 PC模拟器推理脚本 - 无需板子即可验证RKNN功能
 """
+import sys
+from pathlib import Path
+
+# Add project root to path for imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
 from rknn.api import RKNN
 import cv2
-import numpy as np
 import time
+
+from apps.utils.preprocessing import preprocess_from_array_rknn_sim
 
 def main():
     rk = RKNN()
@@ -22,7 +29,7 @@ def main():
 
     # PC模拟器需要从ONNX重新加载和build
     print('Loading ONNX model for PC simulation...')
-    ret = rk.load_onnx(model='yolo11n.onnx')
+    ret = rk.load_onnx(model='artifacts/models/yolo11n_416.onnx')
     if ret != 0:
         print('Load ONNX failed!')
         return
@@ -49,11 +56,8 @@ def main():
         print(f'Failed to load image: {img_path}')
         return
 
-    # 预处理：PC模拟器需要NHWC格式 (1, 640, 640, 3)
-    inp = cv2.resize(img, (640, 640))
-    inp = inp[..., ::-1]  # BGR -> RGB
-    inp = np.expand_dims(inp, axis=0)  # (640,640,3) -> (1,640,640,3)
-    inp = np.ascontiguousarray(inp).astype(np.float32)  # PC simulator uses float32
+    # 预处理：PC模拟器需要NHWC格式 (1, 416, 416, 3)
+    inp = preprocess_from_array_rknn_sim(img, target_size=416)
 
     # 推理
     print('Running inference...')

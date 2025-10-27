@@ -29,9 +29,13 @@ def build_rknn(
 ):
     try:
         from rknn.api import RKNN
-    except Exception as e:
+    except ImportError as e:
         raise SystemExit(
-            f"rknn-toolkit2 not installed or incompatible. pip install rknn-toolkit2. Error: {e}"
+            f"rknn-toolkit2 not installed. Please run: pip install rknn-toolkit2\nError: {e}"
+        )
+    except (AttributeError, TypeError) as e:
+        raise SystemExit(
+            f"rknn-toolkit2 version incompatible. Please ensure rknn-toolkit2>=2.3.2 is installed.\nError: {e}"
         )
 
     mean_values = [[float(v) for v in mean.split(',')]]

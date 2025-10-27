@@ -1,22 +1,41 @@
 #!/usr/bin/env python3
-import argparse, json, csv, time, os, sys
+import argparse
+import json
+import csv
+import time
+import os
+import sys
+import logging
+
+logging.basicConfig(level=logging.WARNING, format='%(levelname)s: %(message)s')
 
 def read_json(path):
     with open(path, 'r', encoding='utf-8') as f:
         return json.load(f)
 
 def frac_to_float(s: str) -> float:
+    """Convert fraction string (e.g., '30/1') or float string to float."""
     if not s:
         return 0.0
     if '/' in s:
-        n, d = s.split('/')
+        parts = s.split('/')
+        if len(parts) != 2:
+            logging.warning(f"Invalid fraction format: '{s}'")
+            return 0.0
         try:
-            return float(n) / float(d)
-        except Exception:
+            numerator = float(parts[0])
+            denominator = float(parts[1])
+            if denominator == 0:
+                logging.warning(f"Division by zero in fraction: '{s}'")
+                return 0.0
+            return numerator / denominator
+        except (ValueError, TypeError) as e:
+            logging.warning(f"Failed to parse fraction '{s}': {e}")
             return 0.0
     try:
         return float(s)
-    except Exception:
+    except (ValueError, TypeError) as e:
+        logging.warning(f"Failed to parse float '{s}': {e}")
         return 0.0
 
 def main():
@@ -31,14 +50,21 @@ def main():
     iperf = read_json(args.iperf3)
     ffpr = read_json(args.ffprobe)
 
-    bits_per_second = None
+    # Extract bits_per_second from iperf3 output
+    bits_per_second = 0
     try:
-        # prefer received summary
+        # Prefer received summary
         bits_per_second = iperf['end']['sum_received']['bits_per_second']
-    except Exception:
+    except KeyError:
         try:
+            # Fallback to sent summary
             bits_per_second = iperf['end']['sum_sent']['bits_per_second']
-        except Exception:
+        except KeyError:
+            # Check if iperf3 encountered an error
+            if 'error' in iperf:
+                logging.warning(f"iperf3 error: {iperf['error']}")
+            else:
+                logging.warning("No bits_per_second found in iperf3 output")
             bits_per_second = 0
 
     mbps = bits_per_second / 1e6 if bits_per_second else 0.0
