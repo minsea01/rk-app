@@ -60,5 +60,6 @@
 ## 参考文档
 - 快速开始：`QUICK_START_GUIDE.md`
 - 部署清单：`docs/RK3588_VALIDATION_CHECKLIST.md`
+- 性能分析：`docs/PERFORMANCE_ANALYSIS.md`
 - 项目状态与报告：`FULL_PROJECT_REPORT.md`、`FINAL_STATUS.md`
 - 代码与提交规范：`AGENTS.md`

@@ -4,12 +4,42 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-RK3588 industrial edge AI system for real-time object detection with dual-NIC network streaming. The project supports boardless PC simulation workflow and on-device deployment.
+RK3588 industrial edge AI system for real-time object detection with dual-NIC network streaming. This project is a graduation design for North University of China, focusing on pedestrian detection module design based on RK3588 intelligent terminal. The project supports boardless PC simulation workflow and on-device deployment.
 
-**Target Platform:** Rockchip RK3588 NPU (3 TOPS INT8)
-**Model:** YOLOv8/YOLO11 optimized for RKNN runtime
+**Target Platform:** Rockchip RK3588 NPU (6 TOPS with 3×NPU cores, 4×A76+4×A55 CPU, 16GB RAM, 10W typical power)
+**Model:** YOLOv8/YOLO11 optimized for RKNN runtime with INT8 quantization
 **Deployment:** Cross-compiled ARM64 binary or Python inference
 **Development Environment:** WSL2 Ubuntu 22.04, Python virtual env `yolo_env`
+
+### Graduation Design Requirements
+
+**Project Title:** Pedestrian Detection Module Design Based on RK3588 Intelligent Terminal
+
+**Key Technical Specifications:**
+1. **System Migration**: Ubuntu 20.04/22.04 on RK3588 platform
+2. **Dual Gigabit Ethernet**: RGMII interface, throughput ≥900Mbps
+   - Port 1: Industrial camera connection (1080P real-time capture)
+   - Port 2: Detection result upload
+3. **Model Optimization**: YOLOv5s/YOLOv8/YOLO11 with INT8 quantization
+   - Model size: <5MB
+   - FPS: >30
+   - Accuracy: mAP@0.5 >90% on pedestrian detection dataset
+4. **NPU Deployment**: Multi-core parallel processing with RKNN format
+
+**Timeline Milestones:**
+- Phase 1 (Oct-Nov 2025): Literature review + proposal
+- Phase 2 (Nov-Dec 2025): System migration + dual-NIC driver development
+- Phase 3 (Jan-Apr 2026): Model pruning, optimization, and deployment
+- Phase 4 (Apr-Jun 2026): Dataset construction + pedestrian detection implementation
+- Defense: June 2026
+
+**Deliverables:**
+- Working software package with source code
+- Proposal report + 2 progress reports
+- Graduation thesis (including English literature translation)
+- Live demo system
+- Dual-NIC driver implementation
+- Pedestrian detection dataset with mAP validation
 
 ## Development Commands
 
@@ -87,18 +117,55 @@ bash scripts/run_bench.sh
 # - artifacts/bench_report.md
 ```
 
-### Board Deployment (when hardware available)
+### Board Deployment
 
 ```bash
-# Build ARM64 binary
-cmake --build --preset arm64 && cmake --install build/arm64
+# Build ARM64 binary with RKNN support
+cmake --preset arm64-release -DENABLE_RKNN=ON && cmake --build --preset arm64 && cmake --install build/arm64
 
-# Deploy to RK3588 board
+# On-device one-click run (auto-detects CLI or falls back to Python)
+scripts/deploy/rk3588_run.sh
+
+# With custom model
+scripts/deploy/rk3588_run.sh --model artifacts/models/yolo11n_int8.rknn
+
+# Force Python runner mode
+scripts/deploy/rk3588_run.sh --runner python
+
+# Pass-through args to underlying binary
+scripts/deploy/rk3588_run.sh -- --json artifacts/out.json
+
+# SSH deployment from PC (when hardware available)
 scripts/deploy/deploy_to_board.sh --host <board_ip> --run
 
 # Or with gdbserver for remote debugging
 scripts/deploy/deploy_to_board.sh --host <board_ip> --gdb --gdb-port 1234
 ```
+
+### Performance Optimization & Validation
+
+```bash
+# ONNX inference with GPU acceleration (PC validation)
+source ~/yolo_env/bin/activate
+yolo predict model=artifacts/models/best.onnx source=assets/test.jpg imgsz=640 conf=0.5 iou=0.5 save=true
+
+# PC RKNN simulator (boardless validation)
+python scripts/run_rknn_sim.py
+
+# Performance benchmarks
+bash scripts/run_bench.sh
+```
+
+**Key Performance Findings:**
+- **ONNX GPU inference**: 8.6ms (RTX 3060) @ 416×416
+- **End-to-end with optimized params**: 16.5ms (60+ FPS) with conf=0.5
+- **RKNN PC simulator**: 354ms @ 640×640 (not representative of NPU performance)
+- **Expected RK3588 NPU**: 20-40ms @ 640×640 INT8 quantized
+
+**Critical Parameter Tuning:**
+- ❌ conf=0.25 (default): 3135ms postprocessing → 0.3 FPS (NMS bottleneck)
+- ✅ conf=0.5 (optimized): 5.2ms postprocessing → 60+ FPS (production ready)
+- Recommendation: Use conf≥0.5 for industrial applications to avoid excessive false positives
 
 ## Critical Architecture Details
 
@@ -266,16 +333,31 @@ Scripts gracefully degrade (e.g., iperf3 errors generate JSON with `"error"` fie
 
 ## Python Environment
 
-**Virtual env:** `yolo_env` (PyTorch 2.0.1, CUDA 11.8)
+**Virtual env:** `yolo_env` (Python 3.10.12, PyTorch 2.0.1+cu117, CUDA 11.7)
 **Key packages:**
-- ultralytics (YOLOv8/v11 training & export)
-- rknn-toolkit2==2.3.2 (RK3588 conversion)
-- onnxruntime (validation inference)
-- opencv-python, numpy
+- ultralytics==8.3.205 (YOLOv8/v11 training & export)
+- rknn-toolkit2==2.3.2 (RK3588 conversion, PC simulator)
+- onnxruntime-gpu==1.16.3 (CUDA 11.x compatible, for PC validation)
+- opencv-python==4.11.0.86
+- numpy==1.26.4
+
+**Important**: Use onnxruntime-gpu 1.16.3 (not 1.23.x which requires CUDA 12). Install with:
+```bash
+source ~/yolo_env/bin/activate
+pip uninstall onnxruntime onnxruntime-gpu -y
+pip install onnxruntime-gpu==1.16.3
+```
 
 **Activation:**
 ```bash
 source ~/yolo_env/bin/activate
+export PYTHONPATH=/home/minsea/rk-app  # Required for apps/ imports
+```
+
+**GPU Support Verification:**
+```bash
+python -c "import onnxruntime as ort; print(ort.get_available_providers())"
+# Expected: ['TensorrtExecutionProvider', 'CUDAExecutionProvider', 'CPUExecutionProvider']
 ```
 
 ## Quantization & Calibration
@@ -416,3 +498,44 @@ print(f"Error: {error_msg}")  # Can't be redirected or disabled
 - Prefer 416×416 over 640×640 (avoid Transpose CPU fallback)
 - Monitor layer-wise profiling with `rknn.eval_perf()`
 - Target <45ms end-to-end latency (camera → inference → UDP)
+
+## Current Project Status (as of Oct 2025)
+
+### Completed (85%)
+- ✅ Model conversion pipeline (PyTorch → ONNX → RKNN INT8)
+- ✅ Cross-compilation toolchain (CMake presets for x86/arm64)
+- ✅ PC boardless validation (ONNX GPU + RKNN simulator)
+- ✅ One-click deployment script (`rk3588_run.sh`)
+- ✅ Performance optimization (conf=0.5 achieves 60+ FPS on PC)
+- ✅ MCP benchmark pipeline
+- ✅ Unit tests (40+ test cases, 88-100% coverage)
+- ✅ Model size: 4.7MB (meets <5MB requirement)
+
+### Pending Hardware Validation (15%)
+- ⏸️ **Dual-NIC driver development** (RGMII interface, Priority: HIGH)
+  - Network throughput validation (≥900Mbps)
+  - Port 1: Industrial camera (1080P capture)
+  - Port 2: Detection result upload
+- ⏸️ **On-device performance testing**
+  - Actual NPU inference latency
+  - FPS validation (target: >30)
+  - Multi-core NPU parallel processing
+- ⏸️ **Pedestrian detection dataset**
+  - Dataset construction or public dataset selection
+  - mAP@0.5 validation (target: >90%)
+
+### Documentation TODO
+- ⏸️ Proposal report (开题报告)
+- ⏸️ Progress report 1: System migration + driver (中期检查1)
+- ⏸️ Progress report 2: Model deployment (中期检查2)
+- ⏸️ Graduation thesis (毕业设计说明书)
+- ⏸️ English literature translation
+
+### Hardware Dependencies
+**All pending items require RK3588 board to be available.**
+Expected timeline:
+- Dec 2025: Dual-NIC driver + system migration
+- Jan-Apr 2026: Model deployment + performance tuning
+- Apr-Jun 2026: Dataset validation + thesis writing
+
+**Risk**: If hardware not available by Dec 2025, Phase 2 milestone (dual-NIC driver) will be delayed.
