@@ -8,9 +8,9 @@ engine:
   imgsz: 640
 
 nms:
-  conf_thres: 0.25
-  iou_thres: 0.60
-  topk: 1000
+  conf_thres: 0.50
+  iou_thres: 0.50
+  topk: 300
 
 perf:
   warmup: 5
