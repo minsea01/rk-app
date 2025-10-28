@@ -1,3 +1,8 @@
+---
+description: Validate model accuracy and compare ONNX vs RKNN
+allowed-tools: "*"
+---
+
 Validate model accuracy and compare ONNX vs RKNN inference results with visualizations.
 
 ## Task

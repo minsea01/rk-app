@@ -1,3 +1,8 @@
+---
+description: Run comprehensive performance benchmarks
+allowed-tools: "*"
+---
+
 Run comprehensive performance benchmarks across all validation environments.
 
 ## Task

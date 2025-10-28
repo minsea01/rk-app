@@ -1,3 +1,8 @@
+---
+description: Check RK3588 board deployment readiness
+allowed-tools: "*"
+---
+
 Check RK3588 board deployment readiness with comprehensive component verification.
 
 ## Task

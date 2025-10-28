@@ -1,3 +1,8 @@
+---
+description: Generate graduation thesis progress report
+allowed-tools: "*"
+---
+
 Generate comprehensive graduation thesis progress report aligned with project requirements.
 
 ## Task

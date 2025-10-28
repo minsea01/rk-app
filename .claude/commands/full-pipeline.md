@@ -1,3 +1,8 @@
+---
+description: Execute complete model conversion pipeline
+allowed-tools: "*"
+---
+
 Execute the complete model conversion pipeline from PyTorch/ONNX to RKNN with validation.
 
 ## Task
