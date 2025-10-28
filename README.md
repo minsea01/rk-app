@@ -1,27 +1,64 @@
-# rk-app (RK3588 无板模板)
+# rk-app（RK3588 工业目标检测流水线）
 
-## 开发流程
-- 本机 x86 调试：`Ctrl+Shift+B → x86: run`，F5 断点。
-- 交叉 arm64 验证：`Ctrl+Shift+B → arm64: run (qemu)`。
-- 单测：`ctest --preset x86-debug`。
+简洁、模块化的 RK3588 目标检测工程：C++ 实现采集→预处理→推理（ONNX/RKNN）→后处理→输出全链路；配套 C++ CLI 与板端 Python Runner，训练/导出/压测工具链完整可复现。
 
-## 目录
-- src/, include/, tests/, config/
-- scripts/: 脚本总目录
-  - run/: 运行脚本（x86/ARM64 本地/QEMU）
-  - deploy/: 上板部署、同步 sysroot
-  - tune/: 调参与绘图脚本
-  - 顶层脚本保留兼容包装器（原路径仍可用）
-- results/: 数据产出（调参 JSON/CSV/PNG 等）
-- .vscode/: VS Code 任务与调试
-- CMakePresets.json: x86 / arm64 双预设
+本仓库遵循 `AGENTS.md` 的目录与命名规范（src/include/examples/apps/tools/scripts/artifacts/configs/docker 等）。
 
-## 上板（等拿到板子）
-1) `cmake --build --preset arm64 && cmake --install build/arm64`
-2) `scripts/deploy_to_board.sh --host <board_ip>` （或 `scripts/deploy/deploy_to_board.sh`）
-3) 板子运行或 `gdbserver :1234 ...` + VS Code 远程 attach
+## 快速开始
+- 本机构建（x86 调试）
+  - `cmake --preset x86-debug && cmake --build --preset x86-debug`
+  - 运行 ONNX 管线：`./build/x86-debug/detect_cli --cfg config/detection/detect.yaml`
+- RK3588 交叉构建（启用 RKNN）
+  - `cmake --preset arm64-release -DENABLE_RKNN=ON && cmake --build --preset arm64`
+  - 安装产物：`cmake --install build/arm64`
+- 板端 Python Runner（RKNN 推理）
+  - `python apps/yolov8_rknn_infer.py --model artifacts/models/best.rknn --names config/industrial_classes.txt --source bus.jpg --save artifacts/vis.jpg`
 
-## 自动调参与输出
-- 快速出图（低超调）：`python3 scripts/tune/auto_tune_pid.py --profile lowovershoot --plot-best`
-- 快速出图（近 0.11s 上升）：`python3 scripts/tune/auto_tune_pid.py --profile fast100 --plot-best`
-- 产出文件位于 `results/autotune/`，同时拷贝一份到 `out/` 以便兼容原有查看路径。
+更多演示与环境变量示例见 `QUICK_START_GUIDE.md` 与 `docs/QUICKSTART.md`。
+
+## 训练与模型导出
+- 一键训练+导出（Ultralytics+ONNX→RKNN）：
+  - `make RUN_NAME=<exp> all MODEL_PREFIX=yolo11n`
+- 手动导出 INT8 RKNN：
+  - `python tools/convert_onnx_to_rknn.py --onnx artifacts/models/yolo11n.onnx --out artifacts/models/yolo11n_int8.rknn --calib datasets/calib`
+- PC/RKNN 结果对齐与基准：
+  - `python tools/pc_compare.py ...`，`scripts/run_bench.sh` 聚合 iperf3/ffprobe 指标到 `artifacts/bench_summary.*`
+
+模型与命名约定见 `artifacts/models/README.md`（例如：`<model>[_variant].onnx` 与 `_int8.rknn`）。
+
+## 测试与基准
+- 单元测试（GoogleTest）：`ctest --preset x86-debug`
+- 网络/多媒体基准：`scripts/run_bench.sh`（输出位于 `artifacts/`）
+
+## 目录结构
+- `src/`：核心流水线实现（`capture/`、`preprocess/`、`infer/`、`post/`、`output/`）
+- `include/`：公共头文件（遵循 `include/rkapp` 的布局与命名）
+- `examples/`：示例 CLI（`detect_cli.cpp`）
+- `apps/`：板端 Python Runner（`yolov8_rknn_infer.py` 等）
+- `tools/`：训练、导出、评估与聚合脚本（如 `convert_onnx_to_rknn.py`、`model_evaluation.py`）
+- `scripts/`：运行/部署/压测等封装脚本（如 `run_bench.sh`）
+- `artifacts/`：模型与基准产出（`artifacts/models/*`、`bench_summary.*`）
+- `datasets/`：数据集与校准集（不纳入版本控制的体量数据）
+- `configs/`：共享实验预设与工具链锁定
+- `docker/`：可复现实验环境
+- `docs/`：深度技术文档与交付材料
+
+## 构建开关与依赖
+- `-DENABLE_ONNX=ON`（默认）：主机侧 ONNXRuntime 推理；可通过 `ORT_HOME` 指向外部 ORT。
+- `-DENABLE_RKNN=ON`：开启 RKNN SDK（默认路径 `RKNN_HOME=/opt/rknpu2`）。
+- `-DENABLE_GIGE=ON`：启用基于 GStreamer 的 GigE 源（需要 `aravis/gstreamer`）。
+
+## 常见命令速查
+- 主机调试：`cmake --preset x86-debug && cmake --build --preset x86-debug`
+- 交叉编译：`cmake --build --preset arm64 -DENABLE_RKNN=ON`
+- 运行 CLI：`./build/x86-debug/detect_cli --cfg config/detection/detect.yaml`
+- 运行板端：`python apps/yolov8_rknn_infer.py --model artifacts/models/best.rknn`
+- 板端一键跑：`scripts/deploy/rk3588_run.sh`（自动设置库路径并运行 CLI，缺少二进制时回退 Python Runner）
+- 单元测试：`ctest --preset x86-debug`
+- 压测汇总：`scripts/run_bench.sh`
+
+## 参考文档
+- 快速开始：`QUICK_START_GUIDE.md`
+- 部署清单：`docs/RK3588_VALIDATION_CHECKLIST.md`
+- 项目状态与报告：`FULL_PROJECT_REPORT.md`、`FINAL_STATUS.md`
+- 代码与提交规范：`AGENTS.md`

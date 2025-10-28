@@ -1,10 +1,10 @@
 source:
-  type: folder
-  uri: "/data/images/test"
+  type: folder                # folder|video|rtsp|gige
+  uri: "assets"              # 默认读取仓库内示例图片（assets/test.jpg）
 
 engine:
-  type: rknn
-  model: "artifacts/models/industrial_15cls_rk3588_w8a8.rknn"
+  type: rknn                 # onnx|rknn（RK3588 上使用 rknn）
+  model: "artifacts/models/best.rknn"   # 现有示例模型，可直接运行
   imgsz: 640
 
 nms:
