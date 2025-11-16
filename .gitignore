@@ -51,6 +51,9 @@ htmlcov/
 *.onnx
 *.rknn
 
+# Deployment packages (generated artifacts)
+*.tar.gz
+
 # Binary files
 *.o
 *.a
