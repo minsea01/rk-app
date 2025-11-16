@@ -88,6 +88,11 @@ class PedestrianEvaluator:
 
         logger.info(f"  Building from ONNX: {onnx_path}")
 
+        # Config RKNN (required before load_onnx)
+        ret = rknn.config(target_platform='rk3588')
+        if ret != 0:
+            raise RuntimeError("Failed to config RKNN")
+
         ret = rknn.load_onnx(model=str(onnx_path))
         if ret != 0:
             raise RuntimeError("Failed to load ONNX")
