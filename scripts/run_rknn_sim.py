@@ -3,6 +3,7 @@
 PC模拟器推理脚本 - 无需板子即可验证RKNN功能
 """
 import sys
+import argparse
 from pathlib import Path
 
 # Add project root to path for imports
@@ -15,6 +16,15 @@ import time
 from apps.utils.preprocessing import preprocess_from_array_rknn_sim
 
 def main():
+    parser = argparse.ArgumentParser(description='Run RKNN inference on PC simulator')
+    parser.add_argument('--model', type=str, default='artifacts/models/yolo11n_416.onnx',
+                        help='Path to ONNX model (default: artifacts/models/yolo11n_416.onnx)')
+    parser.add_argument('--image', type=str, default='assets/test.jpg',
+                        help='Path to test image (default: assets/test.jpg)')
+    parser.add_argument('--imgsz', type=int, default=416,
+                        help='Input image size (default: 416)')
+    args = parser.parse_args()
+
     rk = RKNN()
 
     # 配置RKNN（必须在load之前）
@@ -28,8 +38,8 @@ def main():
         return
 
     # PC模拟器需要从ONNX重新加载和build
-    print('Loading ONNX model for PC simulation...')
-    ret = rk.load_onnx(model='artifacts/models/yolo11n_416.onnx')
+    print(f'Loading ONNX model for PC simulation: {args.model}')
+    ret = rk.load_onnx(model=args.model)
     if ret != 0:
         print('Load ONNX failed!')
         return
@@ -49,15 +59,14 @@ def main():
         return
 
     # 准备测试图片
-    img_path = 'assets/test.jpg'
-    print(f'Loading test image: {img_path}')
-    img = cv2.imread(img_path)
+    print(f'Loading test image: {args.image}')
+    img = cv2.imread(args.image)
     if img is None:
-        print(f'Failed to load image: {img_path}')
+        print(f'Failed to load image: {args.image}')
         return
 
-    # 预处理：PC模拟器需要NHWC格式 (1, 416, 416, 3)
-    inp = preprocess_from_array_rknn_sim(img, target_size=416)
+    # 预处理：PC模拟器需要NHWC格式
+    inp = preprocess_from_array_rknn_sim(img, target_size=args.imgsz)
 
     # 推理
     print('Running inference...')
