@@ -1,0 +1,74 @@
+# Git attributes for consistent line endings and diffs
+
+# Auto detect text files and normalize line endings to LF
+* text=auto eol=lf
+
+# Source code
+*.py text diff=python
+*.pyi text diff=python
+*.c text diff=cpp
+*.cpp text diff=cpp
+*.h text diff=cpp
+*.hpp text diff=cpp
+*.sh text eol=lf
+*.bash text eol=lf
+
+# Configuration files
+*.yaml text
+*.yml text
+*.json text
+*.toml text
+*.ini text
+*.cfg text
+*.conf text
+
+# Documentation
+*.md text diff=markdown
+*.txt text
+*.rst text
+
+# CMake
+CMakeLists.txt text
+*.cmake text
+
+# Scripts must have LF line endings
+*.sh eol=lf
+scripts/** eol=lf
+
+# Binary files
+*.jpg binary
+*.jpeg binary
+*.png binary
+*.gif binary
+*.ico binary
+*.mov binary
+*.mp4 binary
+*.mp3 binary
+*.flv binary
+*.fla binary
+*.swf binary
+*.gz binary
+*.zip binary
+*.7z binary
+*.ttf binary
+*.eot binary
+*.woff binary
+*.pyc binary
+*.pdf binary
+*.so binary
+*.dylib binary
+*.dll binary
+*.exe binary
+
+# Model files (should be in Git LFS ideally)
+*.onnx binary
+*.rknn binary
+*.pt binary
+*.pth binary
+*.weights binary
+
+# Linguist overrides (for GitHub language stats)
+*.md linguist-detectable
+*.yaml linguist-detectable
+docs/** linguist-documentation
+archive/** linguist-vendored
