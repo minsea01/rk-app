@@ -158,6 +158,10 @@ FROM arm64v8/ubuntu:22.04 as rk3588-runtime
 
 ENV DEBIAN_FRONTEND=noninteractive
 
+# Configure APT mirror (use Tsinghua mirror for better connectivity in China)
+RUN sed -i 's|http://ports.ubuntu.com|https://mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list && \
+    sed -i 's|http://archive.ubuntu.com|https://mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list
+
 # Install runtime dependencies
 RUN apt-get update && apt-get install -y \
     python3 \
@@ -176,6 +180,9 @@ COPY apps/ /app/apps/
 COPY config/ /app/config/
 COPY artifacts/models/ /app/artifacts/models/
 COPY scripts/deploy/rk3588_run.sh /app/scripts/deploy/
+
+# Configure pip mirror (use Tsinghua mirror for faster download)
+RUN pip3 config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple
 
 # Install RKNN runtime library (rknn-toolkit-lite2)
 RUN pip3 install --no-cache-dir rknn-toolkit-lite2

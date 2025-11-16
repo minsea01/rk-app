@@ -1,0 +1,82 @@
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+yolo_env/
+*.egg-info/
+*.egg
+
+# YOLO weights and runs
+runs/
+*.pt
+weights/
+
+# Datasets (huge!)
+datasets/coco/val2017/
+datasets/coco/annotations/
+datasets/coco/train2017/
+*.zip
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Test & Coverage
+.coverage
+.pytest_cache/
+htmlcov/
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# Binary build outputs
+out/
+build/
+*.o
+*.a
+
+# Temporary
+.tmp*
+*.tmp
+temp_data/
+
+# Documentation (not needed in image)
+docs/
+*.md
+!README.md
+
+# CI/CD
+.github/
+
+# Archive
+archive/
+
+# Cache
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.ruff_cache/
+
+# Deployment packages (don't include in build)
+*.tar.gz
+rk-deploy-complete.tar.gz
+
+# Local test files
+test.jpg
+result.jpg
