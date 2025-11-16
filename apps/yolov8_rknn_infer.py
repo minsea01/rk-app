@@ -96,7 +96,12 @@ def main():
     ap.add_argument('--model', type=Path, required=True, help='path to .rknn model file')
     ap.add_argument('--source', type=Path, help='image path; if omitted, opens /dev/video0')
     ap.add_argument('--imgsz', type=int, default=640)
-    ap.add_argument('--conf', type=float, default=0.25)
+    ap.add_argument(
+        '--conf',
+        type=float,
+        default=0.5,
+        help='confidence threshold (default: 0.5, recommended >=0.5 for production to avoid NMS bottleneck)'
+    )
     ap.add_argument('--iou', type=float, default=0.45)
     ap.add_argument('--names', type=Path, default=None, help='names.txt (one class per line)')
     ap.add_argument('--head', type=str, choices=['auto', 'dfl', 'raw'], default='auto', help='head decode type')
@@ -183,15 +188,13 @@ def main():
         return
 
     # Fallback to camera
+    cap = None
     try:
         cap = cv2.VideoCapture(0)
         if not cap.isOpened():
             raise PreprocessError('Failed to open camera (/dev/video0)')
-    except Exception as e:
-        raise PreprocessError(f'Error opening camera: {e}')
 
-    fps_hist = []
-    try:
+        fps_hist = []
         while True:
             ret, img0 = cap.read()
             if not ret:
@@ -215,8 +218,16 @@ def main():
             cv2.imshow('result', vis)
             if cv2.waitKey(1) & 0xFF == 27:
                 break
+    except PreprocessError:
+        # Re-raise preprocessing errors
+        raise
+    except Exception as e:
+        # Wrap unexpected errors
+        raise PreprocessError(f'Camera processing error: {e}')
     finally:
-        cap.release()
+        # Always clean up resources
+        if cap is not None:
+            cap.release()
         rknn.release()
         cv2.destroyAllWindows()
         if fps_hist:

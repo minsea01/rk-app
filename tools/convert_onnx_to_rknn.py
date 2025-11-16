@@ -16,6 +16,52 @@ def _detect_rknn_default_qdtype():
     return 'w8a8' if major >= 2 else 'asymmetric_quantized-u8'
 
 
+def _parse_and_validate_mean_std(mean: str, std: str):
+    """Parse and validate mean/std parameters.
+
+    Args:
+        mean: Comma-separated mean values (e.g., '0,0,0')
+        std: Comma-separated std values (e.g., '255,255,255')
+
+    Returns:
+        Tuple of (mean_values, std_values) as nested lists
+
+    Raises:
+        ValueError: If format is invalid or values are out of range
+    """
+    try:
+        mean_list = [float(v.strip()) for v in mean.split(',')]
+        std_list = [float(v.strip()) for v in std.split(',')]
+    except ValueError as e:
+        raise ValueError(
+            f"Invalid mean/std format. Expected comma-separated floats.\n"
+            f"  mean='{mean}', std='{std}'\n"
+            f"  Error: {e}"
+        )
+
+    if len(mean_list) != 3:
+        raise ValueError(
+            f"Mean must have exactly 3 values (R,G,B), got {len(mean_list)}: {mean_list}"
+        )
+
+    if len(std_list) != 3:
+        raise ValueError(
+            f"Std must have exactly 3 values (R,G,B), got {len(std_list)}: {std_list}"
+        )
+
+    if any(s == 0 for s in std_list):
+        raise ValueError(
+            f"Std values cannot be zero (would cause division by zero): {std_list}"
+        )
+
+    if any(s < 0 for s in std_list):
+        raise ValueError(
+            f"Std values must be positive: {std_list}"
+        )
+
+    return [mean_list], [std_list]
+
+
 def build_rknn(
     onnx_path: Path,
     out_path: Path,
@@ -38,8 +84,8 @@ def build_rknn(
             f"rknn-toolkit2 version incompatible. Please ensure rknn-toolkit2>=2.3.2 is installed.\nError: {e}"
         )
 
-    mean_values = [[float(v) for v in mean.split(',')]]
-    std_values = [[float(v) for v in std.split(',')]]
+    # Validate and parse mean/std parameters
+    mean_values, std_values = _parse_and_validate_mean_std(mean, std)
 
     onnx_path = Path(onnx_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)

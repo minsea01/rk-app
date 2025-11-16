@@ -1,15 +1,45 @@
 import math
-from typing import Tuple, List
+from typing import Tuple, List, Union
 import numpy as np
 import cv2
 
 
-def sigmoid(x):
-    return 1 / (1 + np.exp(-x))
+def sigmoid(x: Union[float, np.ndarray]) -> Union[float, np.ndarray]:
+    """Numerically stable sigmoid function.
+
+    Avoids overflow for large negative values and division by near-zero for large positive values.
+    Uses the identity: sigmoid(x) = exp(x) / (1 + exp(x)) for x < 0
+
+    Args:
+        x: Input array
+
+    Returns:
+        Sigmoid activation: 1 / (1 + exp(-x))
+    """
+    # For x >= 0: use standard formula to avoid exp overflow
+    # For x < 0: use exp(x) / (1 + exp(x)) to avoid division issues
+    return np.where(
+        x >= 0,
+        1 / (1 + np.exp(-x)),
+        np.exp(x) / (1 + np.exp(x))
+    )
 
 
-def letterbox(im, new_shape=640, color=(114, 114, 114)):
-    # Resize and pad image while meeting stride-multiple constraints
+def letterbox(
+    im: np.ndarray,
+    new_shape: Union[int, Tuple[int, int]] = 640,
+    color: Tuple[int, int, int] = (114, 114, 114)
+) -> Tuple[np.ndarray, float, Tuple[float, float]]:
+    """Resize and pad image while meeting stride-multiple constraints.
+
+    Args:
+        im: Input image array (H, W, C)
+        new_shape: Target shape (single int for square or (H, W) tuple)
+        color: Padding color (R, G, B)
+
+    Returns:
+        Tuple of (resized_image, ratio, (pad_w, pad_h))
+    """
     shape = im.shape[:2]  # current shape [h, w]
     if isinstance(new_shape, int):
         new_shape = (new_shape, new_shape)
@@ -51,12 +81,28 @@ def dfl_decode(d: np.ndarray, reg_max: int = 16) -> np.ndarray:
 
 
 def nms(boxes: np.ndarray, scores: np.ndarray, iou_thres: float = 0.45, topk: int = 300) -> List[int]:
+    """Non-Maximum Suppression for object detection.
+
+    Args:
+        boxes: Bounding boxes in xyxy format, shape (M, 4)
+        scores: Confidence scores, shape (M,)
+        iou_thres: IoU threshold for suppression
+        topk: Maximum number of boxes to keep before NMS
+
+    Returns:
+        List of indices to keep
+
+    Note:
+        Uses floating-point coordinate system (modern YOLO).
+        Removed legacy +1 correction for integer coordinates.
+    """
     # boxes: (M, 4) xyxy, scores: (M,)
     x1 = boxes[:, 0]
     y1 = boxes[:, 1]
     x2 = boxes[:, 2]
     y2 = boxes[:, 3]
-    areas = (x2 - x1 + 1) * (y2 - y1 + 1)
+    # Fixed: Removed +1 for floating-point coordinates
+    areas = (x2 - x1) * (y2 - y1)
     order = scores.argsort()[::-1]
     keep = []
     if topk is not None:
@@ -68,8 +114,9 @@ def nms(boxes: np.ndarray, scores: np.ndarray, iou_thres: float = 0.45, topk: in
         yy1 = np.maximum(y1[i], y1[order[1:]])
         xx2 = np.minimum(x2[i], x2[order[1:]])
         yy2 = np.minimum(y2[i], y2[order[1:]])
-        w = np.maximum(0.0, xx2 - xx1 + 1)
-        h = np.maximum(0.0, yy2 - yy1 + 1)
+        # Fixed: Removed +1 for floating-point intersection area
+        w = np.maximum(0.0, xx2 - xx1)
+        h = np.maximum(0.0, yy2 - yy1)
         inter = w * h
         iou = inter / (areas[i] + areas[order[1:]] - inter + 1e-6)
         inds = np.where(iou <= iou_thres)[0]
@@ -89,7 +136,25 @@ def postprocess_yolov8(
     iou_thres: float = 0.45,
     reg_max: int = 16,
     strides: List[int] = (8, 16, 32),
-):
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Post-process YOLOv8 model outputs.
+
+    Args:
+        preds: Model predictions, shape (1, N, 64+nc)
+        img_size: Input image size used for inference
+        orig_shape: Original image shape (H, W) before letterbox
+        ratio_pad: Tuple of (ratio, (pad_w, pad_h)) from letterbox
+        conf_thres: Confidence threshold for filtering
+        iou_thres: IoU threshold for NMS
+        reg_max: DFL regression maximum value (default: 16)
+        strides: Feature map strides (default: [8, 16, 32])
+
+    Returns:
+        Tuple of (boxes, confidences, class_ids)
+        - boxes: (M, 4) in xyxy format, scaled to original image
+        - confidences: (M,) confidence scores
+        - class_ids: (M,) class indices
+    """
     assert preds.ndim == 3 and preds.shape[0] == 1
     pred = preds[0]
     n, c = pred.shape

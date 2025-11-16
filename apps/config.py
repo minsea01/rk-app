@@ -15,7 +15,10 @@ class ModelConfig:
     DEFAULT_SIZE = 416  # Preferred for RK3588 to avoid Transpose CPU fallback
 
     # Inference thresholds
-    CONF_THRESHOLD_DEFAULT = 0.25  # Confidence threshold for object detection
+    # Confidence threshold: 0.5 recommended for production
+    # - conf=0.25: 3135ms postprocessing (NMS bottleneck) → 0.3 FPS
+    # - conf=0.5:  5.2ms postprocessing → 60+ FPS
+    CONF_THRESHOLD_DEFAULT = 0.5   # Confidence threshold for object detection
     IOU_THRESHOLD_DEFAULT = 0.45   # IOU threshold for NMS
     NMS_IOU = 0.45                 # NMS IOU threshold
 

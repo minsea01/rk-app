@@ -39,6 +39,45 @@ class TestSigmoid:
         assert result[1] > 0.7
         assert result[2] < 0.3
 
+    def test_sigmoid_numerical_stability_extreme_positive(self):
+        """Test sigmoid numerical stability with extreme positive values."""
+        # These values would cause overflow in naive implementation
+        x = np.array([100, 500, 1000, 10000])
+        y = sigmoid(x)
+        # Should not produce inf/nan
+        assert np.all(np.isfinite(y))
+        # Should be very close to 1.0 but not exceed it
+        assert np.all(y > 0.9999)
+        assert np.all(y <= 1.0)
+
+    def test_sigmoid_numerical_stability_extreme_negative(self):
+        """Test sigmoid numerical stability with extreme negative values."""
+        # These values would cause overflow in naive implementation
+        x = np.array([-100, -500, -1000, -10000])
+        y = sigmoid(x)
+        # Should not produce inf/nan
+        assert np.all(np.isfinite(y))
+        # Should be very close to 0.0 but not go negative
+        assert np.all(y < 0.0001)
+        assert np.all(y >= 0.0)
+
+    def test_sigmoid_range_always_valid(self):
+        """Test sigmoid always produces values in [0, 1]."""
+        # Test with 10000 random values across extreme range
+        x = np.random.randn(10000) * 1000
+        y = sigmoid(x)
+        assert np.all((y >= 0) & (y <= 1))
+        assert np.all(np.isfinite(y))
+
+    def test_sigmoid_no_overflow_underflow(self):
+        """Test sigmoid handles overflow and underflow gracefully."""
+        x = np.array([-1e10, -1e5, -100, -10, 0, 10, 100, 1e5, 1e10])
+        y = sigmoid(x)
+        # No inf, no nan
+        assert np.all(np.isfinite(y))
+        # Correct range
+        assert np.all((y >= 0) & (y <= 1))
+
 
 class TestLetterbox:
     """Test suite for letterbox image resizing."""
@@ -193,6 +232,56 @@ class TestNMS:
         scores = np.array([])
         keep = nms(boxes, scores, iou_thres=0.5)
         assert len(keep) == 0
+
+    def test_nms_iou_calculation_accuracy(self):
+        """Test NMS IoU calculation is accurate for floating-point coordinates."""
+        # Two boxes with exact 50% overlap
+        # Box 1: [0, 0, 100, 100] - area = 10000
+        # Box 2: [50, 0, 150, 100] - area = 10000
+        # Intersection: [50, 0, 100, 100] - area = 5000
+        # Union: 10000 + 10000 - 5000 = 15000
+        # IoU = 5000 / 15000 = 0.3333
+        boxes = np.array([
+            [0.0, 0.0, 100.0, 100.0],
+            [50.0, 0.0, 150.0, 100.0]
+        ], dtype=np.float32)
+        scores = np.array([0.9, 0.8])
+
+        # With IoU threshold 0.3, should suppress second box
+        keep_low = nms(boxes, scores, iou_thres=0.3)
+        assert len(keep_low) == 1
+
+        # With IoU threshold 0.4, should keep both boxes
+        keep_high = nms(boxes, scores, iou_thres=0.4)
+        assert len(keep_high) == 2
+
+    def test_nms_floating_point_precision(self):
+        """Test NMS handles floating-point coordinates correctly."""
+        # Boxes with fractional coordinates
+        boxes = np.array([
+            [10.5, 20.3, 50.7, 60.2],
+            [15.2, 25.8, 55.1, 65.9]
+        ], dtype=np.float32)
+        scores = np.array([0.9, 0.8])
+
+        keep = nms(boxes, scores, iou_thres=0.5)
+        # Should work without errors
+        assert len(keep) >= 1
+
+    def test_nms_small_boxes_not_over_suppressed(self):
+        """Test NMS doesn't over-suppress small boxes due to area calculation."""
+        # Small boxes where +1 correction would have significant impact
+        boxes = np.array([
+            [0.0, 0.0, 10.0, 10.0],      # Area = 100
+            [2.0, 2.0, 12.0, 12.0],      # Area = 100
+            # Intersection: [2, 2, 10, 10] = 64
+            # IoU = 64 / (100 + 100 - 64) = 64/136 = 0.47
+        ], dtype=np.float32)
+        scores = np.array([0.9, 0.8])
+
+        # With correct calculation, IoU ~ 0.47, should keep both at threshold 0.5
+        keep = nms(boxes, scores, iou_thres=0.5)
+        assert len(keep) == 2
 
 
 class TestPostprocessYolov8:
