@@ -1,0 +1,30 @@
+{
+  "model": "artifacts/models/yolo11n.onnx",
+  "model_type": "onnx",
+  "dataset": "coco",
+  "num_images": 100,
+  "conf_threshold": 0.25,
+  "iou_threshold": 0.45,
+  "map_iou_threshold": 0.5,
+  "map": 0.004037685060564732,
+  "map_percentage": 0.4037685060564732,
+  "statistics": {
+    "ap": 0.004037685060564732,
+    "num_predictions": 1131,
+    "num_ground_truths": 419,
+    "true_positives": 41,
+    "false_positives": 1090,
+    "precision": 0.03625110521661925,
+    "recall": 0.09785202863961814
+  },
+  "performance": {
+    "total_time_seconds": 9.473244190216064,
+    "fps": 10.556045847871173
+  },
+  "graduation_requirement": {
+    "threshold": 0.9,
+    "achieved": 0.004037685060564732,
+    "status": "FAIL",
+    "margin": -89.59623149394353
+  }
+}

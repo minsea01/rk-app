@@ -1,0 +1,30 @@
+{
+  "model": "artifacts/models/best.onnx",
+  "model_type": "onnx",
+  "dataset": "coco",
+  "num_images": 100,
+  "conf_threshold": 0.25,
+  "iou_threshold": 0.45,
+  "map_iou_threshold": 0.5,
+  "map": 0.022727272726988636,
+  "map_percentage": 2.2727272726988637,
+  "statistics": {
+    "ap": 0.022727272726988636,
+    "num_predictions": 1154,
+    "num_ground_truths": 419,
+    "true_positives": 39,
+    "false_positives": 1115,
+    "precision": 0.033795493934139186,
+    "recall": 0.09307875894988067
+  },
+  "performance": {
+    "total_time_seconds": 2.6078319549560547,
+    "fps": 38.34602908747819
+  },
+  "graduation_requirement": {
+    "threshold": 0.9,
+    "achieved": 0.022727272726988636,
+    "status": "FAIL",
+    "margin": -87.72727272730114
+  }
+}

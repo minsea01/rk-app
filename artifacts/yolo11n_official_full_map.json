@@ -1,0 +1,21 @@
+{
+  "model": "yolo11n.pt",
+  "imgsz": 640,
+  "metrics": {
+    "mAP@0.5": 0.6156851645316892,
+    "precision": 0.8418018018017916,
+    "recall": 0.6502737310939964,
+    "true_positives": 7008,
+    "false_positives": 1317,
+    "num_predictions": 8325,
+    "num_ground_truths": 10777,
+    "num_images": 2693,
+    "fps": 17.875943495489384
+  },
+  "graduation_requirement": {
+    "threshold": 0.9,
+    "achieved": 0.6156851645316892,
+    "status": "FAIL",
+    "margin": -28.431483546831082
+  }
+}

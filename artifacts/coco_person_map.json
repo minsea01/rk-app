@@ -1,0 +1,30 @@
+{
+  "model": "artifacts/models/best.rknn",
+  "model_type": "rknn",
+  "dataset": "coco",
+  "num_images": 2693,
+  "conf_threshold": 0.25,
+  "iou_threshold": 0.45,
+  "map_iou_threshold": 0.5,
+  "map": 0.011363636363589016,
+  "map_percentage": 1.1363636363589016,
+  "statistics": {
+    "ap": 0.011363636363589016,
+    "num_predictions": 1274,
+    "num_ground_truths": 10777,
+    "true_positives": 72,
+    "false_positives": 1202,
+    "precision": 0.05651491365776636,
+    "recall": 0.006680894497541059
+  },
+  "performance": {
+    "total_time_seconds": 416.85968112945557,
+    "fps": 6.460207407690479
+  },
+  "graduation_requirement": {
+    "threshold": 0.9,
+    "achieved": 0.011363636363589016,
+    "status": "FAIL",
+    "margin": -88.86363636364109
+  }
+}

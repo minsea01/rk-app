@@ -8,6 +8,10 @@ FROM ${BASE_IMAGE} as base
 ENV DEBIAN_FRONTEND=noninteractive
 ENV TZ=Asia/Shanghai
 
+# Configure APT mirror for base stage (using HTTP to avoid VPN SSL issues)
+RUN sed -i 's|http://ports.ubuntu.com|http://mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list && \
+    sed -i 's|http://archive.ubuntu.com|http://mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list
+
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
     python3 \
@@ -132,9 +136,14 @@ CMD ["/app/out/x86/bin/detect_cli", "--help"]
 # ======================
 # ARM64 Cross-compile Stage
 # ======================
-FROM ubuntu:22.04 as arm64-builder
+# Use build platform (x86) to cross-compile, avoiding QEMU issues
+FROM --platform=$BUILDPLATFORM ubuntu:22.04 as arm64-builder
 
 ENV DEBIAN_FRONTEND=noninteractive
+
+# Configure APT mirror for builder stage (using HTTP to avoid VPN SSL issues)
+RUN sed -i 's|http://ports.ubuntu.com|http://mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list && \
+    sed -i 's|http://archive.ubuntu.com|http://mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list
 
 # Install cross-compilation toolchain
 RUN apt-get update && apt-get install -y \
@@ -159,8 +168,9 @@ FROM arm64v8/ubuntu:22.04 as rk3588-runtime
 ENV DEBIAN_FRONTEND=noninteractive
 
 # Configure APT mirror (use Tsinghua mirror for better connectivity in China)
-RUN sed -i 's|http://ports.ubuntu.com|https://mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list && \
-    sed -i 's|http://archive.ubuntu.com|https://mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list
+# Using HTTP to avoid VPN SSL certificate issues
+RUN sed -i 's|http://ports.ubuntu.com|http://mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list && \
+    sed -i 's|http://archive.ubuntu.com|http://mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list
 
 # Install runtime dependencies
 RUN apt-get update && apt-get install -y \
@@ -182,7 +192,9 @@ COPY artifacts/models/ /app/artifacts/models/
 COPY scripts/deploy/rk3588_run.sh /app/scripts/deploy/
 
 # Configure pip mirror (use Tsinghua mirror for faster download)
-RUN pip3 config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple
+# Using HTTP to avoid VPN SSL certificate issues
+RUN pip3 config set global.index-url http://pypi.tuna.tsinghua.edu.cn/simple && \
+    pip3 config set global.trusted-host pypi.tuna.tsinghua.edu.cn
 
 # Install RKNN runtime library (rknn-toolkit-lite2)
 RUN pip3 install --no-cache-dir rknn-toolkit-lite2
