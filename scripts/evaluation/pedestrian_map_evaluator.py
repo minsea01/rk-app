@@ -35,11 +35,13 @@ class PedestrianEvaluator:
     """Evaluator for pedestrian detection performance"""
 
     def __init__(self, model_path: Path, model_type: str = 'onnx',
-                 conf_threshold: float = 0.25, iou_threshold: float = 0.45):
+                 conf_threshold: float = 0.25, iou_threshold: float = 0.45,
+                 imgsz: int = 640):
         self.model_path = model_path
         self.model_type = model_type.lower()
         self.conf_threshold = conf_threshold
         self.iou_threshold = iou_threshold
+        self.imgsz = imgsz
         self.model = None
 
         self._load_model()
@@ -172,7 +174,7 @@ class PedestrianEvaluator:
         orig_shape = img.shape[:2]
 
         # Preprocess
-        img_processed, ratio, pad = self.preprocess(img)
+        img_processed, ratio, pad = self.preprocess(img, target_size=self.imgsz)
 
         # Inference
         output = self.inference(img_processed)
@@ -366,6 +368,7 @@ def main():
     parser.add_argument('--conf', type=float, default=0.25, help='Confidence threshold')
     parser.add_argument('--iou', type=float, default=0.45, help='NMS IoU threshold')
     parser.add_argument('--map-iou', type=float, default=0.5, help='mAP IoU threshold')
+    parser.add_argument('--imgsz', type=int, default=640, help='Input image size (416 or 640)')
     parser.add_argument('--output', type=Path, default=Path('artifacts/pedestrian_map_report.json'))
     parser.add_argument('--limit', type=int, help='Limit number of images to evaluate')
     args = parser.parse_args()
@@ -382,7 +385,8 @@ def main():
         args.model,
         model_type=args.model_type,
         conf_threshold=args.conf,
-        iou_threshold=args.iou
+        iou_threshold=args.iou,
+        imgsz=args.imgsz
     )
 
     # Load ground truth annotations
