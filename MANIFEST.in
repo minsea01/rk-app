@@ -1,0 +1,38 @@
+# Include important documentation
+include README.md
+include LICENSE
+include CLAUDE.md
+include requirements.txt
+include requirements-dev.txt
+
+# Include configuration files
+include pytest.ini
+include pyproject.toml
+include setup.py
+recursive-include config *.yaml *.yml *.txt
+
+# Include Claude automation
+recursive-include .claude *.md
+
+# Include scripts
+recursive-include scripts *.sh *.py
+
+# Exclude build artifacts
+global-exclude *.pyc
+global-exclude *.pyo
+global-exclude __pycache__
+global-exclude .DS_Store
+global-exclude *.so
+global-exclude *.egg-info
+
+# Exclude large files
+global-exclude *.onnx
+global-exclude *.rknn
+global-exclude *.pt
+global-exclude *.weights
+
+# Exclude archives and builds
+prune archive
+prune build
+prune dist
+prune .git
