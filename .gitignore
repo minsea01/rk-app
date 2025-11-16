@@ -91,3 +91,12 @@ dmypy.json
 
 # Ruff
 .ruff_cache/
+
+# Large dataset directories
+datasets/coco/train2017/
+datasets/coco_raw/
+artifacts/onnx_gpu_test2/
+artifacts/onnx_optimized/
+
+# Exclude large ONNX models (>10MB)
+*.onnx
