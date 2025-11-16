@@ -148,7 +148,7 @@ class PedestrianEvaluator:
         from apps.yolov8_rknn_infer import decode_predictions
 
         boxes, confs, class_ids = decode_predictions(
-            output, 640, self.conf_threshold, self.iou_threshold,
+            output, self.imgsz, self.conf_threshold, self.iou_threshold,
             ratio_pad=ratio_pad, orig_shape=orig_shape
         )
 
