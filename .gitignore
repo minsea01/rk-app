@@ -8,8 +8,12 @@ env/
 venv/
 yolo_env/
 *.egg-info/
+*.egg
 dist/
 build/
+.eggs/
+*.manifest
+*.spec
 
 # YOLO
 runs/
@@ -58,6 +62,7 @@ build/
 =*
 .tmp*
 *.tmp
+temp_data/
 
 # Generated documentation
 AGENTS.md
@@ -69,3 +74,17 @@ MCP_USAGE_GUIDE.md
 PROGRESS_SUMMARY.md
 README_AGENT.md
 TEST_REPORT.md
+
+# Archive (old experimental files)
+archive/
+
+# Pre-commit
+.pre-commit-config.yaml.bak
+
+# MyPy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Ruff
+.ruff_cache/
