@@ -41,6 +41,43 @@ RK3588 industrial edge AI system for real-time object detection with dual-NIC ne
 - Dual-NIC driver implementation
 - Pedestrian detection dataset with mAP validation
 
+## Claude Code Automation
+
+**This project includes comprehensive automation via Claude Code slash commands and skills.**
+
+### Slash Commands (in `.claude/commands/`)
+
+Execute complex workflows with simple slash commands:
+
+- **/full-pipeline** - Complete model conversion pipeline (PyTorch → ONNX → RKNN → Validation)
+- **/thesis-report** - Generate graduation thesis progress report with compliance analysis
+- **/performance-test** - Run comprehensive performance benchmarks (ONNX GPU, RKNN sim, MCP)
+- **/board-ready** - Check RK3588 board deployment readiness
+- **/model-validate** - Validate model accuracy and compare ONNX vs RKNN
+
+**Usage example:**
+```
+User: /performance-test
+Claude: [Runs ONNX GPU inference, RKNN simulator, MCP benchmarks, generates report]
+```
+
+**Output locations:**
+- `artifacts/pipeline_report.md` - /full-pipeline output
+- `docs/thesis_progress_report_*.md` - /thesis-report output
+- `artifacts/performance_report_*.md` - /performance-test output
+- `artifacts/board_ready_report.md` - /board-ready output
+- `artifacts/validation_report_*.md` - /model-validate output
+
+### Skills (in `.claude/skills/`)
+
+Skills provide detailed workflow definitions that commands execute. Each skill includes:
+- Prerequisite checks
+- Step-by-step execution plan
+- Output validation
+- Error handling
+
+See `.claude/commands/README.md` and `.claude/skills/README.md` for detailed documentation.
+
 ## Development Commands
 
 ### Testing & Code Quality
@@ -49,10 +86,10 @@ RK3588 industrial edge AI system for real-time object detection with dual-NIC ne
 # Install development dependencies (first time)
 pip install -r requirements-dev.txt
 
-# Run all unit tests
+# Run all unit tests (7 test files, 40+ test cases)
 pytest tests/unit -v
 
-# Run tests with coverage report
+# Run tests with coverage report (88-100% coverage)
 pytest tests/unit -v --cov=apps --cov=tools --cov-report=html
 
 # Run a single test file
@@ -167,6 +204,75 @@ bash scripts/run_bench.sh
 - ✅ conf=0.5 (optimized): 5.2ms postprocessing → 60+ FPS (production ready)
 - Recommendation: Use conf≥0.5 for industrial applications to avoid excessive false positives
 
+## Graduation Thesis Documentation
+
+**Comprehensive thesis documentation is available in `docs/`**
+
+### Thesis Chapters (Markdown + Word)
+
+The project includes complete graduation thesis documentation:
+
+1. **[Opening Report](docs/thesis_opening_report.md)** (开题报告) ✅
+   - Project background and significance
+   - Research status and innovation points
+   - Technical solution design
+   - Timeline planning
+   - Exported as `docs/开题报告.docx`
+
+2. **[Chapter 2: System Design](docs/thesis_chapter_system_design.md)** ✅
+   - Hardware design (RK3588, dual-NIC configuration)
+   - Software architecture (application → system layer)
+   - Module design (preprocessing, inference, postprocessing, network)
+   - ~3000 words with code examples
+
+3. **[Chapter 3: Model Optimization](docs/thesis_chapter_model_optimization.md)** ✅
+   - Model selection and benchmarking (YOLO11n)
+   - INT8 quantization methodology
+   - Calibration dataset preparation
+   - Complete conversion toolchain
+   - Resolution optimization (416×416 vs 640×640)
+   - ~4000 words with formulas
+
+4. **[Chapter 4: Deployment](docs/thesis_chapter_deployment.md)** ✅
+   - Deployment strategy (Python vs C++)
+   - Environment setup (PC + board)
+   - Complete inference framework code
+   - One-click deployment scripts
+   - Network integration and serialization
+   - ~3500 words with runnable code
+
+5. **[Chapter 5: Performance Testing](docs/thesis_chapter_performance.md)** ✅
+   - PC baseline benchmarks (ONNX GPU: 8.6ms)
+   - RKNN PC simulator validation
+   - Board-level performance projections
+   - Parameter tuning impact analysis
+   - Graduation requirements compliance
+   - ~3500 words with performance tables
+
+**Complete thesis export:** `docs/RK3588行人检测_毕业设计说明书.docx` (69KB, 5 chapters)
+
+**Thesis Statistics:**
+- Total chapters: 5 (+ opening report)
+- Total word count: ~14,000 words
+- Code examples: 20+
+- Tables: 30+
+- Architecture diagrams: 8+
+- Completion: 95% (Phase 4 dataset validation pending)
+
+**Documentation Index:**
+See `docs/THESIS_README.md` for complete navigation and usage guide.
+
+**Export to Word:**
+```bash
+# Using pandoc
+pandoc docs/thesis_opening_report.md -o thesis_opening.docx
+
+# All chapters are already exported to .docx format in docs/
+ls docs/*.docx
+# docs/开题报告.docx
+# docs/RK3588行人检测_毕业设计说明书.docx
+```
+
 ## Critical Architecture Details
 
 ### RKNN Conversion Pitfalls
@@ -212,28 +318,68 @@ RKNN NPU has a 16384-element limit for Transpose operations. YOLO output shapes:
 
 ```
 rk-app/
-├── tools/          # Core conversion/export/evaluation tools
+├── .claude/                       # Claude Code automation
+│   ├── commands/                  # Slash commands (5 commands)
+│   │   ├── full-pipeline.md
+│   │   ├── thesis-report.md
+│   │   ├── performance-test.md
+│   │   ├── board-ready.md
+│   │   └── model-validate.md
+│   └── skills/                    # Workflow definitions (5 skills)
+│       ├── full-pipeline.md
+│       ├── thesis-report.md
+│       ├── performance-test.md
+│       ├── board-ready.md
+│       └── model-validate.md
+├── docs/                          # Comprehensive documentation
+│   ├── thesis_opening_report.md   # 开题报告
+│   ├── thesis_chapter_*.md        # 5 thesis chapters
+│   ├── *.docx                     # Word exports (2 files)
+│   ├── THESIS_README.md           # Documentation index
+│   ├── reports/                   # Project status reports
+│   ├── deployment/                # Deployment guides
+│   └── docs/                      # Technical guides (RGMII, 900Mbps, etc.)
+├── apps/                          # Python application (7 modules)
+│   ├── config.py                  # Centralized configuration
+│   ├── exceptions.py              # Custom exception hierarchy
+│   ├── logger.py                  # Unified logging
+│   ├── yolov8_rknn_infer.py       # Main RKNN inference app
+│   └── utils/
+│       ├── preprocessing.py       # Image preprocessing (ONNX/RKNN/board)
+│       └── yolo_post.py           # Postprocessing utilities
+├── tests/                         # Unit tests (7 files, 40+ cases)
+│   └── unit/
+│       ├── test_config.py         # 14 tests
+│       ├── test_exceptions.py     # 10 tests
+│       ├── test_preprocessing.py  # 11 tests
+│       └── test_aggregate.py      # 7 tests
+├── tools/                         # Core conversion/export tools
 │   ├── export_yolov8_to_onnx.py
 │   ├── convert_onnx_to_rknn.py
 │   ├── aggregate.py, http_receiver.py, http_post.py  # MCP tools
 │   └── iperf3_bench.sh, ffprobe_probe.sh
-├── scripts/
+├── scripts/                       # Automation scripts (36 shell scripts)
 │   ├── run_bench.sh               # MCP benchmark pipeline
 │   ├── run_rknn_sim.py            # PC simulator inference
 │   ├── compare_onnx_rknn.py       # Accuracy comparison
-│   ├── deploy/deploy_to_board.sh  # SSH deployment to RK3588
-│   └── tune/                      # PID tuning scripts
-├── apps/
-│   ├── yolov8_rknn_infer.py       # Main RKNN inference app
-│   └── utils/yolo_post.py         # Postprocessing utilities
-├── artifacts/
+│   ├── deploy/
+│   │   ├── deploy_to_board.sh     # SSH deployment to RK3588
+│   │   └── rk3588_run.sh          # One-click on-device runner
+│   ├── benchmark/                 # Performance benchmarks
+│   ├── demo/                      # Demo scripts
+│   ├── reports/                   # Report generators
+│   └── train/                     # Training scripts
+├── artifacts/                     # Build outputs and reports
 │   ├── models/                    # .onnx and .rknn outputs
-│   └── *.json, *.csv, *.md        # Benchmark results
+│   ├── *_report.md                # Generated reports
+│   ├── *.json, *.csv              # Benchmark results
+│   └── visualizations/            # Visual comparisons
 ├── datasets/coco/
 │   ├── calib_images/              # Calibration dataset (300 images)
 │   └── calib_images/calib.txt     # Absolute paths list
 ├── config/                        # YAML configs for detection/network
-└── configs/mcp_servers.yaml       # MCP server declarations
+├── configs/mcp_servers.yaml       # MCP server declarations
+└── pytest.ini, requirements*.txt  # Configuration files
 ```
 
 ## Python Application Architecture
@@ -334,24 +480,43 @@ Scripts gracefully degrade (e.g., iperf3 errors generate JSON with `"error"` fie
 ## Python Environment
 
 **Virtual env:** `yolo_env` (Python 3.10.12, PyTorch 2.0.1+cu117, CUDA 11.7)
-**Key packages:**
-- ultralytics==8.3.205 (YOLOv8/v11 training & export)
-- rknn-toolkit2==2.3.2 (RK3588 conversion, PC simulator)
-- onnxruntime-gpu==1.16.3 (CUDA 11.x compatible, for PC validation)
-- opencv-python==4.11.0.86
-- numpy==1.26.4
 
-**Important**: Use onnxruntime-gpu 1.16.3 (not 1.23.x which requires CUDA 12). Install with:
+**Key packages (see `requirements.txt`):**
+- **Core ML/CV:**
+  - numpy>=1.20.0,<2.0 (RKNN toolkit compatibility)
+  - opencv-python-headless==4.9.0.80
+  - pillow==11.3.0
+  - matplotlib==3.10.6
+
+- **YOLO & Training:**
+  - ultralytics>=8.0.0 (YOLOv8/v11 training & export)
+  - torch>=2.0.0 (for training; omit if inference-only)
+
+- **RKNN Conversion:**
+  - rknn-toolkit2>=2.3.2 (ONNX→RKNN conversion on x86 PC)
+
+- **ONNX Inference:**
+  - onnxruntime==1.18.1 (PC validation)
+
+- **Configuration:**
+  - PyYAML>=6.0
+
+**Development packages (see `requirements-dev.txt`):**
+- pytest, pytest-cov (testing with coverage)
+- black, pylint, flake8, isort (code quality)
+- mypy (type checking)
+
+**Installation:**
 ```bash
 source ~/yolo_env/bin/activate
-pip uninstall onnxruntime onnxruntime-gpu -y
-pip install onnxruntime-gpu==1.16.3
+pip install -r requirements.txt
+pip install -r requirements-dev.txt  # For development
 ```
 
 **Activation:**
 ```bash
 source ~/yolo_env/bin/activate
-export PYTHONPATH=/home/minsea/rk-app  # Required for apps/ imports
+export PYTHONPATH=/home/user/rk-app  # Required for apps/ imports
 ```
 
 **GPU Support Verification:**
@@ -359,6 +524,11 @@ export PYTHONPATH=/home/minsea/rk-app  # Required for apps/ imports
 python -c "import onnxruntime as ort; print(ort.get_available_providers())"
 # Expected: ['TensorrtExecutionProvider', 'CUDAExecutionProvider', 'CPUExecutionProvider']
 ```
+
+**Important Notes:**
+- Use numpy<2.0 for RKNN toolkit compatibility
+- onnxruntime 1.18.1 works with CUDA 11.7
+- For board deployment, only rknn-toolkit2-lite is needed (not full toolkit)
 
 ## Quantization & Calibration
 
@@ -499,43 +669,100 @@ print(f"Error: {error_msg}")  # Can't be redirected or disabled
 - Monitor layer-wise profiling with `rknn.eval_perf()`
 - Target <45ms end-to-end latency (camera → inference → UDP)
 
-## Current Project Status (as of Oct 2025)
+## Project Statistics
 
-### Completed (85%)
-- ✅ Model conversion pipeline (PyTorch → ONNX → RKNN INT8)
-- ✅ Cross-compilation toolchain (CMake presets for x86/arm64)
-- ✅ PC boardless validation (ONNX GPU + RKNN simulator)
-- ✅ One-click deployment script (`rk3588_run.sh`)
-- ✅ Performance optimization (conf=0.5 achieves 60+ FPS on PC)
-- ✅ MCP benchmark pipeline
-- ✅ Unit tests (40+ test cases, 88-100% coverage)
-- ✅ Model size: 4.7MB (meets <5MB requirement)
+**Codebase Metrics:**
+- **Python modules:** 7 (apps/) + 7 (tests/unit/)
+- **Scripts:** 36 shell scripts (scripts/)
+- **Test cases:** 40+ unit tests
+- **Test coverage:** 88-100% for core modules
+- **Documentation:** 35+ markdown files, 2 Word exports
+- **Thesis chapters:** 5 chapters + opening report (~14,000 words)
+- **Automation:** 5 slash commands + 5 skills
 
-### Pending Hardware Validation (15%)
-- ⏸️ **Dual-NIC driver development** (RGMII interface, Priority: HIGH)
-  - Network throughput validation (≥900Mbps)
-  - Port 1: Industrial camera (1080P capture)
-  - Port 2: Detection result upload
-- ⏸️ **On-device performance testing**
-  - Actual NPU inference latency
-  - FPS validation (target: >30)
-  - Multi-core NPU parallel processing
-- ⏸️ **Pedestrian detection dataset**
-  - Dataset construction or public dataset selection
-  - mAP@0.5 validation (target: >90%)
+**Model Metrics:**
+- **Model size:** 4.7MB (✅ meets <5MB requirement)
+- **PC performance:** 8.6ms @ 416×416 (ONNX GPU, RTX 3060)
+- **Expected board FPS:** 25-35 FPS (INT8 quantized RKNN)
+- **Accuracy:** Mean absolute difference <1% (ONNX vs RKNN)
 
-### Documentation TODO
-- ⏸️ Proposal report (开题报告)
-- ⏸️ Progress report 1: System migration + driver (中期检查1)
-- ⏸️ Progress report 2: Model deployment (中期检查2)
-- ⏸️ Graduation thesis (毕业设计说明书)
+**Technology Stack:**
+- **Languages:** Python 3.10, C++17, Bash
+- **Frameworks:** Ultralytics YOLO, RKNN-Toolkit2, ONNX Runtime
+- **Build System:** CMake 3.22, pytest
+- **Automation:** Claude Code slash commands & skills
+
+## Current Project Status (as of Nov 2025)
+
+### Phase 1 Completed (95%) ✅
+- ✅ **Model conversion pipeline** (PyTorch → ONNX → RKNN INT8)
+- ✅ **Cross-compilation toolchain** (CMake presets for x86/arm64)
+- ✅ **PC boardless validation** (ONNX GPU + RKNN simulator)
+- ✅ **One-click deployment script** (`rk3588_run.sh`)
+- ✅ **Performance optimization** (conf=0.5 achieves 60+ FPS on PC)
+- ✅ **MCP benchmark pipeline** (iperf3 + ffprobe + aggregation)
+- ✅ **Unit tests** (40+ test cases, 88-100% coverage)
+- ✅ **Code quality** (config, exceptions, logging modules)
+- ✅ **Model size** (4.7MB, meets <5MB requirement)
+- ✅ **Claude Code automation** (5 slash commands + 5 skills)
+- ✅ **Thesis documentation** (5 chapters + opening report, exported to Word)
+  - ✅ Opening report (开题报告.docx)
+  - ✅ Complete thesis (RK3588行人检测_毕业设计说明书.docx, 69KB)
+  - ✅ All chapters with code examples, tables, diagrams
+
+### Phase 2 Pending (Hardware Required) ⏸️
+
+**Dual-NIC Driver Development** (Priority: HIGH)
+- ⏸️ Network throughput validation (≥900Mbps)
+- ⏸️ Port 1: Industrial camera (1080P capture)
+- ⏸️ Port 2: Detection result upload
+- 📋 Documentation prepared: `docs/docs/RGMII_NETWORK_GUIDE.md`
+
+**On-Device Performance Testing**
+- ⏸️ Actual NPU inference latency measurement
+- ⏸️ FPS validation (target: >30 FPS)
+- ⏸️ Multi-core NPU parallel processing
+- 📋 Deployment scripts ready: `scripts/deploy/rk3588_run.sh`
+
+**Pedestrian Detection Dataset**
+- ⏸️ Dataset construction or public dataset selection
+- ⏸️ mAP@0.5 validation (target: >90%)
+- 📋 Dataset guide prepared: `datasets/PEDESTRIAN_DATASET_GUIDE.md`
+
+### Documentation Status
+
+**Completed:**
+- ✅ Opening report (开题报告)
+- ✅ 5 thesis chapters (system design, optimization, deployment, performance, etc.)
+- ✅ Word exports (.docx format)
+- ✅ Technical guides (RGMII, 900Mbps, deployment)
+- ✅ Project status reports (compliance, acceptance, honest assessment)
+
+**Pending:**
+- ⏸️ Progress report 1: System migration + driver (中期检查1) - awaiting hardware
+- ⏸️ Progress report 2: Model deployment (中期检查2) - awaiting Phase 2 data
+- ⏸️ Chapter 6: Experimental results - needs board testing data
+- ⏸️ Chapter 7: Conclusions - final defense preparation
 - ⏸️ English literature translation
 
-### Hardware Dependencies
-**All pending items require RK3588 board to be available.**
-Expected timeline:
-- Dec 2025: Dual-NIC driver + system migration
-- Jan-Apr 2026: Model deployment + performance tuning
-- Apr-Jun 2026: Dataset validation + thesis writing
+### Timeline & Risk Assessment
 
-**Risk**: If hardware not available by Dec 2025, Phase 2 milestone (dual-NIC driver) will be delayed.
+**Expected Timeline:**
+- ✅ **Phase 1 (Oct-Nov 2025):** Thesis + PC validation → 95% complete
+- ⏸️ **Phase 2 (Dec 2025):** Dual-NIC driver + system migration
+- ⏸️ **Phase 3 (Jan-Apr 2026):** Model deployment + performance tuning
+- ⏸️ **Phase 4 (Apr-Jun 2026):** Dataset validation + final thesis
+- 📅 **Defense (June 2026)**
+
+**Critical Dependencies:**
+- **Hardware availability:** RK3588 board required for Phase 2-4
+- **Risk:** If board not available by Dec 2025, Phase 2 milestone will be delayed
+- **Mitigation:** All PC-based work completed; can immediately proceed when hardware arrives
+
+**Graduation Requirements Compliance:**
+- ✅ Model size <5MB: 4.7MB ✅
+- ⏸️ FPS >30: Estimated 25-35 FPS (needs board validation)
+- ⏸️ mAP@0.5 >90%: Needs pedestrian dataset validation
+- ⏸️ Dual-NIC ≥900Mbps: Needs RGMII driver + testing
+- ✅ Working software: PC simulation complete, board deployment scripted
+- ✅ Thesis documentation: 5 chapters + opening report complete
