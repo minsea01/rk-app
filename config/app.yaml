@@ -1,1 +1,28 @@
-log_level: INFO
+# RK-App Configuration File
+# Priority: CLI args > Environment variables (RK_*) > This file > Python defaults
+#
+# Example usage:
+#   python scripts/run_rknn_sim.py  # Uses this config
+#   python scripts/run_rknn_sim.py --imgsz 640  # CLI overrides this file
+#   RK_IMGSZ=640 python scripts/run_rknn_sim.py  # ENV overrides this file
+
+# Logging configuration
+log_level: INFO  # DEBUG, INFO, WARNING, ERROR, CRITICAL
+
+# Model configuration
+# imgsz: 416  # Image size (416 or 640). Default: 416 (recommended for RK3588)
+# conf_threshold: 0.5  # Confidence threshold (0.0-1.0). Default: 0.5
+# iou_threshold: 0.45  # IOU threshold for NMS (0.0-1.0). Default: 0.45
+
+# RKNN configuration
+# target_platform: rk3588  # Target platform. Default: rk3588
+# optimization_level: 3  # Optimization level (0-3). Default: 3
+# core_mask: 7  # NPU core mask (7=all cores). Default: 7
+
+# Video configuration
+# camera_id: 0  # Camera device ID. Default: 0
+# fps: 30  # Target FPS. Default: 30
+
+# Network configuration
+# tcp_port: 8080  # TCP port. Default: 8080
+# udp_port: 8081  # UDP port. Default: 8081

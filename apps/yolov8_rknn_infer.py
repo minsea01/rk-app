@@ -8,6 +8,7 @@ import cv2
 import numpy as np
 
 from apps.utils.yolo_post import letterbox, postprocess_yolov8
+from apps.utils.headless import safe_imshow, safe_waitKey
 from apps.exceptions import RKNNError, PreprocessError, InferenceError, ModelLoadError
 from apps.logger import setup_logger
 
@@ -96,7 +97,12 @@ def main():
     ap.add_argument('--model', type=Path, required=True, help='path to .rknn model file')
     ap.add_argument('--source', type=Path, help='image path; if omitted, opens /dev/video0')
     ap.add_argument('--imgsz', type=int, default=640)
-    ap.add_argument('--conf', type=float, default=0.25)
+    ap.add_argument(
+        '--conf',
+        type=float,
+        default=0.5,
+        help='confidence threshold (default: 0.5, recommended >=0.5 for production to avoid NMS bottleneck)'
+    )
     ap.add_argument('--iou', type=float, default=0.45)
     ap.add_argument('--names', type=Path, default=None, help='names.txt (one class per line)')
     ap.add_argument('--head', type=str, choices=['auto', 'dfl', 'raw'], default='auto', help='head decode type')
@@ -177,21 +183,19 @@ def main():
             cv2.imwrite(str(args.save), vis)
             logger.info('Saved: %s', args.save)
         else:
-            cv2.imshow('result', vis)
-            cv2.waitKey(0)
+            # Auto-handles headless mode (saves to file instead of displaying)
+            safe_imshow('result', vis, fallback_path='artifacts/result.jpg', wait_key=0)
         rknn.release()
         return
 
     # Fallback to camera
+    cap = None
     try:
         cap = cv2.VideoCapture(0)
         if not cap.isOpened():
             raise PreprocessError('Failed to open camera (/dev/video0)')
-    except Exception as e:
-        raise PreprocessError(f'Error opening camera: {e}')
 
-    fps_hist = []
-    try:
+        fps_hist = []
         while True:
             ret, img0 = cap.read()
             if not ret:
@@ -212,11 +216,23 @@ def main():
             fps_hist.append(fps)
             vis = draw_boxes(img0.copy(), boxes, confs, cls_ids, class_names)
             cv2.putText(vis, f'FPS: {fps:.1f}', (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0,255,0), 2)
-            cv2.imshow('result', vis)
-            if cv2.waitKey(1) & 0xFF == 27:
+
+            # Auto-handles headless mode (saves to file instead of displaying)
+            safe_imshow('result', vis, fallback_path='artifacts/camera_frame.jpg')
+
+            # Check for ESC key to exit (GUI mode only)
+            if safe_waitKey(1) & 0xFF == 27:
                 break
+    except PreprocessError:
+        # Re-raise preprocessing errors
+        raise
+    except Exception as e:
+        # Wrap unexpected errors
+        raise PreprocessError(f'Camera processing error: {e}')
     finally:
-        cap.release()
+        # Always clean up resources
+        if cap is not None:
+            cap.release()
         rknn.release()
         cv2.destroyAllWindows()
         if fps_hist:

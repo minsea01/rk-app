@@ -1,3 +1,17 @@
+# RK-App PC Development Dependencies
+# ============================================================
+#
+# Purpose: Full development environment for x86_64 PC
+# Environment: WSL2 Ubuntu 22.04, Python 3.10, CUDA 11.7
+#
+# Installation:
+#   pip install -r requirements.txt
+#
+# For RK3588 board deployment, use: requirements_board.txt
+# (Minimal inference-only dependencies, no training libraries)
+#
+# ============================================================
+
 # Core ML/CV dependencies
 numpy>=1.20.0,<2.0  # RKNN toolkit requires numpy<2.0
 opencv-python-headless==4.9.0.80
