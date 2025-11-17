@@ -2,22 +2,33 @@
 import argparse
 from pathlib import Path
 
+# Expose YOLO at module scope so tests can monkeypatch tools.export_yolov8_to_onnx.YOLO
+YOLO = None
+try:
+    from ultralytics import YOLO  # type: ignore
+except Exception:
+    # Keep YOLO as None if import fails or ultralytics unavailable
+    YOLO = None
+
 def export(weights: str, imgsz: int, opset: int, simplify: bool, dynamic: bool, half: bool, outdir: Path, outfile: str = None):
     outdir.mkdir(parents=True, exist_ok=True)
-    try:
-        from ultralytics import YOLO
-    except Exception as e:
-        raise SystemExit(f"Ultralytics not installed. pip install ultralytics. Error: {e}")
+
+    # Check if YOLO is available (module-level import may have failed)
+    if YOLO is None:
+        raise SystemExit("Ultralytics not installed or not importable. Please run: pip install ultralytics")
 
     model = YOLO(weights)
-    onnx_path = model.export(
-        format='onnx',
-        imgsz=imgsz,
-        opset=opset,
-        simplify=simplify,
-        dynamic=dynamic,
-        half=half,
-    )
+    try:
+        onnx_path = model.export(
+            format='onnx',
+            imgsz=imgsz,
+            opset=opset,
+            simplify=simplify,
+            dynamic=dynamic,
+            half=half,
+        )
+    except Exception as e:
+        raise ValueError(f"Failed to export ONNX model: {e}") from e
     # Move result into the outdir if ultralytics writes into CWD
     onnx_path = Path(onnx_path)
     target = outdir / (outfile if outfile else onnx_path.name)

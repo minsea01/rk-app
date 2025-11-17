@@ -4,6 +4,14 @@ from pathlib import Path
 import sys
 from importlib.metadata import version, PackageNotFoundError
 
+# Expose RKNN at module scope so tests can monkeypatch tools.convert_onnx_to_rknn.RKNN
+RKNN = None
+try:
+    from rknn.api import RKNN  # type: ignore
+except Exception:
+    # Keep RKNN as None if import fails or toolkit unavailable
+    RKNN = None
+
 
 def _detect_rknn_default_qdtype():
     try:
@@ -27,15 +35,10 @@ def build_rknn(
     std: str = '255,255,255',
     reorder: str = '2 1 0',  # BGR->RGB
 ):
-    try:
-        from rknn.api import RKNN
-    except ImportError as e:
+    # Check if RKNN is available (module-level import may have failed)
+    if RKNN is None:
         raise SystemExit(
-            f"rknn-toolkit2 not installed. Please run: pip install rknn-toolkit2\nError: {e}"
-        )
-    except (AttributeError, TypeError) as e:
-        raise SystemExit(
-            f"rknn-toolkit2 version incompatible. Please ensure rknn-toolkit2>=2.3.2 is installed.\nError: {e}"
+            "rknn-toolkit2 not installed or not importable. Please run: pip install rknn-toolkit2"
         )
 
     mean_values = [[float(v) for v in mean.split(',')]]
@@ -58,7 +61,13 @@ def build_rknn(
     )
 
     print(f'Loading ONNX: {onnx_path}')
-    ret = rknn.load_onnx(model=str(onnx_path))
+    try:
+        ret = rknn.load_onnx(model=str(onnx_path))
+    except Exception as e:
+        # Translate protobuf/onnx parsing errors into ValueError for test determinism
+        rknn.release()
+        raise ValueError(f"Failed to load ONNX model: {e}") from e
+
     if ret != 0:
         print('load_onnx failed')
         rknn.release()
@@ -73,14 +82,24 @@ def build_rknn(
             raise SystemExit(f'Calibration file or folder not found: {dataset}')
 
     print('Building RKNN...')
-    ret = rknn.build(do_quantization=bool(do_quant), dataset=dataset)
+    try:
+        ret = rknn.build(do_quantization=bool(do_quant), dataset=dataset)
+    except Exception as e:
+        rknn.release()
+        raise ValueError(f"Failed to build RKNN model: {e}") from e
+
     if ret != 0:
         print('build failed')
         rknn.release()
         sys.exit(1)
 
     print(f'Exporting RKNN to: {out_path}')
-    ret = rknn.export_rknn(str(out_path))
+    try:
+        ret = rknn.export_rknn(str(out_path))
+    except Exception as e:
+        rknn.release()
+        raise ValueError(f"Failed to export RKNN model: {e}") from e
+
     if ret != 0:
         print('export_rknn failed')
         rknn.release()
