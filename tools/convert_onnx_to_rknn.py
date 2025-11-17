@@ -47,7 +47,17 @@ def build_rknn(
     onnx_path = Path(onnx_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
-    rknn = RKNN(verbose=True)
+    # Try to instantiate RKNN (may fail if version incompatible or other issues)
+    try:
+        rknn = RKNN(verbose=True)
+    except (ImportError, TypeError) as e:
+        raise SystemExit(
+            f"rknn-toolkit2 not installed. Please run: pip install rknn-toolkit2\nError: {e}"
+        )
+    except AttributeError as e:
+        raise SystemExit(
+            f"rknn-toolkit2 version incompatible. Please ensure rknn-toolkit2>=2.3.2 is installed.\nError: {e}"
+        )
     print('Configuring RKNN...')
     # Choose sensible default qdtype by toolkit major version if not provided
     if quantized_dtype in (None, ''):

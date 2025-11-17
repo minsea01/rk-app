@@ -17,7 +17,11 @@ def export(weights: str, imgsz: int, opset: int, simplify: bool, dynamic: bool, 
     if YOLO is None:
         raise SystemExit("Ultralytics not installed or not importable. Please run: pip install ultralytics")
 
-    model = YOLO(weights)
+    # Try to instantiate YOLO model (may fail if ultralytics not properly installed)
+    try:
+        model = YOLO(weights)
+    except ImportError as e:
+        raise SystemExit(f"Ultralytics not installed. pip install ultralytics. Error: {e}")
     try:
         onnx_path = model.export(
             format='onnx',
