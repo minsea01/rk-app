@@ -58,6 +58,15 @@ def build_rknn(
         raise SystemExit(
             f"rknn-toolkit2 version incompatible. Please ensure rknn-toolkit2>=2.3.2 is installed.\nError: {e}"
         )
+    # Validate calibration dataset BEFORE attempting to load ONNX
+    dataset = None
+    if do_quant:
+        if calib is None:
+            raise SystemExit('INT8 quantization requested but no calibration dataset provided')
+        dataset = str(calib)
+        if not Path(dataset).exists():
+            raise SystemExit(f'Calibration file or folder not found: {dataset}')
+
     print('Configuring RKNN...')
     # Choose sensible default qdtype by toolkit major version if not provided
     if quantized_dtype in (None, ''):
@@ -82,14 +91,6 @@ def build_rknn(
         print('load_onnx failed')
         rknn.release()
         sys.exit(1)
-
-    dataset = None
-    if do_quant:
-        if calib is None:
-            raise SystemExit('INT8 quantization requested but no calibration dataset provided')
-        dataset = str(calib)
-        if not Path(dataset).exists():
-            raise SystemExit(f'Calibration file or folder not found: {dataset}')
 
     print('Building RKNN...')
     try:
