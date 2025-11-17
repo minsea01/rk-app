@@ -16,15 +16,15 @@ jobs:
         python-version: ['3.10', '3.11']
 
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
 
       - name: Cache pip dependencies
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: ~/.cache/pip
           key: ${{ runner.os }}-pip-${{ hashFiles('requirements*.txt') }}
@@ -53,21 +53,21 @@ jobs:
             --junit-xml=test-results/junit.xml
 
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v3
+        uses: codecov/codecov-action@v4
         with:
           files: ./coverage.xml
           flags: unittests
           name: codecov-umbrella
 
       - name: Upload test results
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         if: always()
         with:
           name: test-results-unit-${{ matrix.python-version }}
           path: test-results/
 
       - name: Upload coverage report
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: coverage-report-${{ matrix.python-version }}
           path: htmlcov/
@@ -78,10 +78,10 @@ jobs:
     needs: unit-tests
 
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.10'
 
@@ -102,7 +102,7 @@ jobs:
             --junit-xml=test-results/integration-junit.xml
 
       - name: Upload integration test results
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         if: always()
         with:
           name: test-results-integration
@@ -114,10 +114,10 @@ jobs:
     needs: unit-tests
 
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.10'
 
@@ -138,7 +138,7 @@ jobs:
             --junit-xml=test-results/performance-junit.xml
 
       - name: Upload performance test results
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         if: always()
         with:
           name: test-results-performance
@@ -149,10 +149,10 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.10'
 
@@ -194,10 +194,10 @@ jobs:
     needs: [unit-tests, integration-tests]
 
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.10'
 
@@ -218,7 +218,7 @@ jobs:
             --junit-xml=test-results/graduation-junit.xml
 
       - name: Upload graduation test results
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         if: always()
         with:
           name: graduation-requirements-report
@@ -232,7 +232,7 @@ jobs:
 
     steps:
       - name: Download all test results
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           path: all-test-results/
 
