@@ -1,8 +1,20 @@
 #!/usr/bin/env python3
+"""ONNX to RKNN model conversion tool.
+
+This script converts ONNX models to RKNN format with optional INT8 quantization
+for deployment on Rockchip NPU platforms.
+"""
 import argparse
 from pathlib import Path
 import sys
 from importlib.metadata import version, PackageNotFoundError
+
+# Import custom exceptions
+from apps.exceptions import ModelLoadError, ConfigurationError
+from apps.logger import setup_logger
+
+# Setup logger
+logger = setup_logger(__name__, level='INFO')
 
 
 def _detect_rknn_default_qdtype():
@@ -14,6 +26,52 @@ def _detect_rknn_default_qdtype():
         major = 0
     # rknn-toolkit2 >=2.x uses enums like 'w8a8'; 1.x uses 'asymmetric_quantized-u8'.
     return 'w8a8' if major >= 2 else 'asymmetric_quantized-u8'
+
+
+def _parse_and_validate_mean_std(mean: str, std: str):
+    """Parse and validate mean/std parameters.
+
+    Args:
+        mean: Comma-separated mean values (e.g., '0,0,0')
+        std: Comma-separated std values (e.g., '255,255,255')
+
+    Returns:
+        Tuple of (mean_values, std_values) as nested lists
+
+    Raises:
+        ValueError: If format is invalid or values are out of range
+    """
+    try:
+        mean_list = [float(v.strip()) for v in mean.split(',')]
+        std_list = [float(v.strip()) for v in std.split(',')]
+    except ValueError as e:
+        raise ValueError(
+            f"Invalid mean/std format. Expected comma-separated floats.\n"
+            f"  mean='{mean}', std='{std}'\n"
+            f"  Error: {e}"
+        )
+
+    if len(mean_list) != 3:
+        raise ValueError(
+            f"Mean must have exactly 3 values (R,G,B), got {len(mean_list)}: {mean_list}"
+        )
+
+    if len(std_list) != 3:
+        raise ValueError(
+            f"Std must have exactly 3 values (R,G,B), got {len(std_list)}: {std_list}"
+        )
+
+    if any(s == 0 for s in std_list):
+        raise ValueError(
+            f"Std values cannot be zero (would cause division by zero): {std_list}"
+        )
+
+    if any(s < 0 for s in std_list):
+        raise ValueError(
+            f"Std values must be positive: {std_list}"
+        )
+
+    return [mean_list], [std_list]
 
 
 def build_rknn(
@@ -30,16 +88,16 @@ def build_rknn(
     try:
         from rknn.api import RKNN
     except ImportError as e:
-        raise SystemExit(
+        raise ConfigurationError(
             f"rknn-toolkit2 not installed. Please run: pip install rknn-toolkit2\nError: {e}"
-        )
+        ) from e
     except (AttributeError, TypeError) as e:
-        raise SystemExit(
+        raise ConfigurationError(
             f"rknn-toolkit2 version incompatible. Please ensure rknn-toolkit2>=2.3.2 is installed.\nError: {e}"
-        )
+        ) from e
 
-    mean_values = [[float(v) for v in mean.split(',')]]
-    std_values = [[float(v) for v in std.split(',')]]
+    # Validate and parse mean/std parameters
+    mean_values, std_values = _parse_and_validate_mean_std(mean, std)
 
     onnx_path = Path(onnx_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -57,36 +115,33 @@ def build_rknn(
         quantized_dtype=quantized_dtype,
     )
 
-    print(f'Loading ONNX: {onnx_path}')
+    logger.info(f'Loading ONNX: {onnx_path}')
     ret = rknn.load_onnx(model=str(onnx_path))
     if ret != 0:
-        print('load_onnx failed')
         rknn.release()
-        sys.exit(1)
+        raise ModelLoadError(f'Failed to load ONNX model: {onnx_path}')
 
     dataset = None
     if do_quant:
         if calib is None:
-            raise SystemExit('INT8 quantization requested but no calibration dataset provided')
+            raise ConfigurationError('INT8 quantization requested but no calibration dataset provided')
         dataset = str(calib)
         if not Path(dataset).exists():
-            raise SystemExit(f'Calibration file or folder not found: {dataset}')
+            raise ConfigurationError(f'Calibration file or folder not found: {dataset}')
 
-    print('Building RKNN...')
+    logger.info('Building RKNN model...')
     ret = rknn.build(do_quantization=bool(do_quant), dataset=dataset)
     if ret != 0:
-        print('build failed')
         rknn.release()
-        sys.exit(1)
+        raise ModelLoadError('Failed to build RKNN model')
 
-    print(f'Exporting RKNN to: {out_path}')
+    logger.info(f'Exporting RKNN to: {out_path}')
     ret = rknn.export_rknn(str(out_path))
     if ret != 0:
-        print('export_rknn failed')
         rknn.release()
-        sys.exit(1)
+        raise ModelLoadError(f'Failed to export RKNN model to: {out_path}')
 
-    print('Done.')
+    logger.info('RKNN conversion completed successfully')
     rknn.release()
 
 
@@ -111,23 +166,31 @@ def main():
         for ext in ('*.jpg', '*.jpeg', '*.png', '*.bmp'):
             images.extend(sorted(glob(str(calib / ext))))
         if not images:
-            raise SystemExit(f'No images found in calibration folder: {calib}')
+            raise ConfigurationError(f'No images found in calibration folder: {calib}')
         list_path = calib / 'calib.txt'
         with open(list_path, 'w') as f:
             f.write('\n'.join(images))
         calib = list_path
 
-    build_rknn(
-        onnx_path=args.onnx,
-        out_path=args.out,
-        calib=calib,
-        do_quant=args.do_quant,
-        target=args.target,
-        quantized_dtype=args.quant_dtype,
-        mean=args.mean,
-        std=args.std,
-        reorder=args.reorder,
-    )
+    try:
+        build_rknn(
+            onnx_path=args.onnx,
+            out_path=args.out,
+            calib=calib,
+            do_quant=args.do_quant,
+            target=args.target,
+            quantized_dtype=args.quant_dtype,
+            mean=args.mean,
+            std=args.std,
+            reorder=args.reorder,
+        )
+        return 0
+    except (ModelLoadError, ConfigurationError) as e:
+        logger.error(f"Conversion failed: {e}", exc_info=True)
+        return 1
+    except Exception as e:
+        logger.error(f"Unexpected error during conversion: {e}", exc_info=True)
+        return 1
 
 if __name__ == '__main__':
-    main()
+    sys.exit(main())

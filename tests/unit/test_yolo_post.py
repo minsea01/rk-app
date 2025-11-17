@@ -39,6 +39,45 @@ class TestSigmoid:
         assert result[1] > 0.7
         assert result[2] < 0.3
 
+    def test_sigmoid_numerical_stability_extreme_positive(self):
+        """Test sigmoid numerical stability with extreme positive values."""
+        # These values would cause overflow in naive implementation
+        x = np.array([100, 500, 1000, 10000])
+        y = sigmoid(x)
+        # Should not produce inf/nan
+        assert np.all(np.isfinite(y))
+        # Should be very close to 1.0 but not exceed it
+        assert np.all(y > 0.9999)
+        assert np.all(y <= 1.0)
+
+    def test_sigmoid_numerical_stability_extreme_negative(self):
+        """Test sigmoid numerical stability with extreme negative values."""
+        # These values would cause overflow in naive implementation
+        x = np.array([-100, -500, -1000, -10000])
+        y = sigmoid(x)
+        # Should not produce inf/nan
+        assert np.all(np.isfinite(y))
+        # Should be very close to 0.0 but not go negative
+        assert np.all(y < 0.0001)
+        assert np.all(y >= 0.0)
+
+    def test_sigmoid_range_always_valid(self):
+        """Test sigmoid always produces values in [0, 1]."""
+        # Test with 10000 random values across extreme range
+        x = np.random.randn(10000) * 1000
+        y = sigmoid(x)
+        assert np.all((y >= 0) & (y <= 1))
+        assert np.all(np.isfinite(y))
+
+    def test_sigmoid_no_overflow_underflow(self):
+        """Test sigmoid handles overflow and underflow gracefully."""
+        x = np.array([-1e10, -1e5, -100, -10, 0, 10, 100, 1e5, 1e10])
+        y = sigmoid(x)
+        # No inf, no nan
+        assert np.all(np.isfinite(y))
+        # Correct range
+        assert np.all((y >= 0) & (y <= 1))
+
 
 class TestLetterbox:
     """Test suite for letterbox image resizing."""
@@ -50,6 +89,27 @@ class TestLetterbox:
         assert result.shape == (640, 640, 3)
         assert abs(ratio - 1.0) < 1e-6
         assert dw == 0.0 and dh == 0.0
+
+    def test_letterbox_invalid_dimensions(self):
+        """Test letterbox rejects invalid input dimensions."""
+        # Zero-dimension image
+        with pytest.raises(ValueError, match="Invalid image dimensions"):
+            img = np.random.randint(0, 255, (0, 640, 3), dtype=np.uint8)
+            letterbox(img, 640)
+
+    def test_letterbox_not_3d(self):
+        """Test letterbox rejects non-3D images."""
+        with pytest.raises(ValueError, match="Expected 3D image"):
+            img = np.random.randint(0, 255, (640, 640), dtype=np.uint8)
+            letterbox(img, 640)
+
+    def test_letterbox_extreme_resize_ratio(self):
+        """Test letterbox handles extreme resize ratios."""
+        # Very large image to very small target
+        img = np.random.randint(0, 255, (10000, 10000, 3), dtype=np.uint8)
+        result, ratio, _ = letterbox(img, 64)
+        assert result.shape == (64, 64, 3)
+        assert ratio < 0.01  # Very small ratio
 
     def test_letterbox_aspect_ratio_preserved(self):
         """Test letterbox preserves aspect ratio."""
@@ -194,6 +254,85 @@ class TestNMS:
         keep = nms(boxes, scores, iou_thres=0.5)
         assert len(keep) == 0
 
+    def test_nms_iou_calculation_accuracy(self):
+        """Test NMS IoU calculation is accurate for floating-point coordinates."""
+        # Two boxes with exact 50% overlap
+        # Box 1: [0, 0, 100, 100] - area = 10000
+        # Box 2: [50, 0, 150, 100] - area = 10000
+        # Intersection: [50, 0, 100, 100] - area = 5000
+        # Union: 10000 + 10000 - 5000 = 15000
+        # IoU = 5000 / 15000 = 0.3333
+        boxes = np.array([
+            [0.0, 0.0, 100.0, 100.0],
+            [50.0, 0.0, 150.0, 100.0]
+        ], dtype=np.float32)
+        scores = np.array([0.9, 0.8])
+
+        # With IoU threshold 0.3, should suppress second box
+        keep_low = nms(boxes, scores, iou_thres=0.3)
+        assert len(keep_low) == 1
+
+        # With IoU threshold 0.4, should keep both boxes
+        keep_high = nms(boxes, scores, iou_thres=0.4)
+        assert len(keep_high) == 2
+
+    def test_nms_floating_point_precision(self):
+        """Test NMS handles floating-point coordinates correctly."""
+        # Boxes with fractional coordinates
+        boxes = np.array([
+            [10.5, 20.3, 50.7, 60.2],
+            [15.2, 25.8, 55.1, 65.9]
+        ], dtype=np.float32)
+        scores = np.array([0.9, 0.8])
+
+        keep = nms(boxes, scores, iou_thres=0.5)
+        # Should work without errors
+        assert len(keep) >= 1
+
+    def test_nms_small_boxes_not_over_suppressed(self):
+        """Test NMS doesn't over-suppress small boxes due to area calculation."""
+        # Small boxes where +1 correction would have significant impact
+        boxes = np.array([
+            [0.0, 0.0, 10.0, 10.0],      # Area = 100
+            [2.0, 2.0, 12.0, 12.0],      # Area = 100
+            # Intersection: [2, 2, 10, 10] = 64
+            # IoU = 64 / (100 + 100 - 64) = 64/136 = 0.47
+        ], dtype=np.float32)
+        scores = np.array([0.9, 0.8])
+
+        # With correct calculation, IoU ~ 0.47, should keep both at threshold 0.5
+        keep = nms(boxes, scores, iou_thres=0.5)
+        assert len(keep) == 2
+
+    def test_nms_reversed_coordinates(self):
+        """Test NMS handles reversed box coordinates gracefully."""
+        # Intentionally reversed coordinates (x2 < x1, y2 < y1)
+        boxes = np.array([
+            [100.0, 100.0, 0.0, 0.0],    # Reversed
+            [50.0, 50.0, 150.0, 150.0]   # Normal
+        ], dtype=np.float32)
+        scores = np.array([0.9, 0.8])
+
+        # Should auto-correct and work without errors
+        keep = nms(boxes, scores, iou_thres=0.5)
+        assert len(keep) >= 1  # At least one box kept
+
+    def test_nms_invalid_shape(self):
+        """Test NMS validates input shape."""
+        boxes = np.array([[0, 0, 100]])  # Wrong shape (M, 3) instead of (M, 4)
+        scores = np.array([0.9])
+
+        with pytest.raises(ValueError, match="Expected boxes shape"):
+            nms(boxes, scores)
+
+    def test_nms_mismatched_lengths(self):
+        """Test NMS detects mismatched boxes/scores lengths."""
+        boxes = np.array([[0, 0, 100, 100], [50, 50, 150, 150]], dtype=np.float32)
+        scores = np.array([0.9])  # Only one score for two boxes
+
+        with pytest.raises(ValueError, match="length mismatch"):
+            nms(boxes, scores)
+
 
 class TestPostprocessYolov8:
     """Test suite for YOLOv8 post-processing."""
@@ -270,3 +409,33 @@ class TestPostprocessYolov8:
             # x2 > x1, y2 > y1
             assert np.all(boxes[:, 2] >= boxes[:, 0])
             assert np.all(boxes[:, 3] >= boxes[:, 1])
+
+    def test_postprocess_no_detections(self):
+        """Test postprocess returns empty arrays when no detections."""
+        N = 8400
+        nc = 80
+        # Very negative logits = very low confidences
+        preds = np.ones((1, N, 64 + nc), dtype=np.float32) * -100
+
+        boxes, confs, class_ids = postprocess_yolov8(
+            preds, 640, (480, 640), (1.0, (0, 0)),
+            conf_thres=0.9  # Very high threshold
+        )
+
+        # Should return empty arrays, not raise errors
+        assert boxes.shape == (0, 4)
+        assert confs.shape == (0,)
+        assert class_ids.shape == (0,)
+
+    def test_postprocess_invalid_ratio(self):
+        """Test postprocess detects invalid scale ratio."""
+        N = 8400
+        nc = 80
+        preds = np.random.randn(1, N, 64 + nc).astype(np.float32)
+
+        # Invalid ratio (too small)
+        with pytest.raises(ValueError, match="Invalid scale ratio"):
+            postprocess_yolov8(
+                preds, 640, (480, 640), (1e-10, (0, 0)),  # Nearly zero ratio
+                conf_thres=0.25
+            )

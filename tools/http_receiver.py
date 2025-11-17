@@ -1,7 +1,20 @@
 #!/usr/bin/env python3
+"""HTTP receiver for MCP pipeline validation.
+
+This script runs a simple HTTP server to receive and log POST requests,
+used for testing data upload and network communication.
+"""
 import argparse
 import json
+import sys
 from http.server import BaseHTTPRequestHandler, HTTPServer
+
+# Import custom exceptions and logger
+from apps.exceptions import ConfigurationError
+from apps.logger import setup_logger
+
+# Setup logger
+logger = setup_logger(__name__, level='INFO')
 
 class Handler(BaseHTTPRequestHandler):
     # Maximum allowed payload size (10MB)
@@ -38,7 +51,7 @@ class Handler(BaseHTTPRequestHandler):
             data = {'raw': body.hex(), 'encoding_error': str(e)}
 
         # Log the received data
-        print(json.dumps({'path': self.path, 'data': data}, ensure_ascii=False))
+        logger.info(json.dumps({'path': self.path, 'data': data}, ensure_ascii=False))
 
         # Send success response
         self.send_response(200)
@@ -47,14 +60,41 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(b'{"status":"ok"}')
 
 def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument('--port', type=int, default=8081)
+    ap = argparse.ArgumentParser(description='HTTP receiver for MCP pipeline testing')
+    ap.add_argument('--port', type=int, default=8081, help='Port to listen on (0 for auto)')
     args = ap.parse_args()
-    httpd = HTTPServer(('127.0.0.1', args.port), Handler)
+
+    try:
+        httpd = HTTPServer(('127.0.0.1', args.port), Handler)
+    except OSError as e:
+        if e.errno == 98:  # Address already in use
+            raise ConfigurationError(f"Port {args.port} already in use") from e
+        elif e.errno == 13:  # Permission denied
+            raise ConfigurationError(f"Permission denied for port {args.port} (requires root?)") from e
+        else:
+            raise ConfigurationError(f"Failed to create HTTP server: {e}") from e
+
     port = httpd.server_address[1]
     # Print a startup line so callers can discover the port when using 0
+    # This print() is intentional - used for programmatic port discovery
     print(json.dumps({'listening_port': port}), flush=True)
-    httpd.serve_forever()
+    logger.info(f"HTTP receiver listening on 127.0.0.1:{port}")
+
+    try:
+        httpd.serve_forever()
+    except KeyboardInterrupt:
+        logger.info("Shutting down HTTP receiver")
+        httpd.shutdown()
+        return 0
+    except Exception as e:
+        raise ConfigurationError(f"HTTP server error: {e}") from e
 
 if __name__ == '__main__':
-    main()
+    try:
+        sys.exit(main())
+    except ConfigurationError as e:
+        logger.error(f"HTTP receiver failed: {e}", exc_info=True)
+        sys.exit(1)
+    except Exception as e:
+        logger.error(f"Unexpected error: {e}", exc_info=True)
+        sys.exit(1)

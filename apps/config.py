@@ -15,7 +15,10 @@ class ModelConfig:
     DEFAULT_SIZE = 416  # Preferred for RK3588 to avoid Transpose CPU fallback
 
     # Inference thresholds
-    CONF_THRESHOLD_DEFAULT = 0.25  # Confidence threshold for object detection
+    # Confidence threshold: 0.5 recommended for production
+    # - conf=0.25: 3135ms postprocessing (NMS bottleneck) → 0.3 FPS
+    # - conf=0.5:  5.2ms postprocessing → 60+ FPS
+    CONF_THRESHOLD_DEFAULT = 0.5   # Confidence threshold for object detection
     IOU_THRESHOLD_DEFAULT = 0.45   # IOU threshold for NMS
     NMS_IOU = 0.45                 # NMS IOU threshold
 
@@ -97,21 +100,54 @@ class NetworkConfig:
 
 
 class PathConfig:
-    """File path configuration."""
+    """File path configuration.
+
+    All paths are relative to project root. Use get_project_root() or
+    resolve_path() helper functions for absolute paths.
+    """
+
+    # Project structure
+    PROJECT_ROOT = '.'  # Will be resolved at runtime
 
     # Model paths
-    DEFAULT_MODEL_DIR = 'artifacts/models'
+    MODELS_DIR = 'artifacts/models'
     DEFAULT_ONNX_MODEL = 'artifacts/models/yolo11n_416.onnx'
     DEFAULT_RKNN_MODEL = 'artifacts/models/yolo11n.rknn'
 
+    # Common model names
+    YOLO11N_ONNX_416 = 'artifacts/models/yolo11n_416.onnx'
+    YOLO11N_ONNX_640 = 'artifacts/models/yolo11n_640.onnx'
+    YOLO11N_RKNN = 'artifacts/models/yolo11n.rknn'
+    BEST_ONNX = 'artifacts/models/best.onnx'
+    BEST_RKNN = 'artifacts/models/best.rknn'
+
     # Dataset paths
-    DEFAULT_DATASET_DIR = 'datasets'
+    DATASETS_DIR = 'datasets'
+    COCO_DIR = 'datasets/coco'
     COCO_CALIB_DIR = 'datasets/coco/calib_images'
     COCO_CALIB_FILE = 'datasets/coco/calib_images/calib.txt'
+    COCO_PERSON_DIR = 'datasets/coco_person'
+
+    # CityPersons dataset
+    CITYPERSONS_DIR = 'datasets/CityPersons'
+    CITYPERSONS_IMAGES = 'datasets/CityPersons/images'
+    CITYPERSONS_LABELS = 'datasets/CityPersons/labels'
 
     # Output paths
     ARTIFACTS_DIR = 'artifacts'
     LOGS_DIR = 'logs'
+
+    # Visualization outputs
+    VISUALIZATIONS_DIR = 'artifacts/visualizations'
+
+    # Test assets
+    ASSETS_DIR = 'assets'
+    TEST_IMAGE = 'assets/test.jpg'
+
+    # Config files
+    CONFIG_DIR = 'config'
+    APP_CONFIG = 'config/app.yaml'
+    DETECTION_CONFIG_DIR = 'config/detection'
 
 
 class CalibrationConfig:
