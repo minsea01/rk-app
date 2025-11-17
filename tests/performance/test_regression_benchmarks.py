@@ -12,6 +12,7 @@ Test Coverage:
 Author: Senior Performance Engineer
 Standard: Enterprise-grade performance testing with regression detection
 """
+import sys
 import pytest
 import time
 import numpy as np
@@ -19,6 +20,9 @@ from pathlib import Path
 import json
 import tempfile
 from unittest.mock import Mock, patch, MagicMock
+
+# Mock cv2 for CI environment
+sys.modules['cv2'] = MagicMock()
 
 # Mark all tests as performance tests
 pytestmark = pytest.mark.performance
