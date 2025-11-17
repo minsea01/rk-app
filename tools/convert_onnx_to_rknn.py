@@ -1,8 +1,20 @@
 #!/usr/bin/env python3
+"""ONNX to RKNN model conversion tool.
+
+This script converts ONNX models to RKNN format with optional INT8 quantization
+for deployment on Rockchip NPU platforms.
+"""
 import argparse
 from pathlib import Path
 import sys
 from importlib.metadata import version, PackageNotFoundError
+
+# Import custom exceptions
+from apps.exceptions import ModelLoadError, ConfigurationError
+from apps.logger import setup_logger
+
+# Setup logger
+logger = setup_logger(__name__, level='INFO')
 
 
 def _detect_rknn_default_qdtype():
@@ -76,13 +88,13 @@ def build_rknn(
     try:
         from rknn.api import RKNN
     except ImportError as e:
-        raise SystemExit(
+        raise ConfigurationError(
             f"rknn-toolkit2 not installed. Please run: pip install rknn-toolkit2\nError: {e}"
-        )
+        ) from e
     except (AttributeError, TypeError) as e:
-        raise SystemExit(
+        raise ConfigurationError(
             f"rknn-toolkit2 version incompatible. Please ensure rknn-toolkit2>=2.3.2 is installed.\nError: {e}"
-        )
+        ) from e
 
     # Validate and parse mean/std parameters
     mean_values, std_values = _parse_and_validate_mean_std(mean, std)
@@ -103,36 +115,33 @@ def build_rknn(
         quantized_dtype=quantized_dtype,
     )
 
-    print(f'Loading ONNX: {onnx_path}')
+    logger.info(f'Loading ONNX: {onnx_path}')
     ret = rknn.load_onnx(model=str(onnx_path))
     if ret != 0:
-        print('load_onnx failed')
         rknn.release()
-        sys.exit(1)
+        raise ModelLoadError(f'Failed to load ONNX model: {onnx_path}')
 
     dataset = None
     if do_quant:
         if calib is None:
-            raise SystemExit('INT8 quantization requested but no calibration dataset provided')
+            raise ConfigurationError('INT8 quantization requested but no calibration dataset provided')
         dataset = str(calib)
         if not Path(dataset).exists():
-            raise SystemExit(f'Calibration file or folder not found: {dataset}')
+            raise ConfigurationError(f'Calibration file or folder not found: {dataset}')
 
-    print('Building RKNN...')
+    logger.info('Building RKNN model...')
     ret = rknn.build(do_quantization=bool(do_quant), dataset=dataset)
     if ret != 0:
-        print('build failed')
         rknn.release()
-        sys.exit(1)
+        raise ModelLoadError('Failed to build RKNN model')
 
-    print(f'Exporting RKNN to: {out_path}')
+    logger.info(f'Exporting RKNN to: {out_path}')
     ret = rknn.export_rknn(str(out_path))
     if ret != 0:
-        print('export_rknn failed')
         rknn.release()
-        sys.exit(1)
+        raise ModelLoadError(f'Failed to export RKNN model to: {out_path}')
 
-    print('Done.')
+    logger.info('RKNN conversion completed successfully')
     rknn.release()
 
 
@@ -157,23 +166,31 @@ def main():
         for ext in ('*.jpg', '*.jpeg', '*.png', '*.bmp'):
             images.extend(sorted(glob(str(calib / ext))))
         if not images:
-            raise SystemExit(f'No images found in calibration folder: {calib}')
+            raise ConfigurationError(f'No images found in calibration folder: {calib}')
         list_path = calib / 'calib.txt'
         with open(list_path, 'w') as f:
             f.write('\n'.join(images))
         calib = list_path
 
-    build_rknn(
-        onnx_path=args.onnx,
-        out_path=args.out,
-        calib=calib,
-        do_quant=args.do_quant,
-        target=args.target,
-        quantized_dtype=args.quant_dtype,
-        mean=args.mean,
-        std=args.std,
-        reorder=args.reorder,
-    )
+    try:
+        build_rknn(
+            onnx_path=args.onnx,
+            out_path=args.out,
+            calib=calib,
+            do_quant=args.do_quant,
+            target=args.target,
+            quantized_dtype=args.quant_dtype,
+            mean=args.mean,
+            std=args.std,
+            reorder=args.reorder,
+        )
+        return 0
+    except (ModelLoadError, ConfigurationError) as e:
+        logger.error(f"Conversion failed: {e}", exc_info=True)
+        return 1
+    except Exception as e:
+        logger.error(f"Unexpected error during conversion: {e}", exc_info=True)
+        return 1
 
 if __name__ == '__main__':
-    main()
+    sys.exit(main())
