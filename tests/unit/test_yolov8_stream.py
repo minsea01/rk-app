@@ -13,12 +13,16 @@ Test Coverage:
 Author: Senior Test Engineer
 Standard: Enterprise-grade with 95%+ coverage
 """
+import sys
 import pytest
 import numpy as np
 import time
 from unittest.mock import Mock, patch, MagicMock
 from queue import Queue, Full, Empty
 from threading import Event
+
+# Mock cv2 before importing yolov8_stream to avoid opencv dependency in CI
+sys.modules['cv2'] = MagicMock()
 
 from apps.yolov8_stream import parse_source, decode_predictions, StageStats
 

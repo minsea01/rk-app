@@ -1,10 +1,15 @@
 #!/usr/bin/env python3
 """Integration tests for ONNX inference pipeline."""
+import sys
 import pytest
 import numpy as np
 from pathlib import Path
-import cv2
 import tempfile
+from unittest.mock import MagicMock
+
+# Mock cv2 for CI environment
+sys.modules['cv2'] = MagicMock()
+import cv2
 
 from apps.utils.preprocessing import preprocess_onnx, preprocess_from_array_onnx
 from apps.yolov8_rknn_infer import decode_predictions
