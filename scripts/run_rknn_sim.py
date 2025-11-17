@@ -24,11 +24,13 @@ from apps.utils.preprocessing import preprocess_from_array_rknn_sim
 logger = setup_logger(__name__, level='INFO')
 
 def main():
+    from apps.config import PathConfig
+
     parser = argparse.ArgumentParser(description='Run RKNN inference on PC simulator')
-    parser.add_argument('--model', type=str, default='artifacts/models/yolo11n_416.onnx',
-                        help='Path to ONNX model (default: artifacts/models/yolo11n_416.onnx)')
-    parser.add_argument('--image', type=str, default='assets/test.jpg',
-                        help='Path to test image (default: assets/test.jpg)')
+    parser.add_argument('--model', type=str, default=PathConfig.YOLO11N_ONNX_416,
+                        help=f'Path to ONNX model (default: {PathConfig.YOLO11N_ONNX_416})')
+    parser.add_argument('--image', type=str, default=PathConfig.TEST_IMAGE,
+                        help=f'Path to test image (default: {PathConfig.TEST_IMAGE})')
     parser.add_argument('--imgsz', type=int, default=416,
                         help='Input image size (default: 416)')
     args = parser.parse_args()

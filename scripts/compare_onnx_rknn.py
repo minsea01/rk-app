@@ -111,14 +111,18 @@ def compare_outputs(onnx_out, rknn_out):
     return stats
 
 def main():
-    onnx_model = Path('artifacts/models/yolo11n_416.onnx')
+    from apps.config import PathConfig
+    from apps.utils.paths import resolve_path
+
+    # Use PathConfig instead of hardcoded paths
+    onnx_model = resolve_path(PathConfig.YOLO11N_ONNX_416)
 
     # Validate model file exists
     if not onnx_model.exists():
         raise ModelLoadError(f"Model file not found: {onnx_model}")
 
     # Validate calibration directory exists
-    calib_dir = Path('datasets/coco/calib_images')
+    calib_dir = resolve_path(PathConfig.COCO_CALIB_DIR)
     if not calib_dir.exists():
         raise ConfigurationError(f"Calibration directory not found: {calib_dir}")
 
@@ -174,10 +178,10 @@ def main():
 
     logger.info(json.dumps(summary, indent=2))
 
-    # 保存详细结果
-    output_file = Path('artifacts/onnx_rknn_comparison.json')
+    # 保存详细结果 - Use PathConfig
+    from apps.utils.paths import get_artifact_path
+    output_file = get_artifact_path('onnx_rknn_comparison.json')
     try:
-        output_file.parent.mkdir(parents=True, exist_ok=True)
         with open(output_file, 'w') as f:
             json.dump({'summary': summary, 'details': all_stats}, f, indent=2)
     except Exception as e:
