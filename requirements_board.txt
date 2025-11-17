@@ -1,0 +1,115 @@
+# RK3588 Board Deployment Dependencies (Locked Versions)
+# ============================================================
+#
+# Purpose: Production dependencies for RK3588 board deployment
+# Environment: RK3588 (ARM64), Ubuntu 22.04, Python 3.10
+# Last updated: 2025-11-17
+#
+# Installation:
+#   pip install --no-cache-dir -r requirements_board.txt
+#
+# Deployment Notes:
+#   - Minimal dependencies for inference-only mode
+#   - No training/export libraries (ultralytics, torch)
+#   - Uses rknn-toolkit2-lite for NPU inference
+#   - Compatible with RK3588 NPU drivers
+#
+# CRITICAL: These versions are tested and locked for production stability.
+# DO NOT upgrade without testing on actual RK3588 hardware.
+
+# ============================================================
+# Core Dependencies
+# ============================================================
+
+# NumPy - CRITICAL: <2.0 for rknn-toolkit2-lite compatibility
+# rknn-toolkit2-lite has binary incompatibility with NumPy 2.x
+numpy>=1.20.0,<2.0
+
+# OpenCV - Headless version (no GUI support)
+# Use headless variant to avoid X11 dependencies on embedded systems
+opencv-python-headless==4.9.0.80
+
+# Pillow - Image loading/processing
+pillow==11.3.0
+
+# ============================================================
+# RKNN Runtime (Board-Only)
+# ============================================================
+
+# rknn-toolkit2-lite - Lightweight RKNN runtime for board deployment
+# This is the inference-only library (no model conversion)
+# Install from Rockchip official source:
+#   pip install rknn-toolkit2-lite>=2.3.2
+#
+# NOTE: rknn-toolkit2-lite may not be available on PyPI.
+# Manual installation may be required:
+#   wget https://github.com/rockchip-linux/rknn-toolkit2/releases/download/v2.3.2/rknn_toolkit2_lite-2.3.2-py3-none-any.whl
+#   pip install rknn_toolkit2_lite-2.3.2-py3-none-any.whl
+#
+# For now, commented out as it requires manual installation:
+# rknn-toolkit2-lite>=2.3.2
+
+# ============================================================
+# Configuration & Utilities
+# ============================================================
+
+# PyYAML - Configuration file parsing
+PyYAML>=6.0,<7.0
+
+# ============================================================
+# Excluded from Board Deployment
+# ============================================================
+#
+# The following are NOT needed on the board and are excluded to save space:
+#
+# Training & Export:
+#   - torch (500+ MB, x86 only)
+#   - ultralytics (YOLO training)
+#   - onnxruntime (PC validation only)
+#
+# Development Tools:
+#   - pytest, black, pylint, etc.
+#
+# Full RKNN Toolkit:
+#   - rknn-toolkit2 (conversion toolkit, x86 only)
+#
+# ============================================================
+# Version Pinning Rationale
+# ============================================================
+#
+# numpy<2.0:
+#   - rknn-toolkit2-lite built against NumPy 1.x
+#   - Binary incompatibility with NumPy 2.x
+#   - Import error: "cannot import name '_no_nep50_warning'"
+#
+# opencv-python-headless==4.9.0.80:
+#   - Stable release with cv2.dnn support
+#   - Headless variant avoids libGL/X11 dependencies
+#   - Compatible with ARM64 architecture
+#
+# pillow==11.3.0:
+#   - Latest stable release
+#   - Security patches for image parsing
+#
+# PyYAML>=6.0:
+#   - Safe YAML parsing (safe_load)
+#   - Full YAML 1.2 support
+#
+# ============================================================
+# Deployment Checklist
+# ============================================================
+#
+# Before deploying to board:
+# 1. ✅ Ensure Python 3.10 is installed
+# 2. ✅ Install rknn-toolkit2-lite manually
+# 3. ✅ Run: pip install -r requirements_board.txt
+# 4. ✅ Verify imports: python -c "import cv2, PIL, numpy, yaml"
+# 5. ✅ Test inference: python apps/yolov8_rknn_infer.py
+# 6. ✅ Check logs for warnings/errors
+#
+# Known Issues:
+# - rknn-toolkit2-lite may require manual .whl download
+# - NumPy 2.x causes import failures
+# - opencv-python (full) pulls in Qt/X11 dependencies (use headless)
+#
+# ============================================================
