@@ -16,11 +16,24 @@ Usage:
 """
 import os
 import sys
-import cv2
 from pathlib import Path
 from typing import Optional
 
 from apps.logger import setup_logger
+
+# Lazy import cv2 to avoid hard dependency
+_cv2 = None
+
+def _get_cv2():
+    """Lazy import of cv2."""
+    global _cv2
+    if _cv2 is None:
+        try:
+            import cv2
+            _cv2 = cv2
+        except ImportError:
+            _cv2 = False  # Mark as unavailable
+    return _cv2 if _cv2 is not False else None
 
 logger = setup_logger(__name__, level='INFO')
 
@@ -73,14 +86,16 @@ def is_headless() -> bool:
         return True
 
     # Check 4: Try to detect opencv-python-headless
-    try:
-        # If cv2 was built without highgui, it's headless
-        if not hasattr(cv2, 'namedWindow'):
-            logger.debug("Headless detected: OpenCV built without highgui")
-            _is_headless_cached = True
-            return True
-    except Exception:
-        pass
+    cv2 = _get_cv2()
+    if cv2 is not None:
+        try:
+            # If cv2 was built without highgui, it's headless
+            if not hasattr(cv2, 'namedWindow'):
+                logger.debug("Headless detected: OpenCV built without highgui")
+                _is_headless_cached = True
+                return True
+        except Exception:
+            pass
 
     # Check 5: Platform detection (embedded systems often headless)
     # This is a heuristic - not 100% reliable
@@ -161,6 +176,33 @@ def safe_imshow(
         INFO: Headless mode - saving image to output/result.jpg
         True
     """
+    cv2 = _get_cv2()
+    if cv2 is None:
+        # cv2 not available - must save to file
+        if fallback_path is None:
+            safe_name = "".join(c if c.isalnum() or c in ('_', '-') else '_' for c in window_name)
+            fallback_path = f"{safe_name}.jpg"
+
+        fallback_path = Path(fallback_path)
+        fallback_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Use PIL as fallback if available
+        try:
+            from PIL import Image
+            if hasattr(image, 'shape'):  # numpy array
+                from PIL import Image
+                import numpy as np
+                # Convert BGR to RGB if needed
+                if len(image.shape) == 3 and image.shape[2] == 3:
+                    image = image[:, :, ::-1]
+                img_pil = Image.fromarray(image)
+                img_pil.save(str(fallback_path))
+                logger.info(f"cv2 unavailable - saved with PIL to: {fallback_path}")
+                return True
+        except Exception as e:
+            logger.error(f"Failed to save image (no cv2): {e}")
+            return False
+
     if is_headless():
         # Generate fallback path if not provided
         if fallback_path is None:
@@ -204,7 +246,8 @@ def safe_waitKey(delay: int = 0) -> int:
     Returns:
         int: Key code in GUI mode, -1 in headless mode
     """
-    if is_headless():
+    cv2 = _get_cv2()
+    if cv2 is None or is_headless():
         return -1
     else:
         try:
