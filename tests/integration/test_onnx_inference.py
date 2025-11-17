@@ -200,18 +200,23 @@ class TestOnnxModelInference:
             img_path = Path(f.name)
 
         try:
-            # Preprocess
-            input_tensor = preprocess_onnx(img_path, target_size=640)
+            # Get model input shape dynamically
+            session = ort.InferenceSession(str(model_path))
+            input_shape = session.get_inputs()[0].shape
+            # Extract H, W from [N, C, H, W]
+            target_size = input_shape[2]  # Usually H == W for YOLO models
+
+            # Preprocess with correct size
+            input_tensor = preprocess_onnx(img_path, target_size=target_size)
 
             # Run inference
-            session = ort.InferenceSession(str(model_path))
             input_name = session.get_inputs()[0].name
             outputs = session.run(None, {input_name: input_tensor})
 
             # Decode predictions
             boxes, confs, cls_ids = decode_predictions(
                 outputs[0],
-                imgsz=640,
+                imgsz=target_size,
                 conf_thres=0.25,
                 iou_thres=0.45,
                 head='dfl'
