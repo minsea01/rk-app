@@ -1,12 +1,17 @@
-import math
 from typing import Tuple, List, Union, Optional
+import threading
+import warnings
 import numpy as np
 import cv2
+from functools import lru_cache
 
 # Constants
 PADDING_ROUNDING_EPSILON = 0.1  # Small epsilon for padding rounding to avoid floating-point errors
 MIN_VALID_DIMENSION = 1  # Minimum valid image dimension
 MIN_VALID_RATIO = 1e-6  # Minimum valid scale ratio to prevent division issues
+IOU_EPSILON = 1e-6  # Small epsilon to prevent division by zero in IoU calculation
+SOFTMAX_MIN_DENOMINATOR = 1e-10  # Minimum denominator for softmax to prevent division by zero
+MAX_CACHE_SIZE = 32  # Maximum number of cached anchor/stride configurations
 
 
 def sigmoid(x: Union[float, np.ndarray]) -> Union[float, np.ndarray]:
@@ -88,8 +93,9 @@ def letterbox(
     return im, r, (dw, dh)
 
 
-# Cache for anchors to avoid recomputation
+# Thread-safe cache for anchors to avoid recomputation
 _anchor_cache = {}
+_anchor_cache_lock = threading.Lock()
 
 def make_anchors(strides: List[int], img_size: int) -> np.ndarray:
     """Generate anchor grid points for YOLO detection layers.
@@ -104,12 +110,15 @@ def make_anchors(strides: List[int], img_size: int) -> np.ndarray:
 
     Note:
         Results are cached based on (img_size, strides) for performance.
+        Thread-safe via locking to prevent race conditions.
     """
-    # Use cache to avoid recomputation
+    # Thread-safe cache lookup
     cache_key = (img_size, tuple(strides))
-    if cache_key in _anchor_cache:
-        return _anchor_cache[cache_key]
+    with _anchor_cache_lock:
+        if cache_key in _anchor_cache:
+            return _anchor_cache[cache_key]
 
+    # Compute anchors outside the lock (expensive operation)
     anchors = []
     for s in strides:
         fm = img_size // s  # Feature map size
@@ -120,7 +129,21 @@ def make_anchors(strides: List[int], img_size: int) -> np.ndarray:
         anchors.append(np.stack([cx, cy], axis=1))
 
     result = np.vstack(anchors).astype(np.float32)
-    _anchor_cache[cache_key] = result
+
+    # Thread-safe cache insertion
+    with _anchor_cache_lock:
+        # Check again in case another thread inserted while we were computing
+        if cache_key not in _anchor_cache:
+            # Implement LRU eviction if cache is too large
+            if len(_anchor_cache) >= MAX_CACHE_SIZE:
+                # Remove oldest entry (Python 3.7+ dicts are insertion-ordered)
+                oldest_key = next(iter(_anchor_cache))
+                del _anchor_cache[oldest_key]
+            _anchor_cache[cache_key] = result
+        else:
+            # Another thread inserted, use their result
+            result = _anchor_cache[cache_key]
+
     return result
 
 
@@ -146,15 +169,15 @@ def dfl_decode(d: np.ndarray, reg_max: int = 16) -> np.ndarray:
 
     # Check for all -inf case (would cause nan)
     if np.any(np.isinf(d_max)):
-        # Replace -inf with large negative value
-        d = np.where(np.isinf(d), -1e10, d)
+        # Replace -inf with smallest representable float32 value
+        d = np.where(np.isinf(d), np.finfo(np.float32).min, d)
         d_max = d.max(axis=2, keepdims=True)
 
     d = np.exp(d - d_max)
     d_sum = d.sum(axis=2, keepdims=True)
 
     # Avoid division by zero (shouldn't happen with exp, but be safe)
-    d_sum = np.maximum(d_sum, 1e-10)
+    d_sum = np.maximum(d_sum, SOFTMAX_MIN_DENOMINATOR)
     d = d / d_sum
 
     # Calculate expected value
@@ -228,7 +251,7 @@ def nms(boxes: np.ndarray, scores: np.ndarray, iou_thres: float = 0.45, topk: Op
         w = np.maximum(0.0, xx2 - xx1)
         h = np.maximum(0.0, yy2 - yy1)
         inter = w * h
-        iou = inter / (areas[i] + areas[order[1:]] - inter + 1e-6)
+        iou = inter / (areas[i] + areas[order[1:]] - inter + IOU_EPSILON)
         inds = np.where(iou <= iou_thres)[0]
         order = order[inds + 1]
     return keep
@@ -236,8 +259,9 @@ def nms(boxes: np.ndarray, scores: np.ndarray, iou_thres: float = 0.45, topk: Op
 # Expose sigmoid for reuse by app
 __all__ = ['letterbox', 'postprocess_yolov8', 'nms', 'sigmoid']
 
-# Cache for stride maps to avoid recomputation
+# Thread-safe cache for stride maps to avoid recomputation
 _stride_map_cache = {}
+_stride_map_cache_lock = threading.Lock()
 
 def _get_stride_map(n: int, strides: Tuple[int, ...], img_size: int) -> np.ndarray:
     """Get or create cached stride map.
@@ -249,11 +273,17 @@ def _get_stride_map(n: int, strides: Tuple[int, ...], img_size: int) -> np.ndarr
 
     Returns:
         Stride map array of shape (n,)
-    """
-    cache_key = (n, strides, img_size)
-    if cache_key in _stride_map_cache:
-        return _stride_map_cache[cache_key]
 
+    Note:
+        Thread-safe via locking to prevent race conditions.
+    """
+    # Thread-safe cache lookup
+    cache_key = (n, strides, img_size)
+    with _stride_map_cache_lock:
+        if cache_key in _stride_map_cache:
+            return _stride_map_cache[cache_key]
+
+    # Compute stride map outside the lock
     s_map = np.zeros(n, dtype=np.float32)
     idx = 0
     for s in strides:
@@ -263,11 +293,26 @@ def _get_stride_map(n: int, strides: Tuple[int, ...], img_size: int) -> np.ndarr
             s_map[idx : idx + count] = s
             idx += count
 
+    # Thread-safe cache insertion
     if idx == n:
-        _stride_map_cache[cache_key] = s_map
+        with _stride_map_cache_lock:
+            if cache_key not in _stride_map_cache:
+                # Implement LRU eviction if cache is too large
+                if len(_stride_map_cache) >= MAX_CACHE_SIZE:
+                    oldest_key = next(iter(_stride_map_cache))
+                    del _stride_map_cache[oldest_key]
+                _stride_map_cache[cache_key] = s_map
+            else:
+                # Another thread inserted, use their result
+                s_map = _stride_map_cache[cache_key]
         return s_map
     else:
-        # Mismatch, don't cache
+        # Mismatch, don't cache (fallback to uniform stride)
+        warnings.warn(
+            f"Stride map mismatch: expected {n} anchors, got {idx}. "
+            f"Using fallback stride=1.0",
+            RuntimeWarning
+        )
         return np.ones(n, dtype=np.float32)
 
 
@@ -383,8 +428,9 @@ def postprocess_yolov8(
     boxes[:, [1, 3]] -= dh
     boxes /= r
 
-    # Clip to image boundaries
-    boxes[:, 0::2] = boxes[:, 0::2].clip(0, w0 - 1)
-    boxes[:, 1::2] = boxes[:, 1::2].clip(0, h0 - 1)
+    # Clip to image boundaries (floating-point coordinates in [0, width) and [0, height))
+    # Modern computer vision uses continuous coordinates, so max value is width/height, not width-1
+    boxes[:, 0::2] = boxes[:, 0::2].clip(0, w0)
+    boxes[:, 1::2] = boxes[:, 1::2].clip(0, h0)
 
     return boxes, confs, class_ids
