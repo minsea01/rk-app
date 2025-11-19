@@ -14,7 +14,7 @@
 - 板端 Python Runner（RKNN 推理）
   - `python apps/yolov8_rknn_infer.py --model artifacts/models/best.rknn --names config/industrial_classes.txt --source bus.jpg --save artifacts/vis.jpg`
 
-更多演示与环境变量示例见 `QUICK_START_GUIDE.md` 与 `docs/QUICKSTART.md`。
+更多演示与环境变量示例见 `docs/guides/QUICK_START_GUIDE.md` 与 `docs/QUICKSTART.md`。
 
 ## 训练与模型导出
 - 一键训练+导出（Ultralytics+ONNX→RKNN）：
@@ -58,8 +58,10 @@
 - 压测汇总：`scripts/run_bench.sh`
 
 ## 参考文档
-- 快速开始：`QUICK_START_GUIDE.md`
+- 快速开始：`docs/guides/QUICK_START_GUIDE.md`
+- 硬件集成：`docs/guides/HARDWARE_INTEGRATION_MANUAL.md`
 - 部署清单：`docs/RK3588_VALIDATION_CHECKLIST.md`
 - 性能分析：`docs/PERFORMANCE_ANALYSIS.md`
-- 项目状态与报告：`FULL_PROJECT_REPORT.md`、`FINAL_STATUS.md`
+- 项目报告：`docs/reports/` (状态报告、成果总结等)
+- 毕业论文：`docs/thesis/` (开题报告、论文章节等)
 - 代码与提交规范：`AGENTS.md`
