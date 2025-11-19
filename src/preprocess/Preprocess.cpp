@@ -40,8 +40,8 @@ cv::Mat Preprocess::letterbox(const cv::Mat& src, cv::Size target_size, Letterbo
         resized = src.clone();
     }
     
-    // Create output image with padding
-    cv::Mat dst = cv::Mat::zeros(dst_h, dst_w, src.type());
+    // Create output image with padding (YOLO standard gray padding: 114,114,114)
+    cv::Mat dst(dst_h, dst_w, src.type(), cv::Scalar(114, 114, 114));
     
     // Calculate integer offsets for padding
     int top = static_cast<int>(dy);
