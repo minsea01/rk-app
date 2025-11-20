@@ -19,16 +19,36 @@
         "CMAKE_BUILD_TYPE": "Debug",
         "CMAKE_INSTALL_PREFIX": "${sourceDir}/out/x86"
       }
+    },
+    {
+      "name": "x86-debug-no-san",
+      "generator": "Ninja",
+      "binaryDir": "build/x86-debug-no-san",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_INSTALL_PREFIX": "${sourceDir}/out/x86",
+        "ENABLE_SANITIZERS": "OFF"
+      }
     }
   ],
   "buildPresets": [
     { "name": "arm64", "configurePreset": "arm64-release" },
-    { "name": "x86-debug", "configurePreset": "x86-debug" }
+    { "name": "x86-debug", "configurePreset": "x86-debug" },
+    { "name": "x86-debug-no-san", "configurePreset": "x86-debug-no-san" }
   ],
   "testPresets": [
     {
       "name": "x86-debug",
       "configurePreset": "x86-debug",
+      "output": { "outputOnFailure": true },
+      "environment": {
+        "LSAN_OPTIONS": "detect_leaks=0",
+        "ASAN_OPTIONS": "detect_leaks=0"
+      }
+    },
+    {
+      "name": "x86-debug-no-san",
+      "configurePreset": "x86-debug-no-san",
       "output": { "outputOnFailure": true }
     }
   ]

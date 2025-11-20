@@ -1,0 +1,9 @@
+{
+  "reg_max": 16,
+  "strides": [8, 16, 32],
+  "head_type": "dfl",
+  "num_classes": 80,
+  "input_size": [640, 640],
+  "source": "manual",
+  "_comment": "Model metadata for YOLO11n. Place this file alongside your .rknn model with .meta.json extension."
+}

@@ -11,9 +11,10 @@ from apps.utils.yolo_post import letterbox, postprocess_yolov8
 from apps.utils.headless import safe_imshow, safe_waitKey
 from apps.exceptions import RKNNError, PreprocessError, InferenceError, ModelLoadError
 from apps.logger import setup_logger
+from apps.model_meta import ModelMetadata
 
 
-def decode_predictions(pred, imgsz, conf_thres, iou_thres, head='auto', ratio_pad=(1.0, (0.0, 0.0)), orig_shape=None):
+def decode_predictions(pred, imgsz, conf_thres, iou_thres, head='auto', ratio_pad=(1.0, (0.0, 0.0)), orig_shape=None, meta=None):
     # pred: (1, N, C) or (1, C, N) or (N, C)
     from apps.utils.yolo_post import sigmoid, nms
     # unify to (1, N, C)
@@ -25,12 +26,23 @@ def decode_predictions(pred, imgsz, conf_thres, iou_thres, head='auto', ratio_pa
     else:
         pred_nc = pred.transpose(0, 2, 1)
     C = pred_nc.shape[2]
-    if head == 'auto':
-        head = 'dfl' if C >= 64 else 'raw'
+
+    # Use metadata if provided, otherwise fallback to heuristic
+    if meta is not None:
+        head = meta.head_type if head == 'auto' else head
+        reg_max = meta.reg_max
+        strides = meta.strides
+    else:
+        # Heuristic inference (legacy behavior)
+        if head == 'auto':
+            head = 'dfl' if C >= 64 else 'raw'
+        reg_max = 16
+        strides = [8, 16, 32]
 
     if head == 'dfl':
         boxes, confs, cls_ids = postprocess_yolov8(
-            pred_nc, imgsz, orig_shape or (imgsz, imgsz), ratio_pad, conf_thres, iou_thres
+            pred_nc, imgsz, orig_shape or (imgsz, imgsz), ratio_pad, conf_thres, iou_thres,
+            reg_max=reg_max, strides=strides
         )
         return boxes, confs, cls_ids
 
@@ -106,6 +118,7 @@ def main():
     ap.add_argument('--iou', type=float, default=0.45)
     ap.add_argument('--names', type=Path, default=None, help='names.txt (one class per line)')
     ap.add_argument('--head', type=str, choices=['auto', 'dfl', 'raw'], default='auto', help='head decode type')
+    ap.add_argument('--meta', type=Path, default=None, help='model metadata file (.json or .yaml); if omitted, auto-detected')
     ap.add_argument('--core-mask', type=lambda x: int(x, 0), default=0x7, help='NPU core mask (e.g., 0x7 for 3 cores)')
     ap.add_argument('--save', type=Path, default=None, help='save annotated result image')
     ap.add_argument(
@@ -151,6 +164,16 @@ def main():
 
     class_names = load_labels(args.names)
 
+    # Load model metadata
+    from apps.model_meta import load_model_metadata
+    try:
+        meta = load_model_metadata(args.model, config_path=args.meta)
+        logger.info('Model metadata: reg_max=%d, strides=%s, head=%s (source: %s)',
+                    meta.reg_max, meta.strides, meta.head_type, meta.source)
+    except Exception as e:
+        logger.warning('Failed to load model metadata, using defaults: %s', e)
+        meta = None
+
     if args.source and args.source.exists():
         # Load and preprocess image
         try:
@@ -176,7 +199,7 @@ def main():
         pred = outputs[0]
         if pred.ndim == 2:
             pred = pred[None, ...]
-        boxes, confs, cls_ids = decode_predictions(pred, args.imgsz, args.conf, args.iou, args.head, (r, d), img0.shape[:2])
+        boxes, confs, cls_ids = decode_predictions(pred, args.imgsz, args.conf, args.iou, args.head, (r, d), img0.shape[:2], meta=meta)
         logger.info('Detections: %d', len(boxes))
         vis = draw_boxes(img0.copy(), boxes, confs, cls_ids, class_names)
         if args.save:
@@ -210,7 +233,7 @@ def main():
                 continue
             if pred.ndim == 2:
                 pred = pred[None, ...]
-            boxes, confs, cls_ids = decode_predictions(pred, args.imgsz, args.conf, args.iou, args.head, (r, d), img0.shape[:2])
+            boxes, confs, cls_ids = decode_predictions(pred, args.imgsz, args.conf, args.iou, args.head, (r, d), img0.shape[:2], meta=meta)
             t1 = time.time()
             fps = 1.0 / max(1e-6, (t1 - t0))
             fps_hist.append(fps)
