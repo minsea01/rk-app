@@ -1,6 +1,7 @@
 #include "rkapp/infer/RknnEngine.hpp"
 #include "rkapp/infer/RknnDecodeUtils.hpp"
 #include "rkapp/preprocess/Preprocess.hpp"
+#include "rkapp/post/Postprocess.hpp"
 #include "log.hpp"
 #include <algorithm>
 #include <cmath>
@@ -8,6 +9,8 @@
 #include <fstream>
 #include <iomanip>
 #include <numeric>
+#include <regex>
+#include <sstream>
 
 #if RKNN_PLATFORM
 #include <rknn_api.h>
@@ -36,6 +39,71 @@ std::vector<uint8_t> read_file(const std::string& p){
   return std::vector<uint8_t>((std::istreambuf_iterator<char>(ifs)), {});
 }
 
+// Best-effort model metadata loader to avoid纯启发式解码。
+// 优先读取侧car文件：<model_path>.json / <model_path>.meta / artifacts/models/decode_meta.json
+rkapp::infer::RknnEngine::ModelMeta load_model_meta(const std::string& model_path) {
+  rkapp::infer::RknnEngine::ModelMeta meta;
+  const std::vector<std::string> candidates = {
+      model_path + ".json",
+      model_path + ".meta",
+      "artifacts/models/decode_meta.json"};
+
+  auto parse_int = [](const std::string& content, const std::string& key) -> int {
+    std::regex re(key + R"(\s*[:=]\s*([0-9]+))");
+    std::smatch m;
+    if (std::regex_search(content, m, re) && m.size() > 1) {
+      return std::stoi(m[1].str());
+    }
+    return -1;
+  };
+
+  auto parse_strides = [](const std::string& content) -> std::vector<int> {
+    std::vector<int> out;
+    std::regex re(R"(strides\s*[:=]\s*\[([^\]]+)\])");
+    std::smatch m;
+    if (!std::regex_search(content, m, re) || m.size() < 2) return out;
+    std::string body = m[1].str();
+    std::stringstream ss(body);
+    std::string tok;
+    while (std::getline(ss, tok, ',')) {
+      try {
+        out.push_back(std::stoi(tok));
+      } catch (...) {
+      }
+    }
+    return out;
+  };
+
+  auto parse_head = [](const std::string& content) -> std::string {
+    std::regex re(R"(head\s*[:=]\s*\"?([a-zA-Z]+)\"?)");
+    std::smatch m;
+    if (std::regex_search(content, m, re) && m.size() > 1) {
+      std::string v = m[1].str();
+      std::transform(v.begin(), v.end(), v.begin(), ::tolower);
+      return v;
+    }
+    return {};
+  };
+
+  for (const auto& p : candidates) {
+    std::ifstream f(p);
+    if (!f.is_open()) continue;
+    std::string content((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    if (content.empty()) continue;
+    int reg = parse_int(content, "reg_max");
+    if (reg > 0) meta.reg_max = reg;
+    auto strides = parse_strides(content);
+    if (!strides.empty()) meta.strides = strides;
+    std::string head = parse_head(content);
+    if (!head.empty()) meta.head = head;
+    if (meta.reg_max > 0 || !meta.strides.empty() || !meta.head.empty()) {
+      LOGI("RknnEngine: loaded decode metadata from ", p);
+      break;
+    }
+  }
+  return meta;
+}
+
 } // namespace
 
 RknnEngine::RknnEngine() = default;
@@ -45,6 +113,7 @@ bool RknnEngine::init(const std::string& model_path, int img_size){
   model_path_ = model_path;
   input_size_ = img_size;
   impl_ = std::make_unique<Impl>();
+  model_meta_ = load_model_meta(model_path);
 #if RKNN_PLATFORM
   auto blob = read_file(model_path);
   if(blob.empty()){
@@ -178,22 +247,26 @@ std::vector<Detection> RknnEngine::infer(const cv::Mat& image){
     logits.swap(trans);
   }
 
-  // Decode to detections. Support two heads:
-  // 1) YOLOv8 DFL head: C >= 64 (4*16 + num_classes)
-  // 2) Raw head: [cx,cy,w,h,(obj),cls...]
+  // Decode to detections. Support两种头：
+  // 1) YOLOv8 DFL: 使用 reg_max 和 strides（优先来自元数据）
+  // 2) Raw: [cx,cy,w,h,(obj),cls...]
   std::vector<Detection> dets;
   int N = impl_->out_n;
   int C = impl_->out_c;
 
   auto sigmoid = [](float x){ return 1.0f / (1.0f + std::exp(-x)); };
 
-  if (C >= 64) {
-    // DFL path (assume reg_max=16)
-    const int reg_max = 16;
+  const int reg_max = (model_meta_.reg_max > 0) ? model_meta_.reg_max : 16;
+  const bool force_raw = (model_meta_.head == "raw");
+  const bool force_dfl = (model_meta_.head == "dfl");
+  const bool use_dfl = (!force_raw) && (force_dfl || C >= 4 * reg_max);
+
+  if (use_dfl) {
+    // DFL path
     int cls_ch = C - 4 * reg_max;
     if (num_classes_ < 0) num_classes_ = cls_ch;
     // Prepare strides and per-anchor stride map for imgsz=input_size_
-    std::vector<int> strides = {8, 16, 32};
+    std::vector<int> strides = model_meta_.strides.empty() ? std::vector<int>{8, 16, 32} : model_meta_.strides;
     const bool resolved = resolve_stride_set(input_size_, N, strides);
     AnchorLayout layout = build_anchor_layout(input_size_, N, strides);
     if (!layout.valid || !resolved) {
@@ -278,7 +351,14 @@ std::vector<Detection> RknnEngine::infer(const cv::Mat& image){
       }
     }
   }
-  return dets;
+  rkapp::post::NMSConfig nms_cfg;
+  nms_cfg.conf_thres = decode_params_.conf_thres;
+  nms_cfg.iou_thres = decode_params_.iou_thres;
+  if (decode_params_.max_boxes > 0) {
+    nms_cfg.max_det = decode_params_.max_boxes;
+    nms_cfg.topk = decode_params_.max_boxes;
+  }
+  return rkapp::post::Postprocess::nms(dets, nms_cfg);
 #else
   // Non-RKNN build: return empty
   return {};

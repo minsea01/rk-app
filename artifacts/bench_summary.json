@@ -1,9 +1,20 @@
 {
-  "timestamp": 1761553947,
-  "iperf3_bits_per_second": 0,
-  "iperf3_mbps": 0.0,
-  "ffprobe_width": 1920,
-  "ffprobe_height": 1080,
-  "ffprobe_fps": 30.0,
-  "ffprobe_codec": "h264"
+  "model": "artifacts/models/best.onnx",
+  "image": "assets/test.jpg",
+  "imgsz": 416,
+  "providers": [
+    "CPUExecutionProvider"
+  ],
+  "runs": 30,
+  "warmup": 5,
+  "metrics": {
+    "mean_ms": 18.830984634405468,
+    "p50_ms": 17.79038700624369,
+    "p90_ms": 22.948441498738248,
+    "p95_ms": 24.381580344925165,
+    "min_ms": 15.354004004620947,
+    "max_ms": 26.33437501208391,
+    "fps_mean": 53.10396771143518,
+    "fps_p95": 41.0145686150382
+  }
 }

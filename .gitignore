@@ -100,3 +100,4 @@ artifacts/onnx_optimized/
 
 # Exclude large ONNX models (>10MB)
 *.onnx
+.mcp.json

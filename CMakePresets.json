@@ -19,17 +19,35 @@
         "CMAKE_BUILD_TYPE": "Debug",
         "CMAKE_INSTALL_PREFIX": "${sourceDir}/out/x86"
       }
+    },
+    {
+      "name": "x86-debug-nosan",
+      "inherits": "x86-debug",
+      "binaryDir": "build/x86-debug-nosan",
+      "cacheVariables": {
+        "ENABLE_SANITIZERS": "OFF"
+      }
     }
   ],
   "buildPresets": [
     { "name": "arm64", "configurePreset": "arm64-release" },
-    { "name": "x86-debug", "configurePreset": "x86-debug" }
+    { "name": "x86-debug", "configurePreset": "x86-debug" },
+    { "name": "x86-debug-nosan", "configurePreset": "x86-debug-nosan" }
   ],
   "testPresets": [
     {
       "name": "x86-debug",
       "configurePreset": "x86-debug",
       "output": { "outputOnFailure": true }
+    },
+    {
+      "name": "x86-debug-nosan",
+      "configurePreset": "x86-debug-nosan",
+      "output": { "outputOnFailure": true },
+      "environment": {
+        "LSAN_OPTIONS": "detect_leaks=0",
+        "ASAN_OPTIONS": "detect_leaks=0"
+      }
     }
   ]
 }

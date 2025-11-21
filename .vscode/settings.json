@@ -15,5 +15,6 @@
         "WORKDIR": "${workspaceFolder}"
       }
     }
-  }
+  },
+  "git.ignoreLimitWarning": true
 }

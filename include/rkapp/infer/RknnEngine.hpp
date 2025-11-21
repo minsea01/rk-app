@@ -44,6 +44,12 @@ private:
   bool has_objness_ = true;  // Most YOLO exports include objectness score
   std::vector<std::string> class_names_;
   DecodeParams decode_params_;
+
+  struct ModelMeta {
+    int reg_max = -1;
+    std::vector<int> strides;
+    std::string head; // "dfl" / "raw" / ""
+  } model_meta_;
 };
 
 } // namespace rkapp::infer

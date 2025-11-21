@@ -1,6 +1,7 @@
 #include "rkapp/infer/OnnxEngine.hpp"
 #include "rkapp/preprocess/Preprocess.hpp"
 #include "log.hpp"
+#include "rkapp/post/Postprocess.hpp"
 #include <algorithm>
 #include <onnxruntime_cxx_api.h>
 
@@ -183,7 +184,15 @@ std::vector<Detection> OnnxEngine::infer(const cv::Mat& image) {
       LOGW("OnnxEngine inference returned no outputs");
       return {};
     }
-    return Impl::parseOutput(outputs[0], letterbox_info, image.size(), decode_params_);
+    auto dets = Impl::parseOutput(outputs[0], letterbox_info, image.size(), decode_params_);
+    rkapp::post::NMSConfig nms_cfg;
+    nms_cfg.conf_thres = decode_params_.conf_thres;
+    nms_cfg.iou_thres = decode_params_.iou_thres;
+    if (decode_params_.max_boxes > 0) {
+      nms_cfg.max_det = decode_params_.max_boxes;
+      nms_cfg.topk = decode_params_.max_boxes;
+    }
+    return rkapp::post::Postprocess::nms(dets, nms_cfg);
   } catch (const Ort::Exception& e) {
     LOGE("OnnxEngine inference error: ", e.what());
     return {};

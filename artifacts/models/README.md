@@ -42,3 +42,14 @@ python tools/pc_compare.py \
   --imgsz 640 \
   --outdir artifacts/logs/eq
 ```
+
+## Current Status (2025-xx)
+
+### Inference Benchmarks (PC, ONNX, imgsz=416)
+- Command: `python tools/bench_onnx_latency.py --model artifacts/models/best.onnx --image assets/test.jpg --imgsz 416 --runs 30 --warmup 5 --providers cpu --out artifacts/bench_summary.json`
+- Result: mean 18.83 ms (fps ≈ 53.1), p95 24.38 ms (fps_p95 ≈ 41.0)
+- Notes: Model expects 416×416 input. Adjust `--imgsz` accordingly.
+
+### Evaluation (YOLOv8 refresh pending)
+- Latest available: YOLO11n on COCO person subset mAP@0.5 ≈ 0.616 (see `artifacts/yolo11n_official_full_map.json`).
+- To refresh with YOLOv8: `yolo detect val model=artifacts/models/best.onnx data=<your_dataset.yaml> imgsz=416` and record mAP@0.5 / mAP@0.5:0.95 here.
