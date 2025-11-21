@@ -23,14 +23,38 @@ echo "[4/4] HTTP ingest validation" | tee -a "$ART_DIR/runner.log"
 python3 "$ROOT_DIR/tools/http_receiver.py" --port 0 \
   > "$ART_DIR/http_ingest.log" 2>&1 &
 SRV_PID=$!
-# Wait for server to report its port
-for i in {1..20}; do
-  if grep -q "listening_port" "$ART_DIR/http_ingest.log"; then break; fi
+
+# Fixed: Wait for server to report its port AND verify server is accepting connections
+PORT=""
+for i in {1..50}; do
+  if grep -q "listening_port" "$ART_DIR/http_ingest.log" 2>/dev/null; then
+    PORT=$(jq -r '.listening_port' "$ART_DIR/http_ingest.log" 2>/dev/null | head -n1)
+    # Verify port is valid
+    if [[ "$PORT" =~ ^[0-9]+$ ]] && (( PORT > 0 && PORT < 65536 )); then
+      # Test TCP connection (robust check)
+      if timeout 0.2 bash -c "echo > /dev/tcp/127.0.0.1/$PORT" 2>/dev/null; then
+        echo "HTTP server ready on port $PORT" | tee -a "$ART_DIR/runner.log"
+        break
+      fi
+    fi
+  fi
   sleep 0.1
+  # Timeout after 5 seconds
+  if (( i == 50 )); then
+    echo "⚠️  HTTP server failed to start within 5 seconds" | tee -a "$ART_DIR/runner.log"
+    kill $SRV_PID 2>/dev/null || true
+    PORT=""
+  fi
 done
-PORT=$(jq -r '.listening_port' "$ART_DIR/http_ingest.log" | head -n1)
-sleep 0.3
-python3 "$ROOT_DIR/tools/http_post.py" --url http://127.0.0.1:${PORT}/ingest --file "$ART_DIR/bench_summary.json" || echo "HTTP post skipped (receiver not ready)" >> "$ART_DIR/runner.log"
-sleep 0.2
-kill $SRV_PID || true
+
+# Only attempt POST if server is confirmed ready
+if [[ -n "$PORT" ]]; then
+  python3 "$ROOT_DIR/tools/http_post.py" --url "http://127.0.0.1:${PORT}/ingest" --file "$ART_DIR/bench_summary.json" || \
+    echo "⚠️  HTTP post failed" | tee -a "$ART_DIR/runner.log"
+  sleep 0.2
+  kill $SRV_PID 2>/dev/null || true
+else
+  echo "⚠️  HTTP post skipped (receiver not ready)" | tee -a "$ART_DIR/runner.log"
+fi
+
 echo "Done. See artifacts/ for outputs." | tee -a "$ART_DIR/runner.log"
