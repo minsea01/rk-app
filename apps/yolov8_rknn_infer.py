@@ -193,6 +193,11 @@ def main():
     try:
         cap = cv2.VideoCapture(0)
         if not cap.isOpened():
+            # Important: Release cap even if it failed to open
+            # cv2.VideoCapture() returns an object even on failure
+            if cap is not None:
+                cap.release()
+                cap = None  # Prevent double-release in finally block
             raise PreprocessError('Failed to open camera (/dev/video0)')
 
         fps_hist = []

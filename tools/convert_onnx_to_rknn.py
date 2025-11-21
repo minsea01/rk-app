@@ -8,6 +8,8 @@ import argparse
 from pathlib import Path
 import sys
 from importlib.metadata import version, PackageNotFoundError
+from contextlib import contextmanager
+from typing import Optional
 
 # Import custom exceptions
 from apps.exceptions import ModelLoadError, ConfigurationError
@@ -15,6 +17,50 @@ from apps.logger import setup_logger
 
 # Setup logger
 logger = setup_logger(__name__, level='INFO')
+
+
+@contextmanager
+def rknn_context(verbose: bool = True):
+    """Context manager for RKNN toolkit to ensure proper resource cleanup.
+
+    Ensures rknn.release() is called even if exceptions occur, preventing
+    GPU/memory leaks in error scenarios.
+
+    Args:
+        verbose: Enable verbose logging from RKNN toolkit
+
+    Yields:
+        RKNN: Initialized RKNN toolkit instance
+
+    Example:
+        >>> with rknn_context() as rknn:
+        ...     rknn.load_onnx('model.onnx')
+        ...     rknn.build(do_quantization=True, dataset='calib.txt')
+        ...     rknn.export_rknn('model.rknn')
+        ... # rknn.release() automatically called here
+    """
+    try:
+        from rknn.api import RKNN
+    except ImportError as e:
+        raise ConfigurationError(
+            f"rknn-toolkit2 not installed. Please run: pip install rknn-toolkit2\nError: {e}"
+        ) from e
+    except (AttributeError, TypeError) as e:
+        raise ConfigurationError(
+            f"rknn-toolkit2 version incompatible. Please ensure rknn-toolkit2>=2.3.2 is installed.\nError: {e}"
+        ) from e
+
+    rknn = RKNN(verbose=verbose)
+    try:
+        yield rknn
+    finally:
+        # Always release resources, even on exception
+        try:
+            rknn.release()
+            logger.debug("RKNN resources released")
+        except Exception as e:
+            # Log but don't raise - we're in cleanup phase
+            logger.warning(f"Failed to release RKNN resources (may already be released): {e}")
 
 
 def _detect_rknn_default_qdtype():
@@ -77,72 +123,80 @@ def _parse_and_validate_mean_std(mean: str, std: str):
 def build_rknn(
     onnx_path: Path,
     out_path: Path,
-    calib: Path = None,
+    calib: Optional[Path] = None,
     do_quant: bool = True,
     target: str = 'rk3588',
-    quantized_dtype: str = None,
+    quantized_dtype: Optional[str] = None,
     mean: str = '0,0,0',
     std: str = '255,255,255',
     reorder: str = '2 1 0',  # BGR->RGB
 ):
-    try:
-        from rknn.api import RKNN
-    except ImportError as e:
-        raise ConfigurationError(
-            f"rknn-toolkit2 not installed. Please run: pip install rknn-toolkit2\nError: {e}"
-        ) from e
-    except (AttributeError, TypeError) as e:
-        raise ConfigurationError(
-            f"rknn-toolkit2 version incompatible. Please ensure rknn-toolkit2>=2.3.2 is installed.\nError: {e}"
-        ) from e
+    """Build RKNN model from ONNX with automatic resource management.
 
+    Uses context manager to ensure RKNN resources are properly released
+    even if exceptions occur during conversion.
+
+    Args:
+        onnx_path: Path to input ONNX model
+        out_path: Path to output RKNN model
+        calib: Optional calibration dataset path
+        do_quant: Enable INT8 quantization
+        target: Target platform (default: rk3588)
+        quantized_dtype: Quantization dtype (auto-detected if None)
+        mean: Mean values for normalization
+        std: Std values for normalization
+        reorder: Channel reordering (e.g., '2 1 0' for BGR->RGB)
+
+    Raises:
+        ModelLoadError: If model loading/building/exporting fails
+        ConfigurationError: If configuration is invalid
+    """
     # Validate and parse mean/std parameters
     mean_values, std_values = _parse_and_validate_mean_std(mean, std)
 
     onnx_path = Path(onnx_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
-    rknn = RKNN(verbose=True)
-    print('Configuring RKNN...')
-    # Choose sensible default qdtype by toolkit major version if not provided
-    if quantized_dtype in (None, ''):
-        quantized_dtype = _detect_rknn_default_qdtype()
-        print(f'Auto-select quantized_dtype={quantized_dtype}')
-    rknn.config(
-        target_platform=target,
-        mean_values=mean_values,
-        std_values=std_values,
-        quantized_dtype=quantized_dtype,
-    )
+    # Use context manager for automatic resource cleanup
+    with rknn_context(verbose=True) as rknn:
+        print('Configuring RKNN...')
+        # Choose sensible default qdtype by toolkit major version if not provided
+        if quantized_dtype in (None, ''):
+            quantized_dtype = _detect_rknn_default_qdtype()
+            print(f'Auto-select quantized_dtype={quantized_dtype}')
 
-    logger.info(f'Loading ONNX: {onnx_path}')
-    ret = rknn.load_onnx(model=str(onnx_path))
-    if ret != 0:
-        rknn.release()
-        raise ModelLoadError(f'Failed to load ONNX model: {onnx_path}')
+        rknn.config(
+            target_platform=target,
+            mean_values=mean_values,
+            std_values=std_values,
+            quantized_dtype=quantized_dtype,
+        )
 
-    dataset = None
-    if do_quant:
-        if calib is None:
-            raise ConfigurationError('INT8 quantization requested but no calibration dataset provided')
-        dataset = str(calib)
-        if not Path(dataset).exists():
-            raise ConfigurationError(f'Calibration file or folder not found: {dataset}')
+        logger.info(f'Loading ONNX: {onnx_path}')
+        ret = rknn.load_onnx(model=str(onnx_path))
+        if ret != 0:
+            raise ModelLoadError(f'Failed to load ONNX model: {onnx_path}')
 
-    logger.info('Building RKNN model...')
-    ret = rknn.build(do_quantization=bool(do_quant), dataset=dataset)
-    if ret != 0:
-        rknn.release()
-        raise ModelLoadError('Failed to build RKNN model')
+        dataset = None
+        if do_quant:
+            if calib is None:
+                raise ConfigurationError('INT8 quantization requested but no calibration dataset provided')
+            dataset = str(calib)
+            if not Path(dataset).exists():
+                raise ConfigurationError(f'Calibration file or folder not found: {dataset}')
 
-    logger.info(f'Exporting RKNN to: {out_path}')
-    ret = rknn.export_rknn(str(out_path))
-    if ret != 0:
-        rknn.release()
-        raise ModelLoadError(f'Failed to export RKNN model to: {out_path}')
+        logger.info('Building RKNN model...')
+        ret = rknn.build(do_quantization=bool(do_quant), dataset=dataset)
+        if ret != 0:
+            raise ModelLoadError('Failed to build RKNN model')
 
-    logger.info('RKNN conversion completed successfully')
-    rknn.release()
+        logger.info(f'Exporting RKNN to: {out_path}')
+        ret = rknn.export_rknn(str(out_path))
+        if ret != 0:
+            raise ModelLoadError(f'Failed to export RKNN model to: {out_path}')
+
+        logger.info('RKNN conversion completed successfully')
+        # rknn.release() automatically called by context manager
 
 
 def main():
