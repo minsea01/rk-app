@@ -85,7 +85,7 @@ def main():
     print("技术文档检查:")
     docs = [
         ("docs/RK3588_VALIDATION_CHECKLIST.md", "硬件验证清单"),
-        ("QUICK_START_GUIDE.md", "快速开始指南")
+        ("docs/guides/QUICK_START_GUIDE.md", "快速开始指南")
     ]
     
     for path, desc in docs:

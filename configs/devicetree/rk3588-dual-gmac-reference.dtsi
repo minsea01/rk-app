@@ -1,0 +1,307 @@
+// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
+/*
+ * RK3588 Dual GMAC RGMII Configuration Reference
+ *
+ * 说明：本文件为设备树配置参考，基于RK3588官方SDK和Linux主线代码
+ * 用途：双千兆网口适配工作中的配置参数参考
+ *
+ * 注意：这是一个DTSI片段（Device Tree Source Include），不是完整的DTS文件
+ *      实际使用时需要包含到主DTS文件中，或编译为overlay
+ *
+ * 参考来源：
+ * - arch/arm64/boot/dts/rockchip/rk3588.dtsi (Linux mainline)
+ * - Rockchip RK3588 SDK
+ * - Documentation/devicetree/bindings/net/rockchip-dwmac.txt
+ *
+ * 作者：基于官方文档整理
+ * 日期：2025-11-19
+ */
+
+/*
+ * GMAC0配置 - 网口1（工业相机网络）
+ * 基地址：0xfe1b0000
+ * 中断：GMAC0_IRQn
+ */
+&gmac0 {
+    /* 基本配置 */
+    status = "okay";
+
+    /*
+     * RGMII PHY模式选择
+     * - rgmii: 标准RGMII，MAC提供延迟
+     * - rgmii-id: PHY提供TX和RX延迟（推荐）
+     * - rgmii-txid: PHY提供TX延迟，MAC提供RX延迟
+     * - rgmii-rxid: MAC提供TX延迟，PHY提供RX延迟
+     */
+    phy-mode = "rgmii-id";
+
+    /*
+     * 时钟配置
+     * - output: MAC提供时钟给PHY（标准配置）
+     * - input: PHY提供时钟给MAC（特殊场景）
+     */
+    clock_in_out = "output";
+
+    /*
+     * PHY复位控制
+     * 时序：复位前延迟 -> 复位脉冲 -> 复位后延迟
+     * 单位：微秒 (us)
+     */
+    snps,reset-gpio = <&gpio3 RK_PB0 GPIO_ACTIVE_LOW>;
+    snps,reset-active-low;
+    snps,reset-delays-us = <0 20000 100000>;  /* 0us, 20ms, 100ms */
+
+    /*
+     * TX/RX延迟调整（如果PHY不提供延迟，需要手动调整）
+     * 范围：0x00 - 0x7f
+     * 步进：~0.03ns per step
+     * 推荐起始值：TX=0x30 (1.5ns), RX=0x10 (0.5ns)
+     */
+    tx_delay = <0x30>;
+    rx_delay = <0x10>;
+
+    /* PHY设备句柄 */
+    phy-handle = <&rgmii_phy0>;
+
+    /*
+     * MDIO总线配置
+     * 用于PHY芯片通信（地址配置、寄存器读写）
+     */
+    mdio0 {
+        compatible = "snps,dwmac-mdio";
+        #address-cells = <1>;
+        #size-cells = <0>;
+
+        /*
+         * PHY设备节点
+         * reg: MDIO地址（0-31）
+         */
+        rgmii_phy0: ethernet-phy@0 {
+            compatible = "ethernet-phy-ieee802.3-c22";
+            reg = <0>;  /* PHY address 0 */
+
+            /* 最大速度限制 */
+            max-speed = <1000>;  /* 1000 Mbps (Gigabit) */
+
+            /*
+             * RTL8211F特定配置（Realtek PHY）
+             * 根据实际使用的PHY芯片调整
+             */
+            realtek,clkout-disable;      /* 禁用CLKOUT引脚 */
+            realtek,aldps-disable;       /* 禁用ALDPS节能模式 */
+            realtek,tx-delay = <0x15>;   /* TX延迟：0.9ns */
+            realtek,rx-delay = <0x1c>;   /* RX延迟：1.8ns */
+
+            /* PHY中断配置（可选，polling也可工作） */
+            interrupt-parent = <&gpio3>;
+            interrupts = <RK_PB1 IRQ_TYPE_LEVEL_LOW>;
+        };
+    };
+
+    /*
+     * 固定链路配置（用于直连相机，不使用autoneg）
+     * 如果通过交换机连接，注释掉此节点
+     */
+    fixed-link {
+        speed = <1000>;
+        full-duplex;
+        pause;  /* 支持流控 */
+    };
+};
+
+/*
+ * GMAC1配置 - 网口2（检测结果上传网络）
+ * 基地址：0xfe1c0000
+ * 中断：GMAC1_IRQn
+ */
+&gmac1 {
+    status = "okay";
+
+    /*
+     * 使用TX-only内部延迟
+     * 适合与交换机连接的场景
+     */
+    phy-mode = "rgmii-txid";
+    clock_in_out = "output";
+
+    /* PHY复位控制（使用不同GPIO） */
+    snps,reset-gpio = <&gpio3 RK_PB2 GPIO_ACTIVE_LOW>;
+    snps,reset-active-low;
+    snps,reset-delays-us = <0 20000 100000>;
+
+    /* 延迟调整（根据实际测试结果优化） */
+    tx_delay = <0x2f>;
+    rx_delay = <0x1f>;
+
+    phy-handle = <&rgmii_phy1>;
+
+    mdio1 {
+        compatible = "snps,dwmac-mdio";
+        #address-cells = <1>;
+        #size-cells = <0>;
+
+        rgmii_phy1: ethernet-phy@1 {
+            compatible = "ethernet-phy-ieee802.3-c22";
+            reg = <1>;
+            max-speed = <1000>;
+
+            /*
+             * YT8531C特定配置（Motorcomm PHY）
+             * 如果使用其他PHY芯片，替换为对应配置
+             */
+            motorcomm,clk-out-frequency-hz = <125000000>;  /* 125MHz */
+            motorcomm,keep-pll-enabled;
+            motorcomm,auto-sleep-disabled;
+
+            interrupt-parent = <&gpio3>;
+            interrupts = <RK_PB3 IRQ_TYPE_LEVEL_LOW>;
+        };
+    };
+};
+
+/*
+ * 引脚复用配置
+ * RK3588的GMAC需要配置IOMUX将GPIO复用为RGMII功能
+ */
+&pinctrl {
+    gmac0 {
+        /*
+         * GMAC0 RGMII引脚定义
+         * 格式：<bank pin func flags>
+         * - bank: GPIO bank (3 = GPIO3)
+         * - pin: GPIO pin (RK_PB4 = PB4)
+         * - func: 功能复用编号 (1 = RGMII)
+         * - flags: 上拉/下拉/驱动强度配置
+         */
+        gmac0_rgmii_pins: gmac0-rgmii-pins {
+            rockchip,pins =
+                /* RGMII TX信号（4根数据线 + 控制 + 时钟） */
+                <3 RK_PB4 1 &pcfg_pull_none_drv_level_2>,  /* TXD0 */
+                <3 RK_PB5 1 &pcfg_pull_none_drv_level_2>,  /* TXD1 */
+                <3 RK_PB6 1 &pcfg_pull_none_drv_level_2>,  /* TXD2 */
+                <3 RK_PB7 1 &pcfg_pull_none_drv_level_2>,  /* TXD3 */
+                <3 RK_PC0 1 &pcfg_pull_none_drv_level_2>,  /* TX_CTL */
+                <3 RK_PC1 1 &pcfg_pull_none_drv_level_3>,  /* TXC (125MHz, 需要更高驱动强度) */
+
+                /* RGMII RX信号（4根数据线 + 控制 + 时钟） */
+                <3 RK_PC2 1 &pcfg_pull_none>,              /* RXD0 */
+                <3 RK_PC3 1 &pcfg_pull_none>,              /* RXD1 */
+                <3 RK_PC4 1 &pcfg_pull_none>,              /* RXD2 */
+                <3 RK_PC5 1 &pcfg_pull_none>,              /* RXD3 */
+                <3 RK_PC6 1 &pcfg_pull_none>,              /* RX_CTL */
+                <3 RK_PC7 1 &pcfg_pull_none>,              /* RXC */
+
+                /* MDIO管理接口（2根线） */
+                <3 RK_PD0 1 &pcfg_pull_none>,              /* MDC */
+                <3 RK_PD1 1 &pcfg_pull_none>;              /* MDIO */
+        };
+    };
+
+    gmac1 {
+        gmac1_rgmii_pins: gmac1-rgmii-pins {
+            rockchip,pins =
+                /* GMAC1使用GPIO4 bank */
+                /* TX */
+                <4 RK_PA0 1 &pcfg_pull_none_drv_level_2>,  /* TXD0 */
+                <4 RK_PA1 1 &pcfg_pull_none_drv_level_2>,  /* TXD1 */
+                <4 RK_PA2 1 &pcfg_pull_none_drv_level_2>,  /* TXD2 */
+                <4 RK_PA3 1 &pcfg_pull_none_drv_level_2>,  /* TXD3 */
+                <4 RK_PA4 1 &pcfg_pull_none_drv_level_2>,  /* TX_CTL */
+                <4 RK_PA5 1 &pcfg_pull_none_drv_level_3>,  /* TXC */
+
+                /* RX */
+                <4 RK_PA6 1 &pcfg_pull_none>,              /* RXD0 */
+                <4 RK_PA7 1 &pcfg_pull_none>,              /* RXD1 */
+                <4 RK_PB0 1 &pcfg_pull_none>,              /* RXD2 */
+                <4 RK_PB1 1 &pcfg_pull_none>,              /* RXD3 */
+                <4 RK_PB2 1 &pcfg_pull_none>,              /* RX_CTL */
+                <4 RK_PB3 1 &pcfg_pull_none>,              /* RXC */
+
+                /* MDIO */
+                <4 RK_PB4 1 &pcfg_pull_none>,              /* MDC */
+                <4 RK_PB5 1 &pcfg_pull_none>;              /* MDIO */
+        };
+    };
+};
+
+/*
+ * 时钟树配置
+ * GMAC需要125MHz参考时钟（PTP时钟）
+ */
+&cru {
+    assigned-clocks = <&cru CLK_GMAC0_PTP_REF>,
+                      <&cru CLK_GMAC1_PTP_REF>;
+    assigned-clock-rates = <125000000>, <125000000>;
+};
+
+/*
+ * 电源域配置（可选）
+ * 确保GMAC控制器供电正常
+ */
+&pmu_io_domains {
+    gmac0-supply = <&vcc_3v3>;
+    gmac1-supply = <&vcc_3v3>;
+};
+
+/*
+ * =============================================================================
+ * 使用说明
+ * =============================================================================
+ *
+ * 1. 编译方法：
+ *    将此文件包含到主DTS文件中：
+ *    #include "rk3588-dual-gmac-reference.dtsi"
+ *
+ *    或编译为独立的overlay：
+ *    dtc -I dts -O dtb -o rk3588-dual-gmac.dtbo rk3588-dual-gmac-reference.dtsi
+ *
+ * 2. 部署方法：
+ *    方法A（替换主DTB）：
+ *      cp rk3588-dual-gmac.dtb /boot/dtb/rk3588.dtb
+ *      reboot
+ *
+ *    方法B（使用overlay）：
+ *      cp rk3588-dual-gmac.dtbo /boot/dtb/overlays/
+ *      编辑 /boot/extlinux/extlinux.conf 添加：
+ *      fdtoverlays /boot/dtb/overlays/rk3588-dual-gmac.dtbo
+ *      reboot
+ *
+ * 3. 验证方法：
+ *    ls /sys/firmware/devicetree/base/ethernet@*
+ *    cat /sys/firmware/devicetree/base/ethernet@fe1b0000/phy-mode
+ *    dmesg | grep -i "stmmac\|dwmac"
+ *    ip link show
+ *
+ * 4. 性能测试：
+ *    sudo ./scripts/network/network_throughput_validator.sh
+ *
+ * =============================================================================
+ * 调试指南
+ * =============================================================================
+ *
+ * 问题1：网口无法启动
+ * - 检查PHY复位GPIO是否正确
+ * - 检查时钟是否配置
+ * - 查看dmesg中的错误信息
+ *
+ * 问题2：速度不是1000Mbps
+ * - 检查phy-mode是否匹配PHY芯片
+ * - 调整tx_delay和rx_delay参数
+ * - 确认PHY地址（reg属性）正确
+ *
+ * 问题3：吞吐量低
+ * - 使用ethtool检查链路状态
+ * - 调整系统参数（sysctl）
+ * - 检查是否有丢包（ethtool -S ethX）
+ *
+ * =============================================================================
+ * 参考文档
+ * =============================================================================
+ *
+ * - RK3588 TRM (Technical Reference Manual)
+ * - Linux Documentation: Documentation/devicetree/bindings/net/snps,dwmac.yaml
+ * - STMMAC Driver: drivers/net/ethernet/stmicro/stmmac/
+ * - Rockchip DWMAC: drivers/net/ethernet/stmicro/stmmac/dwmac-rk.c
+ *
+ * =============================================================================
+ */
