@@ -254,11 +254,24 @@ yolo predict model=artifacts/models/best.onnx source=assets/test.jpg imgsz=640 c
 # PC RKNN simulator (boardless validation)
 python scripts/run_rknn_sim.py
 
-# Performance benchmarks
+# ONNX latency micro-benchmark (CPU/CUDA/TensorRT)
+python tools/bench_onnx_latency.py \
+  --model artifacts/models/best.onnx \
+  --image assets/test.jpg \
+  --imgsz 640 \
+  --runs 50 \
+  --warmup 5 \
+  --providers cpu,cuda \
+  --out artifacts/bench_summary.json
+
+# Performance benchmarks (full MCP pipeline)
 bash scripts/run_bench.sh
 
 # System performance profiling (CPU, Memory, NPU)
 python scripts/profiling/performance_profiler.py --model artifacts/models/yolo11n.rknn
+
+# End-to-end latency measurement
+python scripts/profiling/end_to_end_latency.py --model artifacts/models/best.onnx
 ```
 
 **Key Performance Findings:**
@@ -280,14 +293,14 @@ python scripts/profiling/performance_profiler.py --model artifacts/models/yolo11
 
 The project includes complete graduation thesis documentation:
 
-1. **[Opening Report](docs/thesis_opening_report.md)** (开题报告) ✅
+1. **[Opening Report](docs/thesis/thesis_opening_report.md)** (开题报告) ✅
    - Project background and significance
    - Research status and innovation points
    - Technical solution design
    - Timeline planning
-   - Exported as `docs/开题报告.docx`
+   - Exported as `docs/thesis/开题报告.docx`
 
-2. **[Chapter 1: Introduction](docs/thesis_chapter_01_introduction.md)** ✅
+2. **[Chapter 1: Introduction](docs/thesis/thesis_chapter_01_introduction.md)** ✅
    - Research background and significance
    - Domestic and international research status
    - Main contributions of this work
@@ -295,13 +308,13 @@ The project includes complete graduation thesis documentation:
    - Paper organization structure
    - ~2500 words
 
-3. **[Chapter 2: System Design](docs/thesis_chapter_system_design.md)** ✅
+3. **[Chapter 2: System Design](docs/thesis/thesis_chapter_system_design.md)** ✅
    - Hardware design (RK3588, dual-NIC configuration)
    - Software architecture (application → system layer)
    - Module design (preprocessing, inference, postprocessing, network)
    - ~3000 words with code examples
 
-4. **[Chapter 3: Model Optimization](docs/thesis_chapter_model_optimization.md)** ✅
+4. **[Chapter 3: Model Optimization](docs/thesis/thesis_chapter_model_optimization.md)** ✅
    - Model selection and benchmarking (YOLO11n)
    - INT8 quantization methodology
    - Calibration dataset preparation
@@ -309,7 +322,7 @@ The project includes complete graduation thesis documentation:
    - Resolution optimization (416×416 vs 640×640)
    - ~4000 words with formulas
 
-5. **[Chapter 4: Deployment](docs/thesis_chapter_deployment.md)** ✅
+5. **[Chapter 4: Deployment](docs/thesis/thesis_chapter_deployment.md)** ✅
    - Deployment strategy (Python vs C++)
    - Environment setup (PC + board)
    - Complete inference framework code
@@ -317,7 +330,7 @@ The project includes complete graduation thesis documentation:
    - Network integration and serialization
    - ~3500 words with runnable code
 
-6. **[Chapter 5: Performance Testing](docs/thesis_chapter_performance.md)** ✅
+6. **[Chapter 5: Performance Testing](docs/thesis/thesis_chapter_performance.md)** ✅
    - PC baseline benchmarks (ONNX GPU: 8.6ms)
    - RKNN PC simulator validation
    - Board-level performance projections
@@ -325,7 +338,7 @@ The project includes complete graduation thesis documentation:
    - Graduation requirements compliance
    - ~3500 words with performance tables
 
-7. **[Chapter 6: System Integration](docs/thesis_chapter_06_integration.md)** ✅
+7. **[Chapter 6: System Integration](docs/thesis/thesis_chapter_06_integration.md)** ✅
    - Integration strategy and workflow
    - Functional validation (ONNX, RKNN, mAP evaluation)
    - Performance verification and benchmarks
@@ -333,14 +346,34 @@ The project includes complete graduation thesis documentation:
    - Graduation requirements compliance (95%)
    - ~3000 words with test results
 
-8. **[Chapter 7: Conclusion](docs/thesis_chapter_07_conclusion.md)** ✅
+8. **[Chapter 7: Conclusion](docs/thesis/thesis_chapter_07_conclusion.md)** ✅
    - Work summary and achievements
    - Existing limitations (hardware validation pending)
    - Future improvement directions
    - Final conclusions
    - ~2500 words
 
-**Complete thesis export:** `docs/RK3588行人检测_毕业设计说明书.docx` (69KB, 5 chapters)
+9. **[Defense PPT Outline](docs/thesis_defense_ppt_outline.md)** ✅
+   - 20-25 slides, 12-15 minute presentation
+   - Complete outline with visual design notes
+   - 7 sections covering all thesis aspects
+   - Technical demos and live system demonstration
+
+10. **[Defense Speech Script](docs/thesis_defense_speech.md)** ✅
+    - Full 12-15 minute oral presentation script
+    - Slide-by-slide speaking notes
+    - Q&A preparation guide
+    - Technical question responses
+
+**Complete thesis export:** `docs/thesis/开题报告.docx` (42KB)
+
+**Project Workflow Diagrams:** `docs/项目流程框图.md`
+- 10 Mermaid flowcharts covering complete project workflow
+- Model conversion pipeline (PyTorch → ONNX → RKNN)
+- PC simulation workflow
+- Board deployment process
+- Network streaming architecture
+- Training and fine-tuning flows
 
 **Thesis Statistics:**
 - Total chapters: 7 (+ opening report)
@@ -348,21 +381,54 @@ The project includes complete graduation thesis documentation:
 - Code examples: 30+
 - Tables: 40+
 - Architecture diagrams: 8+
+- Workflow diagrams: 10 Mermaid flowcharts
+- Defense materials: PPT outline + speech script
 - Completion: 98% (mAP baseline established, fine-tuning optional)
 
 **Documentation Index:**
-See `docs/THESIS_README.md` for complete navigation and usage guide.
+See `docs/thesis/THESIS_README.md` for complete navigation and usage guide.
 
 **Export to Word:**
 ```bash
 # Using pandoc
-pandoc docs/thesis_opening_report.md -o thesis_opening.docx
+pandoc docs/thesis/thesis_opening_report.md -o thesis_opening.docx
 
-# All chapters are already exported to .docx format in docs/
-ls docs/*.docx
-# docs/开题报告.docx
-# docs/RK3588行人检测_毕业设计说明书.docx
+# Opening report already exported to .docx format
+ls docs/thesis/*.docx
+# docs/thesis/开题报告.docx
 ```
+
+### Project Workflow Diagrams
+
+**Location:** `docs/项目流程框图.md`
+
+The project includes 10 comprehensive Mermaid flowcharts documenting all key workflows:
+
+1. **Model Conversion Pipeline** - Complete PyTorch → ONNX → RKNN workflow
+2. **PC Simulation Workflow** - Boardless validation process
+3. **Board Deployment Process** - On-device deployment steps
+4. **Network Streaming Architecture** - Dual-NIC streaming design
+5. **Training & Fine-tuning Flows** - Model training workflows
+6. **Calibration Dataset Preparation** - Quantization data pipeline
+7. **Performance Benchmarking** - Testing and profiling workflow
+8. **mAP Evaluation Pipeline** - Accuracy validation process
+9. **CI/CD Integration** - Automated testing workflow
+10. **Complete System Integration** - End-to-end system architecture
+
+**Usage:**
+```bash
+# View flowcharts
+cat docs/项目流程框图.md
+
+# Render with Mermaid-compatible viewer (VS Code, GitHub, etc.)
+code docs/项目流程框图.md
+```
+
+These diagrams are ideal for:
+- Thesis presentation slides
+- System architecture documentation
+- Onboarding new developers
+- Defense presentation visuals
 
 ## Critical Architecture Details
 
@@ -423,10 +489,14 @@ rk-app/
 │       ├── board-ready.md
 │       └── model-validate.md
 ├── docs/                          # Comprehensive documentation
-│   ├── thesis_opening_report.md   # 开题报告
-│   ├── thesis_chapter_*.md        # 5 thesis chapters
-│   ├── *.docx                     # Word exports (2 files)
-│   ├── THESIS_README.md           # Documentation index
+│   ├── thesis/                    # Thesis documentation subdirectory
+│   │   ├── thesis_opening_report.md      # 开题报告
+│   │   ├── thesis_chapter_*.md           # 7 thesis chapters
+│   │   ├── 开题报告.docx                 # Word export
+│   │   └── THESIS_README.md              # Thesis navigation guide
+│   ├── thesis_defense_ppt_outline.md     # Defense PPT outline
+│   ├── thesis_defense_speech.md          # Defense speech script
+│   ├── 项目流程框图.md                    # 10 Mermaid workflow diagrams
 │   ├── reports/                   # Project status reports
 │   ├── deployment/                # Deployment guides
 │   └── docs/                      # Technical guides (RGMII, 900Mbps, etc.)
@@ -452,16 +522,30 @@ rk-app/
 │       ├── test_decode_predictions.py  # YOLO decoder tests
 │       ├── test_yolo_post.py      # Post-processing tests
 │       └── test_aggregate.py      # 7 tests
-├── tools/                         # Core conversion/export tools (15 tools)
+├── tools/                         # Core conversion/export tools (24 tools)
 │   ├── export_yolov8_to_onnx.py   # PyTorch → ONNX export
 │   ├── convert_onnx_to_rknn.py    # ONNX → RKNN conversion
+│   ├── export_rknn.py             # Alternative RKNN export tool
 │   ├── model_evaluation.py        # Model performance evaluation
 │   ├── eval_yolo_jsonl.py         # YOLO JSONL format evaluation
+│   ├── bench_onnx_latency.py      # ONNX latency benchmark tool
+│   ├── onnx_bench.py              # ONNX benchmarking utilities
+│   ├── pc_compare.py              # PC-level model comparison
+│   ├── visualize_inference.py     # Inference result visualization
 │   ├── aggregate.py, http_receiver.py, http_post.py  # MCP tools
-│   ├── iperf3_bench.sh, ffprobe_probe.sh
 │   ├── make_calib_set.py          # Calibration dataset creation
-│   └── dataset_health_check.py    # Dataset validation
-├── scripts/                       # Automation scripts (46 shell scripts)
+│   ├── prepare_quant_dataset.py   # Quantization dataset preparation
+│   ├── dataset_health_check.py    # Dataset validation
+│   ├── yolo_data_audit.py         # YOLO dataset auditing
+│   ├── find_worst_images.py       # Find problematic images
+│   ├── prepare_coco_person.py     # COCO person subset preparation
+│   ├── prepare_datasets.py        # General dataset preparation
+│   ├── convert_neu_to_yolo.py     # NEU dataset conversion
+│   ├── create_industrial_15cls.py # Industrial dataset creation
+│   ├── balance_industrial_dataset.py  # Dataset balancing
+│   ├── train_yolov8.py            # YOLOv8 training script
+│   └── run_val_with_json.py       # Validation with JSON output
+├── scripts/                       # Automation scripts (49 shell scripts)
 │   ├── run_bench.sh               # MCP benchmark pipeline
 │   ├── run_rknn_sim.py            # PC simulator inference
 │   ├── compare_onnx_rknn.py       # Accuracy comparison
@@ -473,7 +557,8 @@ rk-app/
 │   │   ├── rgmii_driver_config.sh        # RGMII driver configuration
 │   │   └── network_throughput_validator.sh  # 900Mbps validation
 │   ├── profiling/                 # Performance profiling tools
-│   │   └── performance_profiler.py  # CPU/Memory/NPU profiler
+│   │   ├── performance_profiler.py      # CPU/Memory/NPU profiler
+│   │   └── end_to_end_latency.py        # End-to-end latency measurement
 │   ├── benchmark/                 # Performance benchmarks
 │   ├── demo/                      # Demo scripts
 │   ├── reports/                   # Report generators
@@ -870,14 +955,17 @@ print(f"Error: {error_msg}")  # Can't be redirected or disabled
 
 **Codebase Metrics:**
 - **Python modules:** 12 (apps/) + 9 (tests/)
-- **Scripts:** 46 shell scripts (scripts/)
-- **Test cases:** 49 unit tests across 9 test files
+- **Scripts:** 49 shell scripts (scripts/)
+- **Tools:** 24 Python tools (model conversion, benchmarking, evaluation)
+- **Test cases:** 144 total tests across 9 test files
 - **Test coverage:** 88-100% for core modules (93% overall)
-- **Documentation:** 40+ markdown files, 2 Word exports
+- **Documentation:** 72+ markdown files, 1 Word export
 - **Thesis chapters:** 7 chapters + opening report (~18,000 words)
 - **Automation:** 5 slash commands + 5 skills
 - **Evaluation tools:** 3 mAP evaluators (pedestrian, official YOLO, RKNN comparison)
 - **CI/CD:** 7-job GitHub Actions pipeline with automated validation
+- **Flowcharts:** 10 Mermaid project workflow diagrams
+- **Defense Materials:** PPT outline + speech script
 - **Quality Rating:** S-Level (95/100) - High engineering standards
 
 **Model Metrics:**
@@ -896,7 +984,7 @@ print(f"Error: {error_msg}")  # Can't be redirected or disabled
 - **CI/CD:** GitHub Actions with automated testing
 - **Quality Tools:** black, flake8, pylint, mypy, shellcheck
 
-## Current Project Status (as of Nov 19, 2025)
+## Current Project Status (as of Nov 22, 2025)
 
 ### Phase 1 Completed (98%) ✅
 
@@ -931,11 +1019,12 @@ print(f"Error: {error_msg}")  # Can't be redirected or disabled
 **Documentation:**
 - ✅ **Thesis documentation** (7 chapters + opening report, exported to Word)
   - ✅ Opening report (开题报告.docx)
-  - ✅ Complete thesis (RK3588行人检测_毕业设计说明书.docx, 69KB)
   - ✅ All 7 chapters with code examples, tables, diagrams
   - ✅ Chapter 1: Introduction (research background, status, innovations)
   - ✅ Chapter 6: Integration & Validation (system integration, testing)
   - ✅ Chapter 7: Conclusion & Future Work
+- ✅ **Defense materials** (PPT outline + speech script for 12-15 min presentation)
+- ✅ **Workflow diagrams** (10 Mermaid flowcharts for all key processes)
 - ✅ **Technical guides** (CONFIG_GUIDE.md, RGMII documentation, deployment guides)
 - ✅ **Status reports** (S-level completion report, code review report)
 
@@ -968,6 +1057,9 @@ print(f"Error: {error_msg}")  # Can't be redirected or disabled
 - ✅ Opening report (开题报告)
 - ✅ 7 complete thesis chapters (introduction, design, optimization, deployment, performance, integration, conclusion)
 - ✅ Word exports (.docx format) - ready for submission
+- ✅ Defense PPT outline (20-25 slides, 12-15 minutes)
+- ✅ Defense speech script (slide-by-slide notes + Q&A guide)
+- ✅ Project workflow diagrams (10 Mermaid flowcharts)
 - ✅ Technical guides (RGMII, 900Mbps, deployment, CityPersons fine-tuning)
 - ✅ Project status reports (compliance, acceptance, honest assessment)
 - ✅ mAP evaluation pipeline and baseline measurements
