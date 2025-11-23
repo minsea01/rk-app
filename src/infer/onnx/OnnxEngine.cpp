@@ -3,6 +3,7 @@
 #include "log.hpp"
 #include "rkapp/post/Postprocess.hpp"
 #include <algorithm>
+#include <cmath>
 #include <onnxruntime_cxx_api.h>
 
 namespace rkapp::infer {
@@ -16,6 +17,24 @@ struct OnnxEngine::Impl {
   std::vector<std::string> output_names;
   bool use_cuda = false;
 
+  static bool resolve_layout(const std::vector<int64_t>& shape, int& N, int& C) {
+    if (shape.size() == 3) {
+      const int64_t d1 = shape[1];
+      const int64_t d2 = shape[2];
+      if (d1 >= 4 && d1 <= 4096 && d2 > d1) { C = static_cast<int>(d1); N = static_cast<int>(d2); return true; }
+      if (d2 >= 4 && d2 <= 4096 && d1 > d2) { C = static_cast<int>(d2); N = static_cast<int>(d1); return true; }
+      if (d1 >= 4 && d2 >= 4) { C = static_cast<int>(std::min(d1, d2)); N = static_cast<int>(std::max(d1, d2)); return true; }
+      return false;
+    }
+    if (shape.size() == 2) {
+      const int64_t d1 = shape[0];
+      const int64_t d2 = shape[1];
+      if (d2 >= 4) { N = static_cast<int>(d1); C = static_cast<int>(d2); return true; }
+      if (d1 >= 4) { N = static_cast<int>(d2); C = static_cast<int>(d1); return true; }
+    }
+    return false;
+  }
+
   static std::vector<Detection> parseOutput(Ort::Value& output,
                                             const rkapp::preprocess::LetterboxInfo& letterbox_info,
                                             cv::Size original_size,
@@ -24,80 +43,74 @@ struct OnnxEngine::Impl {
     auto shape = output.GetTensorTypeAndShapeInfo().GetShape();
     float* data = output.GetTensorMutableData<float>();
 
-    // Handle different output formats
-    int num_detections = 0;
-    int num_classes = 0;
-    if (shape.size() == 3) {
-      if (shape[1] < 20) { // e.g., (1,8,8400)
-        num_detections = static_cast<int>(shape[2]);
-        num_classes = static_cast<int>(shape[1] - 4);
-      } else if (shape[1] > shape[2]) { // (1,84,8400)
-        num_detections = static_cast<int>(shape[2]);
-        num_classes = static_cast<int>(shape[1] - 4);
-      } else { // (1,8400,84)
-        num_detections = static_cast<int>(shape[1]);
-        num_classes = static_cast<int>(shape[2] - 4);
-      }
-    }
-
-    if (num_detections <= 0 || num_classes < 0) {
+    int N = 0, C = 0;
+    if (!resolve_layout(shape, N, C)) {
+      LOGW("OnnxEngine: unsupported output shape");
       return detections;
     }
 
-    int limit = num_detections;
-    if (params.max_boxes > 0) {
-      limit = std::min(limit, params.max_boxes);
+    bool channels_first = false;
+    if (shape.size() == 3) {
+      const int64_t d1 = shape[1], d2 = shape[2];
+      channels_first = (d1 == C && d2 == N); // (1, C, N)
+    } else if (shape.size() == 2) {
+      channels_first = false; // assume (N, C)
     }
 
+    auto at = [&](int c, int i) -> float {
+      if (channels_first) return data[c * N + i];
+      return data[i * C + c];
+    };
+
+    const bool has_objness = (C - 5) >= 1;
+    const int cls_offset = has_objness ? 5 : 4;
+    const int num_classes = std::max(0, C - cls_offset);
+    if (num_classes <= 0) {
+      LOGW("OnnxEngine: invalid class channel count");
+      return detections;
+    }
+
+    auto sigmoid = [](float x) { return 1.0f / (1.0f + std::exp(-x)); };
+
+    int limit = N;
+    if (params.max_boxes > 0) limit = std::min(limit, params.max_boxes);
+
     for (int i = 0; i < limit; i++) {
-      float cx, cy, w, h;
-      if (shape[1] < 20) {
-        cx = data[0 * num_detections + i];
-        cy = data[1 * num_detections + i];
-        w = data[2 * num_detections + i];
-        h = data[3 * num_detections + i];
-      } else if (shape[1] > shape[2]) {
-        cx = data[0 * num_detections + i];
-        cy = data[1 * num_detections + i];
-        w = data[2 * num_detections + i];
-        h = data[3 * num_detections + i];
-      } else {
-        int offset = i * (num_classes + 4);
-        cx = data[offset + 0];
-        cy = data[offset + 1];
-        w = data[offset + 2];
-        h = data[offset + 3];
+      // layout: [cx, cy, w, h, (obj), cls...]
+      const float cx = at(0, i);
+      const float cy = at(1, i);
+      const float w  = at(2, i);
+      const float h  = at(3, i);
+
+      float obj = 1.0f;
+      if (has_objness) obj = sigmoid(at(4, i));
+
+      float best_conf = 0.0f;
+      int best_cls = 0;
+      for (int c = 0; c < num_classes; ++c) {
+        float conf = sigmoid(at(cls_offset + c, i));
+        if (conf > best_conf) { best_conf = conf; best_cls = c; }
       }
 
-      float max_conf = 0.0f;
-      int best_class = 0;
-      for (int c = 0; c < num_classes; c++) {
-        float conf;
-        if (shape[1] < 20) conf = data[(4 + c) * num_detections + i];
-        else if (shape[1] > shape[2]) conf = data[(4 + c) * num_detections + i];
-        else { int offset = i * (num_classes + 4); conf = data[offset + 4 + c]; }
-        if (conf > max_conf) { max_conf = conf; best_class = c; }
-      }
+      const float combined = obj * best_conf;
+      if (combined < params.conf_thres) continue;
 
-      if (max_conf >= params.conf_thres) {
-        Detection det;
-        float scale = letterbox_info.scale, dx = letterbox_info.dx, dy = letterbox_info.dy;
-        det.x = (cx - w/2 - dx) / scale;
-        det.y = (cy - h/2 - dy) / scale;
-        det.w = w / scale;
-        det.h = h / scale;
-        det.x = std::max(0.0f, std::min(det.x, (float)original_size.width));
-        det.y = std::max(0.0f, std::min(det.y, (float)original_size.height));
-        det.w = std::max(0.0f, std::min(det.w, (float)original_size.width - det.x));
-        det.h = std::max(0.0f, std::min(det.h, (float)original_size.height - det.y));
-        det.confidence = max_conf;
-        det.class_id = best_class;
-        det.class_name = "class_" + std::to_string(best_class);
-        detections.push_back(det);
-        if (params.max_boxes > 0 && static_cast<int>(detections.size()) >= params.max_boxes) {
-          break;
-        }
-      }
+      Detection det;
+      const float scale = letterbox_info.scale;
+      const float dx = letterbox_info.dx;
+      const float dy = letterbox_info.dy;
+      det.x = (cx - w / 2.0f - dx) / scale;
+      det.y = (cy - h / 2.0f - dy) / scale;
+      det.w = w / scale;
+      det.h = h / scale;
+      det.x = std::max(0.0f, std::min(det.x, static_cast<float>(original_size.width)));
+      det.y = std::max(0.0f, std::min(det.y, static_cast<float>(original_size.height)));
+      det.w = std::max(0.0f, std::min(det.w, static_cast<float>(original_size.width) - det.x));
+      det.h = std::max(0.0f, std::min(det.h, static_cast<float>(original_size.height) - det.y));
+      det.confidence = combined;
+      det.class_id = best_cls;
+      det.class_name = "class_" + std::to_string(best_cls);
+      detections.push_back(det);
     }
     return detections;
   }

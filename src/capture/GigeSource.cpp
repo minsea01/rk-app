@@ -449,6 +449,15 @@ bool GigeSource::createPipeline() {
     return false;
   }
 
+  // Bound the wait for READY->PLAYING to avoid hanging the capture loop
+  GstStateChangeReturn wait_ret =
+      gst_element_get_state(pipeline_, nullptr, nullptr, 2 * GST_SECOND);
+  if (wait_ret != GST_STATE_CHANGE_SUCCESS && wait_ret != GST_STATE_CHANGE_NO_PREROLL) {
+    LOGE("GigeSource: pipeline failed to reach PLAYING within timeout (ret=", wait_ret, ")");
+    destroyPipeline();
+    return false;
+  }
+
   opened_ = true;
   consecutive_failures_ = 0;
   return true;

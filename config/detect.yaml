@@ -1,0 +1,93 @@
+# 行人检测配置文件（用于RK3588板端推理）
+
+# 推理引擎配置
+engine:
+  type: rknn  # 或 onnx（PC测试用）
+  model: artifacts/models/pedestrian_416.rknn
+  input_size: [416, 416]
+
+nms:
+  conf_thres: 0.25
+  iou_thres: 0.45
+  topk: 200
+  min_box_size: 20
+  aspect_ratio_range: [0.3, 5.0]
+
+# 类别配置
+classes:
+  num_classes: 1
+  names:
+    - person
+  # person类别专用阈值（可调整）
+  conf_threshold: 0.25   # 置信度阈值
+  nms_threshold: 0.45    # NMS阈值
+
+# 后处理配置
+postprocess:
+  # YOLO解码参数
+  strides: [8, 16, 32]
+  num_anchors: 3
+  reg_max: 16  # DFL channels
+  
+  # 置信度与NMS
+  conf_threshold: 0.25
+  nms_threshold: 0.45
+  max_detections: 100  # 每张图最多保留100个检测框
+  
+  # 行人检测特定优化
+  min_box_size: 20     # 最小框尺寸（像素）
+  aspect_ratio_range: [0.3, 5.0]  # 行人长宽比范围
+
+# 输入源配置
+input:
+  type: gige  # gige / video / image
+  
+  # GigE相机配置
+  gige:
+    pipeline: "rtspsrc location=rtsp://192.168.1.10:8554/stream ! rtph264depay ! h264parse ! avdec_h264 ! videoconvert ! appsink"
+    width: 1920
+    height: 1080
+    format: RGB  # RGB / GRAY8
+    
+  # 视频文件配置（调试用）
+  video:
+    path: "test_videos/pedestrian.mp4"
+    
+  # 图像文件配置（调试用）
+  image:
+    path: "test_images/pedestrian.jpg"
+
+# 输出配置
+output:
+  type: tcp  # tcp / file / display
+  
+  # TCP输出（网口2）
+  tcp:
+    host: "192.168.2.100"
+    port: 5000
+    format: json
+    retry_max: 3
+    retry_interval: 1000  # ms
+    queue: 64            # 本地发送队列深度
+  
+  # 文件输出（调试用）
+  file:
+    path: "output/detections.json"
+    
+  # 可视化显示（调试用）
+  display:
+    enable: true
+    window_name: "Pedestrian Detection"
+
+# 性能配置
+performance:
+  num_threads: 4       # 推理线程数
+  batch_size: 1        # RK3588推荐batch=1
+  queue_size: 4        # 帧缓冲队列
+  target_fps: 30       # 目标FPS
+
+# 日志配置
+logging:
+  level: info  # debug / info / warn / error
+  file: "logs/pedestrian_detection.log"
+  console: true
