@@ -42,5 +42,6 @@ pyparsing==3.2.3
 python-dateutil==2.9.0.post0
 packaging==25.0
 six==1.17.0
+pandas>=1.5.0
 setuptools==80.9.0
 wheel==0.45.1
