@@ -98,8 +98,14 @@ Config loadConfig(const std::string& config_path) {
                 config.engine_type = yaml["engine"]["type"].as<std::string>("onnx");
                 config.model_path = yaml["engine"]["model"].as<std::string>("");
                 config.imgsz = yaml["engine"]["imgsz"].as<int>(640);
+                if (yaml["engine"]["input_size"] && yaml["engine"]["input_size"].IsSequence()) {
+                    const auto& s = yaml["engine"]["input_size"];
+                    if (!s.empty()) {
+                        config.imgsz = s[0].as<int>(config.imgsz);
+                    }
+                }
             }
-            
+
             if (yaml["nms"]) {
                 config.conf_thres = yaml["nms"]["conf_thres"].as<float>(0.25f);
                 config.iou_thres = yaml["nms"]["iou_thres"].as<float>(0.60f);
@@ -122,6 +128,27 @@ Config loadConfig(const std::string& config_path) {
                 }
                 if (post["conf_threshold"]) config.conf_thres = post["conf_threshold"].as<float>(config.conf_thres);
                 if (post["nms_threshold"]) config.iou_thres = post["nms_threshold"].as<float>(config.iou_thres);
+            }
+
+            // Alternate schema: input.* (used by detect_pedestrian.yaml)
+            if (yaml["input"]) {
+                const auto& input = yaml["input"];
+                if (input["type"]) {
+                    config.source_type = input["type"].as<std::string>(config.source_type);
+                }
+                auto try_assign = [&](const YAML::Node& node, const std::string& key) {
+                    if (node && node[key]) config.source_uri = node[key].as<std::string>(config.source_uri);
+                };
+                if (config.source_type == "gige") {
+                    try_assign(input["gige"], "pipeline");
+                    if (config.source_uri.empty()) try_assign(input, "pipeline");
+                } else if (config.source_type == "video" || config.source_type == "rtsp") {
+                    try_assign(input["video"], "path");
+                    if (config.source_uri.empty()) try_assign(input, "path");
+                } else if (config.source_type == "image" || config.source_type == "folder") {
+                    try_assign(input["image"], "path");
+                    if (config.source_uri.empty()) try_assign(input, "path");
+                }
             }
 
             if (yaml["perf"]) {
@@ -331,6 +358,13 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
+    // Propagate decode/NMS thresholds into the engine to avoid mismatched configs
+    rkapp::infer::DecodeParams decode_params;
+    decode_params.conf_thres = config.conf_thres;
+    decode_params.iou_thres = config.iou_thres;
+    decode_params.max_boxes = config.nms_topk;
+    engine->setDecodeParams(decode_params);
+
     // Warmup
     LOGI("Warmup x", config.warmup, "...");
     for (int i = 0; i < config.warmup; ++i) {
@@ -365,16 +399,6 @@ int main(int argc, char* argv[]) {
         class_names = rkapp::post::Postprocess::loadClassNames(config.classes_path);
     }
 
-    rkapp::post::NMSConfig nms_config;
-    nms_config.conf_thres = config.conf_thres;
-    nms_config.iou_thres = config.iou_thres;
-    nms_config.max_det = config.nms_topk > 0 ? config.nms_topk : 1000;
-    nms_config.topk = config.nms_topk;
-    nms_config.min_box_size = config.min_box_size;
-    nms_config.max_box_size = config.max_box_size;
-    nms_config.min_aspect_ratio = config.min_aspect_ratio;
-    nms_config.max_aspect_ratio = config.max_aspect_ratio;
-    
     LOGI("=== Starting Detection Loop ===");
     LOGI("Pipeline created successfully (STUB MODE)");
     LOGI("Ready to process frames from: ", config.source_uri);
@@ -390,8 +414,7 @@ int main(int argc, char* argv[]) {
         // Inference (engine handles its own letterbox consistently)
         std::vector<rkapp::infer::Detection> detections = engine->infer(frame);
         
-        // Postprocess
-        detections = rkapp::post::Postprocess::nms(detections, nms_config);
+        // Postprocess (class-name mapping only; NMS is handled inside the engine)
         rkapp::post::Postprocess::mapClassNames(detections, class_names);
         
         auto end_time = std::chrono::high_resolution_clock::now();
@@ -453,7 +476,6 @@ int main(int argc, char* argv[]) {
 
         auto start_time = std::chrono::high_resolution_clock::now();
         std::vector<rkapp::infer::Detection> detections = engine->infer(it.img);
-        detections = rkapp::post::Postprocess::nms(detections, nms_config);
         rkapp::post::Postprocess::mapClassNames(detections, class_names);
         auto end_time = std::chrono::high_resolution_clock::now();
         auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time);

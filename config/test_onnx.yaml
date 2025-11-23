@@ -1,0 +1,23 @@
+engine:
+  type: onnx
+  model: yolo11n.onnx
+  input_size: [640, 640]
+
+nms:
+  conf_thres: 0.25
+  iou_thres: 0.45
+
+classes:
+  path: data/coco80.names
+
+source:
+  type: folder
+  uri: assets
+
+output:
+  type: file
+  file:
+    path: output/test_result.json
+
+logging:
+  level: info

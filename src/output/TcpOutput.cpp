@@ -16,6 +16,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 #include <system_error>
+#include <poll.h>
 
 #include "log.hpp"
 
@@ -292,6 +293,11 @@ bool TcpOutput::setup_socket() {
             return false;
         }
 
+        int flags = fcntl(socket_fd_, F_GETFL, 0);
+        if (flags >= 0) {
+            fcntl(socket_fd_, F_SETFL, flags | O_NONBLOCK);
+        }
+
         int flag = 1;
         if (setsockopt(socket_fd_, IPPROTO_TCP, TCP_NODELAY, &flag, sizeof(flag)) != 0) {
             LOGW("TcpOutput: TCP_NODELAY failed (errno=", errno, ")");
@@ -334,29 +340,53 @@ bool TcpOutput::setup_socket() {
             return false;
         }
 
-        if (::connect(socket_fd_, reinterpret_cast<sockaddr*>(&server_addr_), sizeof(server_addr_)) == 0) {
-            tcp_connected_.store(true);
-            has_reconnect_attempt_ = false;
-            reconnect_backoff_ = reconnect_backoff_initial_;
-            LOGI("TcpOutput: connected to ", server_ip_, ":", server_port_);
-
-            if (const char* env_snd = std::getenv("RKAPP_TCP_SNDBUF")) {
-                const int sz = std::atoi(env_snd);
-                if (sz > 0 && setsockopt(socket_fd_, SOL_SOCKET, SO_SNDBUF, &sz, sizeof(sz)) == 0) {
-                    LOGI("TcpOutput: SO_SNDBUF set to ", sz);
-                }
-            }
-
-            int flags = fcntl(socket_fd_, F_GETFL, 0);
-            if (flags >= 0) {
-                fcntl(socket_fd_, F_SETFL, flags | O_NONBLOCK);
-            }
-        } else {
-            LOGW("TcpOutput: connect to ", server_ip_, ":", server_port_,
-                 " failed (errno=", errno, ")");
+        const int conn_res = ::connect(socket_fd_, reinterpret_cast<sockaddr*>(&server_addr_), sizeof(server_addr_));
+        if (conn_res != 0 && errno != EINPROGRESS) {
+            LOGW("TcpOutput: connect to ", server_ip_, ":", server_port_, " failed (errno=", errno, ")");
             tcp_connected_.store(false);
             closeSocket();
             return false;
+        }
+
+        // Wait for connect with bounded timeout to avoid blocking the pipeline.
+        bool connected = false;
+        if (conn_res == 0) {
+            connected = true;
+        } else {
+            pollfd pfd{};
+            pfd.fd = socket_fd_;
+            pfd.events = POLLOUT;
+            const int timeout_ms = 500; // short timeout to keep pipeline responsive
+            int rc = ::poll(&pfd, 1, timeout_ms);
+            if (rc > 0 && (pfd.revents & POLLOUT)) {
+                int so_error = 0;
+                socklen_t len = sizeof(so_error);
+                if (getsockopt(socket_fd_, SOL_SOCKET, SO_ERROR, &so_error, &len) == 0 && so_error == 0) {
+                    connected = true;
+                } else {
+                    LOGW("TcpOutput: connect SO_ERROR=", so_error);
+                }
+            } else {
+                LOGW("TcpOutput: connect timeout after ", timeout_ms, "ms");
+            }
+        }
+
+        if (!connected) {
+            tcp_connected_.store(false);
+            closeSocket();
+            return false;
+        }
+
+        tcp_connected_.store(true);
+        has_reconnect_attempt_ = false;
+        reconnect_backoff_ = reconnect_backoff_initial_;
+        LOGI("TcpOutput: connected to ", server_ip_, ":", server_port_);
+
+        if (const char* env_snd = std::getenv("RKAPP_TCP_SNDBUF")) {
+            const int sz = std::atoi(env_snd);
+            if (sz > 0 && setsockopt(socket_fd_, SOL_SOCKET, SO_SNDBUF, &sz, sizeof(sz)) == 0) {
+                LOGI("TcpOutput: SO_SNDBUF set to ", sz);
+            }
         }
 
         return true;

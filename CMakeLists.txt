@@ -34,43 +34,10 @@ set(CMAKE_BUILD_WITH_INSTALL_RPATH FALSE)
 set(CMAKE_INSTALL_RPATH "$ORIGIN;$ORIGIN/../lib")
 set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
 
-# 主程序
-add_executable(rk_app src/main.cpp)
-if(YAML_CPP_FOUND)
-  target_link_libraries(rk_app PRIVATE ${YAML_CPP_LIBRARIES})
-  target_include_directories(rk_app PRIVATE ${YAML_CPP_INCLUDE_DIRS})
-  target_compile_definitions(rk_app PRIVATE RKAPP_HAVE_YAMLCPP=1)
-else()
-  message(WARNING "yaml-cpp not found; rk_app will use minimal fallback config parser")
-endif()
-
-# 示例算法库: PID
-add_library(pid_lib src/pid.cpp include/pid.h)
-target_include_directories(pid_lib PUBLIC include)
-
-# 链接库到主程序
-target_link_libraries(rk_app PRIVATE pid_lib)
-
-# C 版 PID 控制器库（来自嵌入式实现，提供 micros() 适配）
-add_library(pid_controller_c STATIC
-  src/pid_controller.c
-  src/drivers/time_service.c
-)
-target_include_directories(pid_controller_c PUBLIC include)
-if(UNIX)
-  target_link_libraries(pid_controller_c PUBLIC m)
-endif()
-# 链接到主程序（即使未直接调用也保证编译通过）
-target_link_libraries(rk_app PRIVATE pid_controller_c)
-
-# 基准测试（x86 主机上评估 PID 性能/数值指标）
-add_executable(pid_bench bench/bench_pid.cpp)
-target_link_libraries(pid_bench PRIVATE pid_lib pid_controller_c)
-target_include_directories(pid_bench PRIVATE include)
-install(TARGETS pid_bench RUNTIME DESTINATION bin)
+# 主程序 (已移除 rk_app 及其 PID 依赖)
 
 # 安装
-install(TARGETS rk_app RUNTIME DESTINATION bin)
+# install(TARGETS rk_app RUNTIME DESTINATION bin OPTIONAL)
 
 # 测试配置（默认仅在非交叉编译时启用）。在受限网络下禁用自动拉取。
 option(ENABLE_TESTS "Enable building tests" ON)
@@ -102,13 +69,8 @@ if(BUILD_TESTING AND ENABLE_TESTS AND NOT CMAKE_CROSSCOMPILING)
   endif()
 
   if(GTest_FOUND OR TARGET GTest::gtest_main)
-    add_executable(pid_tests tests/test_pid.cpp)
-    if(TARGET GTest::gtest_main)
-      target_link_libraries(pid_tests PRIVATE GTest::gtest GTest::gtest_main pid_lib)
-    else()
-      target_link_libraries(pid_tests PRIVATE GTest::GTest GTest::Main pid_lib)
-    endif()
-    add_test(NAME pid_tests COMMAND pid_tests)
+    # PID tests removed
+
 
     add_executable(rknn_decode_tests tests/test_rknn_decode.cpp)
     target_link_libraries(rknn_decode_tests PRIVATE rkapp_decode_utils)
@@ -141,6 +103,11 @@ if(BUILD_TESTING AND ENABLE_TESTS AND NOT CMAKE_CROSSCOMPILING)
 endif()
 
 # Object Detection Pipeline Libraries
+# Add common Debian/Ubuntu multiarch OpenCV config paths so IDEs (no env) can find package
+list(APPEND CMAKE_PREFIX_PATH
+  /usr/lib/x86_64-linux-gnu/cmake/opencv4
+  /usr/lib/aarch64-linux-gnu/cmake/opencv4
+)
 find_package(OpenCV REQUIRED)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(YAML_CPP yaml-cpp)
