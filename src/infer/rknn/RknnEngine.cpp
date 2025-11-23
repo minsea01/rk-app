@@ -262,15 +262,24 @@ std::vector<Detection> RknnEngine::infer(const cv::Mat& image){
   const bool use_dfl = (!force_raw) && (force_dfl || C >= 4 * reg_max);
 
   if (use_dfl) {
+    if (model_meta_.strides.empty() || model_meta_.reg_max <= 0) {
+      LOGE("RknnEngine: DFL decode requires metadata (strides/reg_max/head) alongside the .rknn model");
+      return {};
+    }
     // DFL path
     int cls_ch = C - 4 * reg_max;
     if (num_classes_ < 0) num_classes_ = cls_ch;
-    // Prepare strides and per-anchor stride map for imgsz=input_size_
-    std::vector<int> strides = model_meta_.strides.empty() ? std::vector<int>{8, 16, 32} : model_meta_.strides;
+    // Require stride metadata to avoid heuristic mis-decodes
+    std::vector<int> strides = model_meta_.strides;
     const bool resolved = resolve_stride_set(input_size_, N, strides);
+    if (!resolved || strides.empty()) {
+      LOGE("RknnEngine: missing/invalid stride metadata for DFL decode (anchors=", N, ", img_size=", input_size_, ")");
+      return {};
+    }
     AnchorLayout layout = build_anchor_layout(input_size_, N, strides);
-    if (!layout.valid || !resolved) {
-      LOGW("RknnEngine: Anchor layout derived heuristically; results may be less accurate (N=", N, ")");
+    if (!layout.valid) {
+      LOGE("RknnEngine: anchor layout invalid for provided strides");
+      return {};
     }
 
     // Decode distributions to l,t,r,b
