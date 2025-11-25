@@ -97,7 +97,7 @@ def main():
     logger.info(f'Preprocessing image to NHWC format (target_size={args.imgsz})')
     try:
         inp = preprocess_from_array_rknn_sim(img, target_size=args.imgsz)
-    except Exception as e:
+    except (ValueError, TypeError, cv2.error) as e:
         rk.release()
         raise PreprocessError(f'Image preprocessing failed: {e}') from e
 
@@ -107,7 +107,7 @@ def main():
         st = time.time()
         outputs = rk.inference(inputs=[inp], data_format='nhwc')
         dt = (time.time() - st) * 1000
-    except Exception as e:
+    except (RuntimeError, ValueError) as e:
         rk.release()
         raise InferenceError(f'RKNN inference failed: {e}') from e
 
@@ -133,8 +133,8 @@ if __name__ == '__main__':
     try:
         sys.exit(main())
     except (ModelLoadError, ConfigurationError, InferenceError, PreprocessError) as e:
-        logger.error(f"PC simulator inference failed: {e}", exc_info=True)
+        logger.error(f"PC simulator inference failed: {e}")
         sys.exit(1)
-    except Exception as e:
-        logger.error(f"Unexpected error: {e}", exc_info=True)
-        sys.exit(1)
+    except KeyboardInterrupt:
+        logger.info("Interrupted by user")
+        sys.exit(130)

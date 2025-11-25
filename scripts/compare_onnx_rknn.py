@@ -32,14 +32,14 @@ def run_onnx_inference(model_path, img_path):
 
     try:
         sess = ort.InferenceSession(str(model_path))
-    except Exception as e:
+    except (RuntimeError, ValueError, FileNotFoundError) as e:
         raise ModelLoadError(f"Failed to load ONNX model {model_path}: {e}") from e
 
     try:
         inp = preprocess_onnx(img_path, target_size=416)
         outputs = sess.run(None, {sess.get_inputs()[0].name: inp})
         return outputs[0]
-    except Exception as e:
+    except (RuntimeError, ValueError, TypeError) as e:
         raise InferenceError(f"ONNX inference failed for {img_path}: {e}") from e
 
 def run_rknn_inference(model_path, img_path):
@@ -83,7 +83,7 @@ def run_rknn_inference(model_path, img_path):
         return outputs[0]
     except (ConfigurationError, ModelLoadError, InferenceError):
         raise  # Re-raise custom exceptions
-    except Exception as e:
+    except (RuntimeError, ValueError, TypeError) as e:
         rk.release()
         raise InferenceError(f"RKNN inference failed for {img_path}: {e}") from e
 
@@ -148,7 +148,7 @@ def main():
             all_stats.append(stats)
 
             logger.info(f"  Max diff: {stats['max_abs_diff']:.6f}, Mean diff: {stats['mean_abs_diff']:.6f}")
-        except Exception as e:
+        except (ModelLoadError, ConfigurationError, InferenceError) as e:
             logger.warning(f"  Failed to process {img_path.name}: {e}")
 
     if not all_stats:
@@ -184,7 +184,7 @@ def main():
     try:
         with open(output_file, 'w') as f:
             json.dump({'summary': summary, 'details': all_stats}, f, indent=2)
-    except Exception as e:
+    except (IOError, OSError, TypeError) as e:
         raise ConfigurationError(f"Failed to write comparison results: {e}") from e
 
     logger.info(f'\nDetailed results saved to: {output_file}')
@@ -195,8 +195,8 @@ if __name__ == '__main__':
     try:
         sys.exit(main())
     except (ModelLoadError, ConfigurationError, InferenceError, ValidationError) as e:
-        logger.error(f"Comparison failed: {e}", exc_info=True)
+        logger.error(f"Comparison failed: {e}")
         sys.exit(1)
-    except Exception as e:
-        logger.error(f"Unexpected error: {e}", exc_info=True)
-        sys.exit(1)
+    except KeyboardInterrupt:
+        logger.info("Interrupted by user")
+        sys.exit(130)

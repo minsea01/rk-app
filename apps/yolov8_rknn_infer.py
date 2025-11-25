@@ -122,9 +122,11 @@ def main():
     try:
         from rknnlite.api import RKNNLite
     except ImportError as e:
-        raise SystemExit(f"rknn-toolkit-lite2 not installed on device. pip install rknn-toolkit-lite2. Error: {e}")
-    except (AttributeError, TypeError) as e:
-        raise SystemExit(f"rknn-toolkit-lite2 version incompatible. Error: {e}")
+        raise SystemExit(
+            f"rknn-toolkit-lite2 not installed on device.\n"
+            f"Install with: pip install rknn-toolkit-lite2\n"
+            f"Error: {e}"
+        )
 
     rknn = RKNNLite()
 
@@ -137,8 +139,10 @@ def main():
         ret = rknn.load_rknn(str(args.model))
         if ret != 0:
             raise ModelLoadError(f'Failed to load RKNN model: {args.model}')
-    except Exception as e:
-        raise ModelLoadError(f'Error loading RKNN model: {e}')
+    except ModelLoadError:
+        raise
+    except (IOError, OSError) as e:
+        raise ModelLoadError(f'Error reading RKNN model file: {e}') from e
 
     # Initialize runtime
     logger.info('Initializing runtime, core_mask=%s', hex(args.core_mask))
@@ -146,8 +150,10 @@ def main():
         ret = rknn.init_runtime(core_mask=args.core_mask)
         if ret != 0:
             raise RKNNError(f'Failed to initialize RKNN runtime with core_mask={hex(args.core_mask)}')
-    except Exception as e:
-        raise RKNNError(f'Error initializing RKNN runtime: {e}')
+    except RKNNError:
+        raise
+    except RuntimeError as e:
+        raise RKNNError(f'RKNN runtime initialization error: {e}') from e
 
     class_names = load_labels(args.names)
 
@@ -160,8 +166,8 @@ def main():
             img, r, d = letterbox(img0, args.imgsz)
         except PreprocessError:
             raise
-        except Exception as e:
-            raise PreprocessError(f'Error preprocessing image: {e}')
+        except (cv2.error, ValueError) as e:
+            raise PreprocessError(f'Error preprocessing image: {e}') from e
 
         # Run inference
         # RKNN preproc set to BGR->RGB and /255 in conversion; feed BGR uint8
@@ -169,8 +175,8 @@ def main():
         t0 = time.time()
         try:
             outputs = rknn.inference(inputs=[input_data])
-        except Exception as e:
-            raise InferenceError(f'RKNN inference failed: {e}')
+        except (RuntimeError, ValueError) as e:
+            raise InferenceError(f'RKNN inference failed: {e}') from e
         dt = (time.time() - t0) * 1000
         logger.info('Inference time: %.2f ms', dt)
         pred = outputs[0]
@@ -204,14 +210,15 @@ def main():
         while True:
             ret, img0 = cap.read()
             if not ret:
+                logger.info("Video capture ended")
                 break
             try:
                 img, r, d = letterbox(img0, args.imgsz)
                 t0 = time.time()
                 outputs = rknn.inference(inputs=[img])
                 pred = outputs[0]
-            except Exception as e:
-                logger.warning('Inference error: %s', e)
+            except (cv2.error, RuntimeError, ValueError) as e:
+                logger.warning('Inference error (skipping frame): %s', e)
                 continue
             if pred.ndim == 2:
                 pred = pred[None, ...]
@@ -231,9 +238,9 @@ def main():
     except PreprocessError:
         # Re-raise preprocessing errors
         raise
-    except Exception as e:
-        # Wrap unexpected errors
-        raise PreprocessError(f'Camera processing error: {e}')
+    except (cv2.error, RuntimeError) as e:
+        # Wrap known errors that can occur during video processing
+        raise PreprocessError(f'Camera processing error: {e}') from e
     finally:
         # Always clean up resources
         if cap is not None:

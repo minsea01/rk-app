@@ -86,15 +86,16 @@ def main():
         logger.info("Shutting down HTTP receiver")
         httpd.shutdown()
         return 0
-    except Exception as e:
+    except (OSError, IOError) as e:
         raise ConfigurationError(f"HTTP server error: {e}") from e
+
 
 if __name__ == '__main__':
     try:
         sys.exit(main())
     except ConfigurationError as e:
-        logger.error(f"HTTP receiver failed: {e}", exc_info=True)
+        logger.error(f"HTTP receiver failed: {e}")
         sys.exit(1)
-    except Exception as e:
-        logger.error(f"Unexpected error: {e}", exc_info=True)
-        sys.exit(1)
+    except KeyboardInterrupt:
+        logger.info("Interrupted by user")
+        sys.exit(130)

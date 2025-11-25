@@ -38,7 +38,7 @@ def _import_yaml():
     try:
         import yaml  # type: ignore
         return yaml
-    except Exception as exc:  # pragma: no cover - defensive
+    except ImportError as exc:  # pragma: no cover - defensive
         print("[WARN] PyYAML not found. Install with: pip install pyyaml", file=sys.stderr)
         raise exc
 
@@ -147,7 +147,7 @@ class LabelAudit:
 def _read_label_file(path: Path) -> List[str]:
     try:
         return path.read_text().splitlines()
-    except Exception:
+    except (IOError, OSError, UnicodeDecodeError):
         return []
 
 
@@ -195,7 +195,7 @@ def audit_split(images_dir: Path, labels_dir: Path, names: Sequence[str]) -> Lab
 
             try:
                 cx, cy, w, h = map(float, parts[1:5])
-            except Exception:
+            except (ValueError, TypeError):
                 format_errors.append(f"{label_path}:{li}: non-float box coords in: '{line}'")
                 continue
 
@@ -234,7 +234,7 @@ def _xywhn_to_xyxy(px: int, py: int, cx: float, cy: float, bw: float, bh: float)
 def draw_overlays(images_dir: Path, labels_dir: Path, names: Sequence[str], out_dir: Path, max_images: int = 24) -> None:
     try:
         import cv2  # type: ignore
-    except Exception:  # pragma: no cover
+    except ImportError:  # pragma: no cover
         print("[WARN] OpenCV not available, skipping overlays. Install opencv-python-headless.", file=sys.stderr)
         return
 
@@ -260,7 +260,7 @@ def draw_overlays(images_dir: Path, labels_dir: Path, names: Sequence[str], out_
             try:
                 cls_id = int(parts[0])
                 cx, cy, bw, bh = map(float, parts[1:5])
-            except Exception:
+            except (ValueError, TypeError, IndexError):
                 continue
             x1, y1, x2, y2 = _xywhn_to_xyxy(w, h, cx, cy, bw, bh)
             color = (0, 255, 0)
@@ -276,7 +276,7 @@ def draw_overlays(images_dir: Path, labels_dir: Path, names: Sequence[str], out_
 def run_yolo_val(model_path: Path, data_yaml: Path, imgsz: int, device: str, conf: float, iou: float, project: Optional[Path], name: Optional[str]) -> None:
     try:
         from ultralytics import YOLO  # type: ignore
-    except Exception:  # pragma: no cover
+    except ImportError:  # pragma: no cover
         print("[WARN] ultralytics not available. Skipping val. Install with: pip install ultralytics", file=sys.stderr)
         return
     model = YOLO(str(model_path))
@@ -304,8 +304,8 @@ def autodetect_defaults(project_root: Path) -> Tuple[Optional[Path], Optional[Pa
             cfg = yaml.safe_load(latest_args.read_text())
             if isinstance(cfg.get("data"), str):
                 data_yaml = _resolve(cfg["data"])  # type: ignore
-        except Exception:
-            pass
+        except (IOError, OSError, ValueError, ImportError):
+            pass  # Ignore failures to parse args.yaml
     best = find_latest_match(project_root / "runs" / "detect", "**/weights/best.pt")
     last = find_latest_match(project_root / "runs" / "detect", "**/weights/last.pt")
     weight = best or last

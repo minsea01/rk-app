@@ -74,7 +74,7 @@ class PerformanceValidator:
             logger.info(f"Execution providers: {self.session.get_providers()}")
             return True
 
-        except Exception as e:
+        except (RuntimeError, ValueError, FileNotFoundError) as e:
             logger.error(f"Failed to load model: {e}")
             return False
 
@@ -126,7 +126,7 @@ class PerformanceValidator:
             try:
                 _ = postprocess_yolov8(outputs[0], self.imgsz, conf_thres=0.5)
                 postproc_time = (time.perf_counter() - postproc_start) * 1000
-            except Exception as e:
+            except (ValueError, TypeError, IndexError) as e:
                 logger.warning(f"Postprocessing error: {e}")
                 postproc_time = 0
 

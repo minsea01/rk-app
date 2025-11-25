@@ -33,7 +33,7 @@ def main():
     try:
         with open(args.file, 'r', encoding='utf-8') as f:
             payload = f.read().encode('utf-8')
-    except Exception as e:
+    except (IOError, OSError, UnicodeDecodeError) as e:
         raise ConfigurationError(f"Failed to read payload file: {e}") from e
 
     # Validate JSON format
@@ -58,15 +58,16 @@ def main():
         raise ConfigurationError(f"Failed to reach {args.url}: {e.reason}") from e
     except TimeoutError as e:
         raise ConfigurationError(f"Request timeout after 5s: {e}") from e
-    except Exception as e:
-        raise ConfigurationError(f"Failed to send POST request: {e}") from e
+    except (ConnectionError, OSError) as e:
+        raise ConfigurationError(f"Network error during POST request: {e}") from e
+
 
 if __name__ == '__main__':
     try:
         sys.exit(main())
     except (ConfigurationError, ValidationError) as e:
-        logger.error(f"HTTP POST failed: {e}", exc_info=True)
+        logger.error(f"HTTP POST failed: {e}")
         sys.exit(1)
-    except Exception as e:
-        logger.error(f"Unexpected error: {e}", exc_info=True)
-        sys.exit(1)
+    except KeyboardInterrupt:
+        logger.info("Interrupted by user")
+        sys.exit(130)

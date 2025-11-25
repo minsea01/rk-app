@@ -1,8 +1,17 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-import argparse, time
+"""ONNX vs RKNN(sim) equivalence comparison tool.
+
+This script compares inference outputs between ONNX Runtime and RKNN simulator
+to validate model conversion accuracy.
+"""
+import argparse
+import time
+import logging
 from pathlib import Path
 import sys
+from typing import Optional, Tuple
+
 import numpy as np
 import cv2
 import onnxruntime as ort
@@ -10,6 +19,12 @@ from rknn.api import RKNN
 
 # Ensure repo root on sys.path when run as a script
 sys.path.append(str(Path(__file__).resolve().parents[1]))
+
+from apps.exceptions import ModelLoadError, ConfigurationError
+
+# Setup logging
+logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
+logger = logging.getLogger(__name__)
 
 def _make_synth(size=640):
     rnd = np.random.RandomState(0)
@@ -102,38 +117,83 @@ def run_onnx(onnx_path: Path, inp):
     t1 = time.time()
     return to_CA(out), (t1 - t0) * 1000
 
-def run_rknn_from_onnx(onnx_path: Path, inp, imgsz, quant=False, calib_dir=None):
+def run_rknn_from_onnx(
+    onnx_path: Path,
+    inp: np.ndarray,
+    imgsz: int,
+    quant: bool = False,
+    calib_dir: Optional[Path] = None
+) -> Tuple[np.ndarray, float]:
+    """Run inference using RKNN simulator built from ONNX model.
+    
+    Args:
+        onnx_path: Path to ONNX model file
+        inp: Input tensor in NCHW format
+        imgsz: Input image size
+        quant: Whether to apply INT8 quantization
+        calib_dir: Calibration images directory (required if quant=True)
+        
+    Returns:
+        Tuple of (output_tensor, inference_time_ms)
+        
+    Raises:
+        ConfigurationError: If RKNN configuration fails
+        ModelLoadError: If model loading or building fails
+    """
     rk = RKNN(verbose=False)
     
-    # Configure for RK3588
-    if quant:
-        assert rk.config(target_platform='rk3588', optimization_level=3, 
-                        quantized_dtype='w8a8') == 0  # RKNN-Toolkit2 2.x 使用新格式
-    else:
-        assert rk.config(target_platform='rk3588', optimization_level=3) == 0
-    
-    assert rk.load_onnx(str(onnx_path), input_size_list=[[1, 3, imgsz, imgsz]]) == 0
-    
-    if quant:
-        assert calib_dir is not None and calib_dir.exists(), 'INT8 需要 --calib-dir'
-        # 采最多 200 张校准图
-        imgs = []
-        for ext in ('*.jpg', '*.jpeg', '*.png'):
-            imgs.extend(sorted(calib_dir.glob(ext)))
-        imgs = [str(p) for p in imgs[:200]]
-        tmp = Path('/tmp/rknn_ds.txt')
-        tmp.write_text('\n'.join(imgs))
-        ok = rk.build(do_quantization=True, dataset=str(tmp))
-    else:
-        ok = rk.build(do_quantization=False)
+    try:
+        # Configure for RK3588
+        if quant:
+            ret = rk.config(
+                target_platform='rk3588',
+                optimization_level=3,
+                quantized_dtype='w8a8'  # RKNN-Toolkit2 2.x format
+            )
+        else:
+            ret = rk.config(target_platform='rk3588', optimization_level=3)
         
-    assert ok == 0
-    assert rk.init_runtime() == 0
-    t0 = time.time()
-    out = rk.inference([inp], data_format='nchw')[0]
-    t1 = time.time()
-    rk.release()
-    return to_CA(out), (t1 - t0) * 1000
+        if ret != 0:
+            raise ConfigurationError(f"RKNN config failed with code {ret}")
+        
+        ret = rk.load_onnx(str(onnx_path), input_size_list=[[1, 3, imgsz, imgsz]])
+        if ret != 0:
+            raise ModelLoadError(f"Failed to load ONNX model: {onnx_path}")
+        
+        if quant:
+            if calib_dir is None or not calib_dir.exists():
+                raise ConfigurationError(
+                    f"INT8 quantization requires valid --calib-dir, got: {calib_dir}"
+                )
+            # Collect up to 200 calibration images
+            imgs = []
+            for ext in ('*.jpg', '*.jpeg', '*.png'):
+                imgs.extend(sorted(calib_dir.glob(ext)))
+            imgs = [str(p) for p in imgs[:200]]
+            
+            if not imgs:
+                raise ConfigurationError(f"No calibration images found in {calib_dir}")
+            
+            tmp = Path('/tmp/rknn_ds.txt')
+            tmp.write_text('\n'.join(imgs))
+            ret = rk.build(do_quantization=True, dataset=str(tmp))
+        else:
+            ret = rk.build(do_quantization=False)
+        
+        if ret != 0:
+            raise ModelLoadError(f"RKNN build failed with code {ret}")
+        
+        ret = rk.init_runtime()
+        if ret != 0:
+            raise ModelLoadError(f"RKNN runtime init failed with code {ret}")
+        
+        t0 = time.time()
+        out = rk.inference([inp], data_format='nchw')[0]
+        t1 = time.time()
+        
+        return to_CA(out), (t1 - t0) * 1000
+    finally:
+        rk.release()
 
 
 def main():
@@ -153,7 +213,8 @@ def main():
     img  = Path(args.img).expanduser().resolve() if args.img else None
     calib_dir = Path(args.calib_dir).expanduser().resolve() if args.calib_dir else None
 
-    assert onnx.exists(), onnx
+    if not onnx.exists():
+        raise FileNotFoundError(f"ONNX model not found: {onnx}")
     # allow missing image (synthetic)
 
     x = preprocess(img, args.imgsz)

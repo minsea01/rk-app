@@ -19,7 +19,7 @@ def main() -> int:
 
     try:
         from ultralytics import YOLO  # type: ignore
-    except Exception as exc:
+    except ImportError:
         print("[ERROR] ultralytics not installed. pip install ultralytics")
         return 2
 
@@ -37,11 +37,7 @@ def main() -> int:
         name=args.name,
     )
 
-    save_dir = None
-    try:
-        save_dir = getattr(results, "save_dir", None)
-    except Exception:
-        save_dir = None
+    save_dir = getattr(results, "save_dir", None)
     if save_dir:
         print(f"SAVE_DIR={save_dir}")
         pred_path = Path(save_dir) / "predictions.json"

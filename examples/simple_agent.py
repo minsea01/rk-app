@@ -61,10 +61,8 @@ def main():
         print(f"  模型: {message.model}")
         print(f"  使用 tokens: {message.usage.input_tokens} 输入 + {message.usage.output_tokens} 输出")
 
-    except Exception as e:
+    except (ConnectionError, ValueError, RuntimeError) as e:
         print(f"\n❌ 错误: {e}")
-        import traceback
-        traceback.print_exc()
 
 if __name__ == "__main__":
     main()

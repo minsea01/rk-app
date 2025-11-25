@@ -369,7 +369,7 @@ def main():
             png = os.path.join(outdir, 'autotune_best.png')
             plt.tight_layout(); plt.savefig(png, dpi=150)
             print('Best plot saved to', png)
-        except Exception:
+        except ImportError:
             print('matplotlib not available; CSV saved to', csv_path)
 
     # Back-compat alias: also copy key files to out/
@@ -383,8 +383,8 @@ def main():
             p = os.path.join(outdir, name)
             if os.path.exists(p):
                 shutil.copy2(p, os.path.join(alias_out_dir, name))
-    except Exception:
-        pass
+    except (IOError, OSError, PermissionError):
+        pass  # Ignore copy failures
 
 
 if __name__ == '__main__':

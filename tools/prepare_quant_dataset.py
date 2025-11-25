@@ -38,6 +38,7 @@ def collect_images(data_dir, output_file, num_samples=300, min_size=200):
     
     # Filter images by size and quality
     valid_images = []
+    skipped_count = 0
     for img_path in all_images:
         try:
             # Quick size check using cv2
@@ -46,9 +47,13 @@ def collect_images(data_dir, output_file, num_samples=300, min_size=200):
                 h, w = img.shape[:2]
                 if min(h, w) >= min_size:
                     valid_images.append(img_path)
-        except:
-            # Skip corrupted images
+        except (cv2.error, IOError, OSError) as e:
+            # Skip corrupted or unreadable images
+            skipped_count += 1
             continue
+    
+    if skipped_count > 0:
+        print(f"   ⚠️ Skipped {skipped_count} corrupted/unreadable images")
     
     print(f"   ✓ {len(valid_images)} images meet size requirements")
     

@@ -81,11 +81,11 @@ class ResultsServer:
 
                 except socket.timeout:
                     continue
-                except Exception as e:
+                except (OSError, ConnectionError) as e:
                     logger.error(f"Accept error: {e}")
                     break
 
-        except Exception as e:
+        except (OSError, socket.error) as e:
             logger.error(f"Server error: {e}")
             sys.exit(1)
         finally:
@@ -119,7 +119,7 @@ class ResultsServer:
             # Send ACK
             client_socket.send(b"OK")
 
-        except Exception as e:
+        except (OSError, socket.error, UnicodeDecodeError) as e:
             logger.error(f"Error handling client {client_address}: {e}")
         finally:
             client_socket.close()
@@ -179,7 +179,7 @@ class ResultsServer:
                 f"latency={latency:.1f}ms → {filename}"
             )
 
-        except Exception as e:
+        except (IOError, OSError, TypeError) as e:
             logger.error(f"Error saving result: {e}")
 
     def stop(self):
@@ -188,7 +188,7 @@ class ResultsServer:
         if self.socket:
             try:
                 self.socket.close()
-            except Exception as e:
+            except (OSError, socket.error) as e:
                 logger.error(f"Error closing socket: {e}")
         logger.info(f"Server stopped. Total results received: {self.result_count}")
 
@@ -222,7 +222,7 @@ def health_check_server():
         logger.info("Health check HTTP server running on 0.0.0.0:8080")
         httpd.serve_forever()
 
-    except Exception as e:
+    except (OSError, socket.error) as e:
         logger.error(f"Health check server error: {e}")
 
 

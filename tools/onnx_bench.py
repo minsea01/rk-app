@@ -34,11 +34,12 @@ def main():
     args = ap.parse_args()
 
     onnx_path = args.onnx.expanduser().resolve()
-    assert onnx_path.exists(), f'ONNX not found: {onnx_path}'
+    if not onnx_path.exists():
+        raise FileNotFoundError(f'ONNX model not found: {onnx_path}')
 
     try:
         import onnxruntime as ort
-    except Exception as e:
+    except ImportError as e:
         print('请先安装 onnxruntime，例如: pip install onnxruntime')
         print('错误:', e)
         sys.exit(1)

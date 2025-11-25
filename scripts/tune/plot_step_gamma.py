@@ -25,7 +25,7 @@ def plot_png(csv_files, labels, out_png, ref_value=1.0):
     try:
         import matplotlib.pyplot as plt
         import csv
-    except Exception:
+    except ImportError:
         print('matplotlib not available. Please: pip install matplotlib', file=sys.stderr)
         print('CSV files are generated:')
         for p in csv_files:

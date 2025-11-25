@@ -66,8 +66,9 @@ def export_static_onnx(pt_path: str, size: int, batch: int, half: bool, target_d
         raise FileNotFoundError(f'Exported ONNX not found. looked_for={candidate}')
     try:
         shutil.copy2(saved, target_path)
-    except Exception as e:
+    except (IOError, OSError, PermissionError) as e:
         # Fallback to using the original path
+        logger.warning(f"Failed to copy ONNX file: {e}, using original path")
         target_path = saved
     return target_path
 
@@ -97,7 +98,7 @@ def main() -> None:
                 lat, fps, prov, dtype = run_ort(onnx_path, s, b, args.warmup, args.runs, args.trt)
                 print(f'size={s} batch={b} latency_ms={lat:.3f} fps={fps:.2f} providers={prov} dtype={dtype} path={onnx_path}')
                 continue
-            except Exception as e_fp16:
+            except (RuntimeError, ValueError, FileNotFoundError) as e_fp16:
                 print(f'size={s} batch={b} FP16 export/run failed: {e_fp16} -> falling back to FP32')
             # Fallback to FP32
             subdir32 = os.path.join(args.out_dir, f'onxx_{s}_b{b}_fp32')

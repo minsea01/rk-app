@@ -1,10 +1,17 @@
 #!/usr/bin/env python3
+"""High-performance streaming RKNN inference pipeline.
+
+This module provides a multi-threaded pipeline for real-time object detection
+using RKNN models on RK3588 hardware.
+"""
 import argparse
+import logging
 import time
 from pathlib import Path
 from threading import Thread, Event
 from queue import Queue, Full, Empty
 import json
+from typing import Union, List, Dict, Any, Optional, Tuple
 from urllib import request, error
 
 import cv2
@@ -12,18 +19,43 @@ import numpy as np
 
 from apps.utils.yolo_post import letterbox, nms, sigmoid
 
+# Setup logging
+logger = logging.getLogger(__name__)
 
-def parse_source(src: str):
-    # int like '0' => camera index, else raw string for file/rtsp/gstreamer pipeline
-    try:
-        if len(src) and src.isdigit():
-            return int(src)
-    except Exception:
-        pass
+
+def parse_source(src: str) -> Union[int, str]:
+    """Parse video source string to camera index or path.
+    
+    Args:
+        src: Source string - digit for camera index, else path/URL
+        
+    Returns:
+        Integer camera index if src is numeric, otherwise original string
+    """
+    if src and src.isdigit():
+        return int(src)
     return src
 
 
-def decode_predictions(pred, imgsz, conf_thres, iou_thres, head='auto'):
+def decode_predictions(
+    pred: np.ndarray,
+    imgsz: int,
+    conf_thres: float,
+    iou_thres: float,
+    head: str = 'auto'
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Decode YOLO model predictions to bounding boxes.
+    
+    Args:
+        pred: Model predictions array
+        imgsz: Input image size used for inference
+        conf_thres: Confidence threshold for filtering
+        iou_thres: IOU threshold for NMS
+        head: Decoding method ('auto', 'dfl', 'raw')
+        
+    Returns:
+        Tuple of (boxes, confidences, class_ids)
+    """
     # Normalize pred to (1, N, C)
     if pred.ndim == 2:
         pred = pred[None, ...]
@@ -73,31 +105,55 @@ def decode_predictions(pred, imgsz, conf_thres, iou_thres, head='auto'):
 
 
 class StageStats:
-    def __init__(self):
-        self.reset()
+    """Statistics tracker for pipeline stage timing."""
+    
+    def __init__(self) -> None:
+        self.n: int = 0
+        self.t_sum: float = 0.0
+        self.t_min: float = 1e9
+        self.t_max: float = 0.0
 
-    def reset(self):
+    def reset(self) -> None:
+        """Reset all statistics to initial values."""
         self.n = 0
         self.t_sum = 0.0
         self.t_min = 1e9
         self.t_max = 0.0
 
-    def add(self, dt):
+    def add(self, dt: float) -> None:
+        """Add a timing measurement.
+        
+        Args:
+            dt: Time duration in seconds
+        """
         self.n += 1
         self.t_sum += dt
         self.t_min = min(self.t_min, dt)
         self.t_max = max(self.t_max, dt)
 
-    def summary(self):
+    def summary(self) -> Dict[str, float]:
+        """Get statistics summary.
+        
+        Returns:
+            Dictionary with n, avg_ms, min_ms, max_ms
+        """
         avg = self.t_sum / max(1, self.n)
         return {'n': self.n, 'avg_ms': avg * 1000, 'min_ms': self.t_min * 1000, 'max_ms': self.t_max * 1000}
 
 
-def run_stream(args):
+def run_stream(args) -> None:
+    """Run the streaming inference pipeline.
+    
+    Args:
+        args: Parsed command-line arguments
+        
+    Raises:
+        SystemExit: If RKNN toolkit is not installed or model fails to load
+    """
     try:
         from rknnlite.api import RKNNLite
-    except Exception as e:
-        raise SystemExit(f"rknn-toolkit-lite2 not found: {e}")
+    except ImportError as e:
+        raise SystemExit(f"rknn-toolkit-lite2 not installed: {e}")
 
     cap_src = parse_source(args.source)
     cap = cv2.VideoCapture(cap_src, cv2.CAP_GSTREAMER if isinstance(cap_src, str) else 0)
@@ -122,21 +178,28 @@ def run_stream(args):
         'post': StageStats(),
     }
 
-    def t_capture():
+    def t_capture() -> None:
+        """Capture thread: reads frames from video source."""
+        dropped_frames = 0
         while not stop.is_set():
             t0 = time.perf_counter()
             ok, frame = cap.read()
             if not ok:
+                logger.warning("Video capture ended or failed")
                 break
             t1 = time.perf_counter()
             try:
                 q_cap.put((frame, t0, t1), timeout=0.1)
             except Full:
-                pass
+                dropped_frames += 1
+                if dropped_frames % 100 == 1:
+                    logger.debug(f"Capture queue full, dropped {dropped_frames} frames")
             stats['capture'].add(t1 - t0)
         stop.set()
 
-    def t_preproc():
+    def t_preproc() -> None:
+        """Preprocessing thread: letterbox resize and prepare input."""
+        dropped_frames = 0
         while not stop.is_set():
             try:
                 frame, t0, t1 = q_cap.get(timeout=0.1)
@@ -149,7 +212,9 @@ def run_stream(args):
             try:
                 q_pre.put((frame, img, r, d, t0, t1, t2, t3), timeout=0.1)
             except Full:
-                pass
+                dropped_frames += 1
+                if dropped_frames % 100 == 1:
+                    logger.debug(f"Preproc queue full, dropped {dropped_frames} frames")
             stats['preproc'].add(t3 - t2)
         stop.set()
 
@@ -159,7 +224,9 @@ def run_stream(args):
     if rknn.init_runtime(core_mask=args.core_mask) != 0:
         raise SystemExit('init_runtime failed')
 
-    def t_infer():
+    def t_infer() -> None:
+        """Inference thread: runs RKNN model on preprocessed frames."""
+        dropped_frames = 0
         # Warmup
         for _ in range(max(0, args.warmup)):
             try:
@@ -167,6 +234,7 @@ def run_stream(args):
             except Empty:
                 continue
             rknn.inference(inputs=[img])
+        logger.debug(f"Inference warmup complete ({args.warmup} frames)")
         # Main
         while not stop.is_set():
             try:
@@ -182,11 +250,14 @@ def run_stream(args):
             try:
                 q_out.put((frame, pred, r, d, t0, t1, t2, t3, t4, t5), timeout=0.1)
             except Full:
-                pass
+                dropped_frames += 1
+                if dropped_frames % 100 == 1:
+                    logger.debug(f"Output queue full, dropped {dropped_frames} frames")
             stats['infer'].add(t5 - t4)
         stop.set()
 
-    def t_post():
+    def t_post() -> None:
+        """Post-processing thread: decode predictions, draw boxes, save/display."""
         names = None
         if args.names and Path(args.names).exists():
             names = [x.strip() for x in Path(args.names).read_text().splitlines() if x.strip()]
@@ -195,6 +266,7 @@ def run_stream(args):
             fourcc = cv2.VideoWriter_fourcc(*'mp4v')
             writer = cv2.VideoWriter(str(args.save), fourcc, max(1, args.fps or 25), (args.width or args.imgsz, args.height or args.imgsz))
         count = 0
+        dropped_uploads = 0
         t_start = time.perf_counter()
         while not stop.is_set():
             try:
@@ -204,11 +276,12 @@ def run_stream(args):
             t6 = time.perf_counter()
             boxes, confs, cls_ids = decode_predictions(pred, args.imgsz, args.conf, args.iou, head=args.head)
             # scale boxes back to original frame size when using letterbox
-            boxes[:, [0, 2]] -= d[0]
-            boxes[:, [1, 3]] -= d[1]
-            boxes /= r
-            boxes[:, 0::2] = boxes[:, 0::2].clip(0, frame.shape[1] - 1)
-            boxes[:, 1::2] = boxes[:, 1::2].clip(0, frame.shape[0] - 1)
+            if len(boxes) > 0:
+                boxes[:, [0, 2]] -= d[0]
+                boxes[:, [1, 3]] -= d[1]
+                boxes /= r
+                boxes[:, 0::2] = boxes[:, 0::2].clip(0, frame.shape[1] - 1)
+                boxes[:, 1::2] = boxes[:, 1::2].clip(0, frame.shape[0] - 1)
             # draw
             for (x1, y1, x2, y2), c, cls in zip(boxes.astype(int), confs, cls_ids):
                 label = f"{int(cls)}:{c:.2f}"
@@ -233,7 +306,9 @@ def run_stream(args):
                 try:
                     q_up.put(payload, timeout=0.01)
                 except Full:
-                    pass
+                    dropped_uploads += 1
+                    if dropped_uploads % 100 == 1:
+                        logger.debug(f"Upload queue full, dropped {dropped_uploads} payloads")
             if args.display:
                 fps = count / max(1e-6, (now - t_start))
                 cv2.putText(frame, f'FPS:{fps:.1f}', (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 0), 2)
@@ -250,10 +325,12 @@ def run_stream(args):
             writer.release()
         cv2.destroyAllWindows()
 
-    def t_upload():
+    def t_upload() -> None:
+        """Upload thread: POST detection results to HTTP endpoint."""
         url = args.upload_http
         headers = {'Content-Type': 'application/json'}
-        last_sent = 0
+        last_sent = 0.0
+        failed_uploads = 0
         while not stop.is_set():
             if q_up is None:
                 break
@@ -269,9 +346,11 @@ def run_stream(args):
                 with request.urlopen(req, timeout=1.0) as resp:
                     _ = resp.read()
                 last_sent = now
-            except error.URLError:
-                # drop silently to avoid blocking pipeline
-                pass
+            except (error.URLError, error.HTTPError, TimeoutError) as e:
+                # Log but don't block pipeline - network issues are expected in production
+                failed_uploads += 1
+                if failed_uploads % 50 == 1:
+                    logger.warning(f"Upload failed ({failed_uploads} total): {type(e).__name__}")
 
     ths = [
         Thread(target=t_capture, daemon=True),
@@ -293,9 +372,9 @@ def run_stream(args):
 
     # Summary
     total_time = sum(s.t_sum for s in stats.values())
-    print('Stage stats (ms):')
+    logger.info('Stage stats (ms):')
     for k, s in stats.items():
-        print(k, s.summary())
+        logger.info(f"  {k}: {s.summary()}")
 
 
 def main():
