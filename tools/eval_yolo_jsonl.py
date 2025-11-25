@@ -106,7 +106,7 @@ def main():
                 continue
             try:
                 obj = json.loads(line)
-            except Exception:
+            except json.JSONDecodeError:
                 continue
             fid = obj.get('frame_id')
             w = obj.get('width')

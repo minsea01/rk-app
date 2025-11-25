@@ -51,7 +51,7 @@ def test_models():
             print("✓ 成功")
             successful_models.append(model)
 
-        except Exception as e:
+        except (ConnectionError, ValueError, RuntimeError, PermissionError) as e:
             error_msg = str(e)
             if "403" in error_msg or "无权访问" in error_msg:
                 print("✗ 无权限")

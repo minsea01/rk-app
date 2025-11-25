@@ -94,8 +94,9 @@ def is_headless() -> bool:
                 logger.debug("Headless detected: OpenCV built without highgui")
                 _is_headless_cached = True
                 return True
-        except Exception:
-            pass
+        except AttributeError:
+            # cv2 module structure unexpected, assume GUI available
+            logger.debug("Could not detect OpenCV highgui support, assuming GUI available")
 
     # Check 5: Platform detection (embedded systems often headless)
     # This is a heuristic - not 100% reliable
@@ -117,8 +118,9 @@ def is_headless() -> bool:
                         logger.debug("Headless detected: ARM board without X server")
                         _is_headless_cached = True
                         return True
-        except Exception:
-            pass
+        except (IOError, OSError) as e:
+            # Cannot read /proc/cpuinfo - not on Linux or permission denied
+            logger.debug(f"Could not read /proc/cpuinfo: {e}")
 
     # Default: assume display is available
     logger.debug("Display detected: Headless checks passed")
@@ -190,8 +192,6 @@ def safe_imshow(
         try:
             from PIL import Image
             if hasattr(image, 'shape'):  # numpy array
-                from PIL import Image
-                import numpy as np
                 # Convert BGR to RGB if needed
                 if len(image.shape) == 3 and image.shape[2] == 3:
                     image = image[:, :, ::-1]
@@ -199,8 +199,11 @@ def safe_imshow(
                 img_pil.save(str(fallback_path))
                 logger.info(f"cv2 unavailable - saved with PIL to: {fallback_path}")
                 return True
-        except Exception as e:
-            logger.error(f"Failed to save image (no cv2): {e}")
+        except ImportError:
+            logger.error("Neither cv2 nor PIL available for image saving")
+            return False
+        except (IOError, OSError, ValueError) as e:
+            logger.error(f"Failed to save image with PIL: {e}")
             return False
 
     if is_headless():
@@ -219,7 +222,7 @@ def safe_imshow(
             cv2.imwrite(str(fallback_path), image)
             logger.info(f"Headless mode - saved image to: {fallback_path}")
             return True
-        except Exception as e:
+        except (cv2.error, IOError, OSError) as e:
             logger.error(f"Failed to save image to {fallback_path}: {e}")
             return False
     else:
@@ -229,8 +232,8 @@ def safe_imshow(
             if wait_key >= 0:
                 cv2.waitKey(wait_key)
             return True
-        except Exception as e:
-            logger.error(f"Failed to display image '{window_name}': {e}")
+        except cv2.error as e:
+            logger.error(f"cv2.imshow failed for '{window_name}': {e}")
             return False
 
 
@@ -249,11 +252,11 @@ def safe_waitKey(delay: int = 0) -> int:
     cv2 = _get_cv2()
     if cv2 is None or is_headless():
         return -1
-    else:
-        try:
-            return cv2.waitKey(delay)
-        except Exception:
-            return -1
+    try:
+        return cv2.waitKey(delay)
+    except cv2.error as e:
+        logger.debug(f"cv2.waitKey failed: {e}")
+        return -1
 
 
 def force_headless_mode():

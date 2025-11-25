@@ -18,8 +18,19 @@ from apps.logger import setup_logger
 # Setup logger
 logger = setup_logger(__name__, level='INFO')
 
-def read_json(path):
-    """Read and parse JSON file with error handling."""
+def read_json(path: str) -> dict:
+    """Read and parse JSON file with error handling.
+    
+    Args:
+        path: Path to JSON file
+        
+    Returns:
+        Parsed JSON as dictionary
+        
+    Raises:
+        ConfigurationError: If file cannot be read
+        ValidationError: If JSON is invalid
+    """
     try:
         with open(path, 'r', encoding='utf-8') as f:
             return json.load(f)
@@ -27,7 +38,7 @@ def read_json(path):
         raise ConfigurationError(f"Input file not found: {path}") from e
     except json.JSONDecodeError as e:
         raise ValidationError(f"Invalid JSON in {path}: {e}") from e
-    except Exception as e:
+    except (IOError, OSError, PermissionError) as e:
         raise ConfigurationError(f"Failed to read {path}: {e}") from e
 
 def frac_to_float(s: str) -> float:
@@ -116,14 +127,14 @@ def main():
     # Write output files with error handling
     try:
         os.makedirs(os.path.dirname(args.out_json), exist_ok=True)
-    except Exception as e:
+    except (OSError, PermissionError) as e:
         raise ConfigurationError(f"Failed to create output directory: {e}") from e
 
     logger.info(f"Writing JSON report: {args.out_json}")
     try:
         with open(args.out_json, 'w', encoding='utf-8') as f:
             json.dump(summary, f, ensure_ascii=False, indent=2)
-    except Exception as e:
+    except (IOError, OSError, PermissionError) as e:
         raise ConfigurationError(f"Failed to write JSON report: {e}") from e
 
     logger.info(f"Writing CSV report: {args.out_csv}")
@@ -132,7 +143,7 @@ def main():
             w = csv.writer(f)
             w.writerow(['timestamp','iperf3_mbps','ffprobe_width','ffprobe_height','ffprobe_fps','ffprobe_codec'])
             w.writerow([ts, round(mbps,2), width, height, round(fps,2), codec])
-    except Exception as e:
+    except (IOError, OSError, PermissionError) as e:
         raise ConfigurationError(f"Failed to write CSV report: {e}") from e
 
     md = []
@@ -147,19 +158,20 @@ def main():
     try:
         with open(args.out_md, 'w', encoding='utf-8') as f:
             f.write('\n'.join(md) + '\n')
-    except Exception as e:
+    except (IOError, OSError, PermissionError) as e:
         raise ConfigurationError(f"Failed to write Markdown report: {e}") from e
 
     logger.info("Aggregation completed successfully")
     return 0
 
+
 if __name__ == '__main__':
     try:
         sys.exit(main())
     except (ConfigurationError, ValidationError) as e:
-        logger.error(f"Aggregation failed: {e}", exc_info=True)
+        logger.error(f"Aggregation failed: {e}")
         sys.exit(1)
-    except Exception as e:
-        logger.error(f"Unexpected error during aggregation: {e}", exc_info=True)
-        sys.exit(1)
+    except KeyboardInterrupt:
+        logger.info("Interrupted by user")
+        sys.exit(130)
 

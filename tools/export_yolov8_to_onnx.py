@@ -32,7 +32,7 @@ def export(weights: str, imgsz: int, opset: int, simplify: bool, dynamic: bool, 
     logger.info(f"Loading model: {weights}")
     try:
         model = YOLO(weights)
-    except Exception as e:
+    except (RuntimeError, ValueError, FileNotFoundError) as e:
         raise ModelLoadError(f"Failed to load model from {weights}: {e}") from e
 
     logger.info(f"Exporting to ONNX (imgsz={imgsz}, opset={opset}, simplify={simplify})")
@@ -45,7 +45,7 @@ def export(weights: str, imgsz: int, opset: int, simplify: bool, dynamic: bool, 
             dynamic=dynamic,
             half=half,
         )
-    except Exception as e:
+    except (RuntimeError, ValueError, TypeError) as e:
         raise ModelLoadError(f"Failed to export model to ONNX: {e}") from e
 
     # Move result into the outdir if ultralytics writes into CWD
@@ -54,7 +54,7 @@ def export(weights: str, imgsz: int, opset: int, simplify: bool, dynamic: bool, 
     if onnx_path.resolve() != target.resolve():
         try:
             target.write_bytes(onnx_path.read_bytes())
-        except Exception as e:
+        except (IOError, OSError, PermissionError) as e:
             raise ModelLoadError(f"Failed to move ONNX file to {target}: {e}") from e
 
     logger.info(f"Successfully exported ONNX: {target}")
@@ -78,11 +78,12 @@ def main():
         export(**vars(args))
         return 0
     except (ModelLoadError, ConfigurationError) as e:
-        logger.error(f"Export failed: {e}", exc_info=True)
+        logger.error(f"Export failed: {e}")
         return 1
-    except Exception as e:
-        logger.error(f"Unexpected error during export: {e}", exc_info=True)
-        return 1
+    except KeyboardInterrupt:
+        logger.info("Interrupted by user")
+        return 130
+
 
 if __name__ == '__main__':
     sys.exit(main())

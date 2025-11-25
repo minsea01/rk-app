@@ -72,7 +72,7 @@ class MapEvaluator:
             logger.info(f"Loaded ONNX model: {self.model_path.name}")
             logger.info(f"Execution providers: {self.session.get_providers()}")
             return True
-        except Exception as e:
+        except (RuntimeError, ValueError, FileNotFoundError) as e:
             logger.error(f"Failed to load model: {e}")
             return False
 
@@ -110,7 +110,7 @@ class MapEvaluator:
 
             return detections
 
-        except Exception as e:
+        except (RuntimeError, ValueError, cv2.error) as e:
             logger.error(f"Inference error on {img_path}: {e}")
             return []
 

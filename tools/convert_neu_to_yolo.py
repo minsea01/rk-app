@@ -115,7 +115,7 @@ def write_yolo_labels(images_dir: Path, labels_dir: Path, xml_index: Dict[str, P
                     if bw <= 0 or bh <= 0:
                         continue
                     lines.append(f"{cls_id} {cx:.6f} {cy:.6f} {bw:.6f} {bh:.6f}")
-            except Exception:
+            except (ValueError, ET.ParseError):
                 # If parsing fails, leave as empty label
                 lines = []
         if lines:
