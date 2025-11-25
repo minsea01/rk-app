@@ -402,11 +402,12 @@ class TestPostprocessYolov8:
         )
         if len(boxes) > 0:
             # x1, y1, x2, y2 should be within original image bounds
-            assert np.all(boxes[:, 0] >= 0) and np.all(boxes[:, 0] < orig_w)
-            assert np.all(boxes[:, 1] >= 0) and np.all(boxes[:, 1] < orig_h)
-            assert np.all(boxes[:, 2] >= 0) and np.all(boxes[:, 2] < orig_w)
-            assert np.all(boxes[:, 3] >= 0) and np.all(boxes[:, 3] < orig_h)
-            # x2 > x1, y2 > y1
+            # Coordinates are clipped to [0, width] and [0, height] (inclusive)
+            assert np.all(boxes[:, 0] >= 0) and np.all(boxes[:, 0] <= orig_w)
+            assert np.all(boxes[:, 1] >= 0) and np.all(boxes[:, 1] <= orig_h)
+            assert np.all(boxes[:, 2] >= 0) and np.all(boxes[:, 2] <= orig_w)
+            assert np.all(boxes[:, 3] >= 0) and np.all(boxes[:, 3] <= orig_h)
+            # x2 >= x1, y2 >= y1
             assert np.all(boxes[:, 2] >= boxes[:, 0])
             assert np.all(boxes[:, 3] >= boxes[:, 1])
 

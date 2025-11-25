@@ -91,7 +91,7 @@ class TestStageStats:
         stats.add(0.3)
 
         assert stats.n == 3
-        assert stats.t_sum == 0.6
+        assert stats.t_sum == pytest.approx(0.6)
 
     def test_tracks_min_correctly(self):
         """Test that minimum time is tracked correctly."""
@@ -233,7 +233,7 @@ class TestStageStats:
 
         # Stats should still be intact
         assert stats.n == 2
-        assert stats.t_sum == 0.3
+        assert stats.t_sum == pytest.approx(0.3)
 
 
 class TestDecodePredictons:
@@ -307,7 +307,9 @@ class TestDecodePredictons:
         from apps.yolov8_stream import decode_predictions
 
         # Create prediction with very low confidence
-        pred = np.random.randn(1, 100, 84) * 0.001  # Very small values
+        # Use N=8400 to match anchor grid for 640x640 with strides [8, 16, 32]
+        N = 8400  # (640/8)^2 + (640/16)^2 + (640/32)^2
+        pred = np.random.randn(1, N, 84) * 0.001  # Very small values
 
         boxes, confs, cls_ids = decode_predictions(
             pred, imgsz=640, conf_thres=0.9, iou_thres=0.45
