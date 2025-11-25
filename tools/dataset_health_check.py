@@ -13,6 +13,7 @@ import matplotlib.pyplot as plt
 from collections import defaultdict, Counter
 import yaml
 import json
+from datetime import datetime
 
 def check_dataset_health(dataset_yaml):
     """完整的数据集健康检查"""
@@ -207,7 +208,7 @@ def generate_health_report(results, dataset_path):
         diagnosis.append(f"❗ 发现{total_empty}个数据分割有空标签，会导致FP增加")
     
     report = {
-        'timestamp': str(pd.Timestamp.now()),
+        'timestamp': datetime.now().isoformat(),
         'summary': {
             'total_issues': len(all_issues),
             'diagnosis': diagnosis
@@ -317,8 +318,7 @@ def visualize_sample_annotations(dataset_yaml, num_samples=5):
 def main():
     """主函数"""
     import argparse
-    import pandas as pd
-    
+
     parser = argparse.ArgumentParser(description='YOLO数据集健康检查')
     parser.add_argument('--data', type=str, required=True, help='数据集YAML文件路径')
     parser.add_argument('--visualize', action='store_true', help='生成标注可视化')
