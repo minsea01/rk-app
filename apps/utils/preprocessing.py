@@ -98,8 +98,8 @@ def _resize_array(
     try:
         resized = cv2.resize(img, (target_size, target_size), interpolation=cv2.INTER_LINEAR)
         return resized
-    except Exception as e:
-        raise PreprocessError(f"Failed to resize image: {e}") from e
+    except cv2.error as e:
+        raise PreprocessError(f"cv2.resize failed: {e}") from e
 
 
 def preprocess_onnx(

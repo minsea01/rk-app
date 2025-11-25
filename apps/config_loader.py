@@ -88,8 +88,8 @@ class ConfigLoader:
             logger.debug(f"Loaded YAML config from: {self.config_file}")
         except yaml.YAMLError as e:
             raise ConfigurationError(f"Invalid YAML in {self.config_file}: {e}") from e
-        except Exception as e:
-            raise ConfigurationError(f"Failed to load {self.config_file}: {e}") from e
+        except (IOError, OSError) as e:
+            raise ConfigurationError(f"Failed to read {self.config_file}: {e}") from e
 
     def get(
         self,

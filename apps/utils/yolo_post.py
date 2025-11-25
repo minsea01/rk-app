@@ -420,8 +420,16 @@ def postprocess_yolov8(
         - boxes: (M, 4) in xyxy format, scaled to original image
         - confidences: (M,) confidence scores
         - class_ids: (M,) class indices
+
+    Raises:
+        ValueError: If predictions have invalid shape
     """
-    assert preds.ndim == 3 and preds.shape[0] == 1
+    # Validate input shape (replace assert with explicit exception)
+    if preds.ndim != 3 or preds.shape[0] != 1:
+        raise ValueError(
+            f"Expected predictions shape (1, N, C), got {preds.shape}. "
+            f"ndim={preds.ndim}, batch_size={preds.shape[0] if preds.ndim >= 1 else 'N/A'}"
+        )
     pred = preds[0]
     n, c = pred.shape
     if c < 64:

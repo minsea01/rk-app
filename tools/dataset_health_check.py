@@ -1,24 +1,48 @@
 #!/usr/bin/env python3
-"""
-YOLO数据集质量体检工具
-诊断"召回爆表、精度偏低"问题的数据源头
+"""YOLO数据集质量体检工具.
+
+诊断"召回爆表、精度偏低"问题的数据源头。
+
+Usage:
+    python tools/dataset_health_check.py --data industrial_dataset/data.yaml
+    python tools/dataset_health_check.py --data data.yaml --visualize --samples 10
 """
 
 import os
 import glob
+import logging
+from pathlib import Path
+from collections import Counter
+from datetime import datetime
+from typing import Dict, List, Any, Optional
+import json
+
 import cv2
 import numpy as np
-from pathlib import Path
-import matplotlib.pyplot as plt
-from collections import defaultdict, Counter
 import yaml
-import json
-from datetime import datetime
 
-def check_dataset_health(dataset_yaml):
-    """完整的数据集健康检查"""
+# Setup logging with emoji-friendly format
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(message)s'
+)
+logger = logging.getLogger(__name__)
+
+
+def check_dataset_health(dataset_yaml: str) -> Dict[str, Any]:
+    """完整的数据集健康检查.
     
-    print("🏥 YOLO数据集体检开始...")
+    Args:
+        dataset_yaml: Path to dataset YAML configuration file
+        
+    Returns:
+        Dictionary containing health check results for each split
+        
+    Raises:
+        FileNotFoundError: If dataset_yaml does not exist
+        yaml.YAMLError: If YAML parsing fails
+    """
+    logger.info("🏥 YOLO数据集体检开始...")
     
     # 读取数据集配置
     with open(dataset_yaml, 'r') as f:
@@ -28,15 +52,15 @@ def check_dataset_health(dataset_yaml):
     class_names = config['names']
     num_classes = config['nc']
     
-    print(f"📊 数据集: {dataset_path}")
-    print(f"🏷️ 类别数: {num_classes}")
-    print(f"📝 类别: {class_names}")
+    logger.info(f"📊 数据集: {dataset_path}")
+    logger.info(f"🏷️ 类别数: {num_classes}")
+    logger.info(f"📝 类别: {class_names}")
     
     results = {}
     
     for split in ['train', 'val', 'test']:
         if split in config:
-            print(f"\n🔍 检查 {split} 数据集...")
+            logger.info(f"\n🔍 检查 {split} 数据集...")
             
             img_dir = dataset_path / config[split].replace('/images', '').replace('images/', '') / 'images'
             label_dir = dataset_path / config[split].replace('/images', '').replace('images/', '') / 'labels'
@@ -49,11 +73,25 @@ def check_dataset_health(dataset_yaml):
     
     return results
 
-def check_split_data(img_dir, label_dir, class_names, split_name):
-    """检查单个数据分割"""
+def check_split_data(
+    img_dir: Path,
+    label_dir: Path,
+    class_names: List[str],
+    split_name: str
+) -> Dict[str, Any]:
+    """检查单个数据分割.
     
+    Args:
+        img_dir: Path to images directory
+        label_dir: Path to labels directory
+        class_names: List of class names
+        split_name: Name of the split (train/val/test)
+        
+    Returns:
+        Dictionary containing check results
+    """
     if not img_dir.exists() or not label_dir.exists():
-        print(f"❌ {split_name} 目录不存在")
+        logger.warning(f"❌ {split_name} 目录不存在")
         return {}
     
     # 获取所有图像文件
@@ -63,8 +101,8 @@ def check_split_data(img_dir, label_dir, class_names, split_name):
     
     label_files = list(label_dir.glob('*.txt'))
     
-    print(f"📁 图像文件: {len(img_files)}")
-    print(f"📄 标签文件: {len(label_files)}")
+    logger.info(f"📁 图像文件: {len(img_files)}")
+    logger.info(f"📄 标签文件: {len(label_files)}")
     
     results = {
         'total_images': len(img_files),
@@ -80,9 +118,9 @@ def check_split_data(img_dir, label_dir, class_names, split_name):
     
     if empty_labels:
         results['issues'].append(f"空标签文件: {len(empty_labels)}个")
-        print(f"⚠️ 发现 {len(empty_labels)} 个空标签文件")
+        logger.warning(f"⚠️ 发现 {len(empty_labels)} 个空标签文件")
         for empty_file in empty_labels[:5]:  # 只显示前5个
-            print(f"   - {empty_file}")
+            logger.warning(f"   - {empty_file}")
     
     # 2. 检查图像-标签对应关系
     img_stems = {Path(f).stem for f in img_files}
@@ -93,13 +131,13 @@ def check_split_data(img_dir, label_dir, class_names, split_name):
     
     if missing_labels:
         results['issues'].append(f"缺失标签: {len(missing_labels)}个")
-        print(f"❌ {len(missing_labels)} 个图像缺失标签")
+        logger.error(f"❌ {len(missing_labels)} 个图像缺失标签")
         for missing in list(missing_labels)[:5]:
-            print(f"   - {missing}")
+            logger.error(f"   - {missing}")
     
     if missing_images:
         results['issues'].append(f"缺失图像: {len(missing_images)}个")
-        print(f"❌ {len(missing_images)} 个标签缺失图像")
+        logger.error(f"❌ {len(missing_images)} 个标签缺失图像")
     
     # 3. 类别分布统计
     class_counts = Counter()
@@ -133,12 +171,12 @@ def check_split_data(img_dir, label_dir, class_names, split_name):
                                         small_objects += 1
                                     elif area > 0.3:  # 大于30%的图像面积
                                         large_objects += 1
-                                else:
-                                    results['issues'].append(f"非法类别ID: {class_id}")
                             else:
-                                results['issues'].append(f"边界框越界: {label_file}")
+                                results['issues'].append(f"非法类别ID: {class_id}")
+                        else:
+                            results['issues'].append(f"边界框越界: {label_file}")
         
-        except Exception as e:
+        except (IOError, OSError, ValueError) as e:
             results['issues'].append(f"标签文件解析错误: {label_file} - {str(e)}")
         
         bbox_counts[bbox_count] += 1
@@ -157,15 +195,15 @@ def check_split_data(img_dir, label_dir, class_names, split_name):
         
         if imbalance_ratio > 10:
             results['issues'].append(f"严重类别不平衡: {imbalance_ratio:.1f}:1")
-            print(f"⚠️ 类别不平衡严重: {imbalance_ratio:.1f}:1")
+            logger.warning(f"⚠️ 类别不平衡严重: {imbalance_ratio:.1f}:1")
     
-    print(f"📊 类别分布:")
+    logger.info(f"📊 类别分布:")
     for class_id, count in sorted(class_counts.items()):
         class_name = class_names[class_id] if class_id < len(class_names) else f"class_{class_id}"
-        print(f"   {class_name}: {count}")
+        logger.info(f"   {class_name}: {count}")
     
-    print(f"🎯 小目标: {small_objects}, 大目标: {large_objects}")
-    print(f"📦 平均每图目标数: {sum(class_counts.values()) / max(len(valid_label_files), 1):.2f}")
+    logger.info(f"🎯 小目标: {small_objects}, 大目标: {large_objects}")
+    logger.info(f"📦 平均每图目标数: {sum(class_counts.values()) / max(len(valid_label_files), 1):.2f}")
     
     return results
 
@@ -221,15 +259,15 @@ def generate_health_report(results, dataset_path):
     with open(report_path, 'w') as f:
         json.dump(report, f, indent=2)
     
-    print(f"\n📋 健康报告已生成: {report_path}")
+    logger.info(f"\n📋 健康报告已生成: {report_path}")
     
     # 打印诊断结果
     if diagnosis:
-        print("\n🔍 问题诊断:")
+        logger.info("\n🔍 问题诊断:")
         for d in diagnosis:
-            print(f"   {d}")
+            logger.info(f"   {d}")
     else:
-        print("\n✅ 数据集健康状况良好")
+        logger.info("\n✅ 数据集健康状况良好")
 
 def generate_recommendations(results):
     """生成修复建议"""
@@ -260,8 +298,17 @@ def generate_recommendations(results):
     
     return list(set(recommendations))  # 去重
 
-def visualize_sample_annotations(dataset_yaml, num_samples=5):
-    """可视化样本标注质量"""
+def visualize_sample_annotations(dataset_yaml: str, num_samples: int = 5) -> None:
+    """可视化样本标注质量.
+    
+    Args:
+        dataset_yaml: Path to dataset YAML configuration file
+        num_samples: Number of sample images to visualize
+        
+    Raises:
+        ImportError: If matplotlib is not installed
+    """
+    import matplotlib.pyplot as plt
     
     with open(dataset_yaml, 'r') as f:
         config = yaml.safe_load(f)
@@ -313,10 +360,14 @@ def visualize_sample_annotations(dataset_yaml, num_samples=5):
     plt.savefig(dataset_path / 'sample_annotations.png', dpi=150, bbox_inches='tight')
     plt.show()
     
-    print(f"📸 样本标注可视化已保存: {dataset_path}/sample_annotations.png")
+    logger.info(f"📸 样本标注可视化已保存: {dataset_path}/sample_annotations.png")
 
-def main():
-    """主函数"""
+def main() -> int:
+    """主函数.
+    
+    Returns:
+        Exit code (0 for success)
+    """
     import argparse
 
     parser = argparse.ArgumentParser(description='YOLO数据集健康检查')
@@ -332,11 +383,15 @@ def main():
     # 可视化（可选）
     if args.visualize:
         try:
+            import matplotlib.pyplot as plt
             visualize_sample_annotations(args.data, args.samples)
-        except Exception as e:
-            print(f"⚠️ 可视化失败: {e}")
+        except ImportError:
+            logger.warning("⚠️ 可视化需要matplotlib，请安装: pip install matplotlib")
+        except (IOError, OSError, cv2.error) as e:
+            logger.warning(f"⚠️ 可视化失败: {e}")
     
-    print("\n🎉 数据集体检完成！")
+    logger.info("\n🎉 数据集体检完成！")
+    return 0
 
 if __name__ == "__main__":
     main()
