@@ -58,8 +58,11 @@ def rknn_context(verbose: bool = True):
         try:
             rknn.release()
             logger.debug("RKNN resources released")
-        except Exception as e:
+        except (RuntimeError, AttributeError, OSError) as e:
             # Log but don't raise - we're in cleanup phase
+            # RuntimeError: RKNN SDK internal error
+            # AttributeError: RKNN object already released or invalid
+            # OSError: GPU/memory cleanup failure
             logger.warning(f"Failed to release RKNN resources (may already be released): {e}")
 
 
@@ -239,12 +242,13 @@ def main():
             reorder=args.reorder,
         )
         return 0
-    except (ModelLoadError, ConfigurationError) as e:
-        logger.error(f"Conversion failed: {e}", exc_info=True)
+    except (ModelLoadError, ConfigurationError, ValueError) as e:
+        logger.error(f"Conversion failed: {e}")
         return 1
-    except Exception as e:
-        logger.error(f"Unexpected error during conversion: {e}", exc_info=True)
-        return 1
+    except KeyboardInterrupt:
+        logger.info("Interrupted by user")
+        return 130
+
 
 if __name__ == '__main__':
     sys.exit(main())

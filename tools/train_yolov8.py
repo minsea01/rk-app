@@ -1,9 +1,20 @@
 #!/usr/bin/env python3
+"""YOLOv8 training script using Ultralytics."""
 import argparse
+import logging
 from pathlib import Path
 
+# Setup logging
+logging.basicConfig(level=logging.INFO, format='%(message)s')
+logger = logging.getLogger(__name__)
 
-def main():
+
+def main() -> int:
+    """Main training entry point.
+    
+    Returns:
+        Exit code (0 for success, non-zero for failure)
+    """
     ap = argparse.ArgumentParser(description='Train YOLOv8 (Ultralytics) for detection')
     ap.add_argument('--data', type=str, required=True, help='dataset YAML (Ultralytics/YOLO format)')
     ap.add_argument('--model', type=str, default='yolov8s.pt', help='initial weights or model yaml (e.g., yolov8s.yaml)')
@@ -22,8 +33,9 @@ def main():
 
     try:
         from ultralytics import YOLO
-    except Exception as e:
-        raise SystemExit(f'Ultralytics not installed. pip install ultralytics. Error: {e}')
+    except ImportError as e:
+        logger.error(f'Ultralytics not installed. pip install ultralytics. Error: {e}')
+        return 2
 
     model = YOLO(args.model)
 
@@ -45,14 +57,15 @@ def main():
     if args.lrf is not None:
         train_args['lrf'] = args.lrf
 
-    print('Training args:', train_args)
+    logger.info(f'Training args: {train_args}')
     res = model.train(**train_args)
-    print(res)
+    logger.info(str(res))
     # Export best weights path
     best = Path(res.save_dir) / 'weights' / 'best.pt'
-    print(f'Best weights: {best} (exists={best.exists()})')
+    logger.info(f'Best weights: {best} (exists={best.exists()})')
+    return 0
 
 
 if __name__ == '__main__':
-    main()
+    raise SystemExit(main())
 

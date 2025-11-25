@@ -71,7 +71,7 @@ def process_citypersons_annotation(ann_file: Path, img_width: int = 2048, img_he
     try:
         with open(ann_file, 'r') as f:
             data = json.load(f)
-    except Exception as e:
+    except (IOError, OSError, json.JSONDecodeError) as e:
         logger.warning(f"Failed to load {ann_file}: {e}")
         return []
 

@@ -31,7 +31,7 @@ def run_once(args):
                     elif 'overshoot=' in part:
                         rec['overshoot'] = float(part.split('=')[1].split()[0])
                 return rec, None
-            except Exception as ex:
+            except (ValueError, TypeError, IndexError) as ex:
                 return None, f"parse error: {ex}; line={line}"
     return None, "no metrics line found"
 

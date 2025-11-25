@@ -114,7 +114,7 @@ def measure_network_transmission(data, target_host, target_port):
         end = time.perf_counter()
 
         return (end - start) * 1000
-    except Exception as e:
+    except (socket.error, OSError, ConnectionError, socket.timeout) as e:
         logger.warning(f"Network transmission failed: {e}")
         return 0.0
 

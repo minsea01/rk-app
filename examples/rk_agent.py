@@ -73,7 +73,7 @@ class RKAgent:
 
                 print(f"✓ ({len(server_tools)} 个工具)")
 
-            except Exception as e:
+            except (OSError, IOError, ConnectionError, ValueError) as e:
                 print(f"✗ 失败: {e}")
 
         print(f"\n总计加载 {len(self.tools)} 个工具")
@@ -132,7 +132,7 @@ class RKAgent:
                                         arguments=content_block.input
                                     )
                                     break
-                                except:
+                                except (OSError, IOError, ConnectionError, AttributeError):
                                     continue
 
                             if result:
@@ -149,7 +149,7 @@ class RKAgent:
                             else:
                                 raise Exception("工具未找到")
 
-                        except Exception as e:
+                        except (RuntimeError, ValueError, KeyError) as e:
                             if verbose:
                                 print(f"   ✗ 错误: {e}")
                             tool_results.append({
@@ -192,7 +192,7 @@ class RKAgent:
             except KeyboardInterrupt:
                 print("\n\n再见！")
                 break
-            except Exception as e:
+            except (RuntimeError, ValueError, ConnectionError) as e:
                 print(f"\n✗ 错误: {e}")
 
     async def close(self):
@@ -200,8 +200,8 @@ class RKAgent:
         for session in self.mcp_sessions.values():
             try:
                 await session.__aexit__(None, None, None)
-            except:
-                pass
+            except (OSError, IOError, AttributeError):
+                pass  # Ignore errors during cleanup
 
 async def main():
     """主函数"""
@@ -230,10 +230,8 @@ async def main():
         print("   示例: cp .agent_config.json.example .agent_config.json")
     except KeyError as e:
         print(f"\n❌ 配置文件格式错误: 缺少字段 {e}")
-    except Exception as e:
+    except (RuntimeError, ValueError, ConnectionError) as e:
         print(f"\n❌ 错误: {e}")
-        import traceback
-        traceback.print_exc()
     finally:
         await agent.close()
 

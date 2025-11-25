@@ -105,7 +105,7 @@ class CameraSimulator:
             resized = cv2.resize(img, self.resolution)
             return resized
 
-        except Exception as e:
+        except (cv2.error, IOError, OSError) as e:
             logger.error(f"Error loading {img_path}: {e}")
             return np.zeros((*self.resolution[::-1], 3), dtype=np.uint8)
 
