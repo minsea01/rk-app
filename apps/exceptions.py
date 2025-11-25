@@ -8,6 +8,7 @@ enabling better error handling and debugging throughout the application.
 
 class RKAppException(Exception):
     """Base exception class for all rk-app exceptions."""
+
     pass
 
 
@@ -19,6 +20,7 @@ class RKNNError(RKAppException):
     - Runtime initialization fails
     - Inference execution fails
     """
+
     pass
 
 
@@ -30,6 +32,7 @@ class PreprocessError(RKAppException):
     - Image format is invalid
     - Preprocessing operations fail
     """
+
     pass
 
 
@@ -41,6 +44,7 @@ class InferenceError(RKAppException):
     - Output format is unexpected
     - Post-processing fails
     """
+
     pass
 
 
@@ -52,6 +56,7 @@ class ValidationError(RKAppException):
     - Configuration is malformed
     - Data validation fails
     """
+
     pass
 
 
@@ -63,6 +68,7 @@ class ModelLoadError(RKAppException):
     - Model format is invalid
     - Model loading fails
     """
+
     pass
 
 
@@ -74,4 +80,5 @@ class ConfigurationError(RKAppException):
     - Config format is invalid
     - Required config parameters missing
     """
+
     pass
