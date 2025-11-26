@@ -131,11 +131,11 @@ std::vector<std::string> Postprocess::loadClassNames(const std::string& path) {
     
     std::string line;
     while (std::getline(file, line)) {
-        // Remove trailing whitespace
-        line.erase(line.find_last_not_of(" \t\r\n") + 1);
-        if (!line.empty()) {
-            class_names.push_back(line);
-        }
+        // Remove trailing whitespace; skip empty/whitespace-only lines safely
+        const auto pos = line.find_last_not_of(" \t\r\n");
+        if (pos == std::string::npos) continue;
+        line.erase(pos + 1);
+        if (!line.empty()) class_names.push_back(line);
     }
     
     std::cout << "Loaded " << class_names.size() << " class names from " << path << std::endl;

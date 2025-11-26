@@ -31,6 +31,7 @@ private:
   int input_size_ = 640;
   bool is_initialized_ = false;
   DecodeParams decode_params_;
+  bool unsupported_model_ = false;  // set when encountering unsupported output layout
 };
 
 } // namespace rkapp::infer

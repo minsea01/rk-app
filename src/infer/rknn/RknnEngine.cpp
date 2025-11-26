@@ -209,6 +209,10 @@ std::vector<Detection> RknnEngine::infer(const cv::Mat& image){
   // Letterbox + RGB (uint8)
   rkapp::preprocess::LetterboxInfo letterbox_info;
   cv::Mat letter = rkapp::preprocess::Preprocess::letterbox(image, input_size_, letterbox_info);
+  if (letter.empty()) {
+    LOGE("RknnEngine: Preprocess failed (empty output). Input may be invalid.");
+    return {};
+  }
   cv::Mat rgb;
   cv::cvtColor(letter, rgb, cv::COLOR_BGR2RGB);
 
@@ -259,78 +263,11 @@ std::vector<Detection> RknnEngine::infer(const cv::Mat& image){
   const int reg_max = (model_meta_.reg_max > 0) ? model_meta_.reg_max : 16;
   const bool force_raw = (model_meta_.head == "raw");
   const bool force_dfl = (model_meta_.head == "dfl");
-  const bool use_dfl = (!force_raw) && (force_dfl || C >= 4 * reg_max);
+  const bool want_dfl = (!force_raw) && (force_dfl || C >= 4 * reg_max);
+  const bool has_meta = model_meta_.reg_max > 0 && !model_meta_.strides.empty();
+  const bool use_dfl = want_dfl && has_meta;
 
-  if (use_dfl) {
-    if (model_meta_.strides.empty() || model_meta_.reg_max <= 0) {
-      LOGE("RknnEngine: DFL decode requires metadata (strides/reg_max/head) alongside the .rknn model");
-      return {};
-    }
-    // DFL path
-    int cls_ch = C - 4 * reg_max;
-    if (num_classes_ < 0) num_classes_ = cls_ch;
-    // Require stride metadata to avoid heuristic mis-decodes
-    std::vector<int> strides = model_meta_.strides;
-    const bool resolved = resolve_stride_set(input_size_, N, strides);
-    if (!resolved || strides.empty()) {
-      LOGE("RknnEngine: missing/invalid stride metadata for DFL decode (anchors=", N, ", img_size=", input_size_, ")");
-      return {};
-    }
-    AnchorLayout layout = build_anchor_layout(input_size_, N, strides);
-    if (!layout.valid) {
-      LOGE("RknnEngine: anchor layout invalid for provided strides");
-      return {};
-    }
-
-    // Decode distributions to l,t,r,b
-    auto dfl_softmax_project = [&](int base_c, int i)->std::array<float,4> {
-      std::array<float,4> out{};
-      for (int side = 0; side < 4; ++side) {
-        int ch0 = base_c + side * reg_max; // channel start for this side
-        // softmax over reg_max at position i
-        float maxv = -1e30f;
-        for (int k = 0; k < reg_max; ++k) maxv = std::max(maxv, logits[(ch0 + k)*N + i]);
-        float denom = 0.f;
-        float probs[16];
-        for (int k = 0; k < reg_max; ++k) { float v = std::exp(logits[(ch0 + k)*N + i] - maxv); probs[k] = v; denom += v; }
-        float proj = 0.f;
-        for (int k = 0; k < reg_max; ++k) proj += probs[k] * (float)k;
-        out[side] = (denom > 0.f) ? (proj / denom) : 0.f;
-      }
-      return out; // in grid units
-    };
-
-    // For each anchor, compute bbox and class
-    for (int i = 0; i < N; ++i) {
-      auto dfl = dfl_softmax_project(0, i); // 0..63
-      float s = layout.stride_map[i];
-      // scale distances by stride
-      float l = dfl[0] * s, t = dfl[1] * s, r = dfl[2] * s, b = dfl[3] * s;
-      float x1 = layout.anchor_cx[i] - l;
-      float y1 = layout.anchor_cy[i] - t;
-      float x2 = layout.anchor_cx[i] + r;
-      float y2 = layout.anchor_cy[i] + b;
-      // class scores
-      float best_conf = 0.f; int best_cls = 0;
-      for (int c = 0; c < cls_ch; ++c) {
-        float conf = sigmoid(logits[(4*reg_max + c)*N + i]);
-        if (conf > best_conf) { best_conf = conf; best_cls = c; }
-      }
-      if (best_conf >= decode_params_.conf_thres) {
-        Detection d;
-        float scale = letterbox_info.scale, dx = letterbox_info.dx, dy = letterbox_info.dy;
-        float w = x2 - x1, h = y2 - y1;
-        d.x = (x1 - dx) / scale; d.y = (y1 - dy) / scale;
-        d.w = w / scale; d.h = h / scale;
-        d.confidence = best_conf; d.class_id = best_cls; d.class_name = "class_" + std::to_string(best_cls);
-        dets.push_back(d);
-        if (decode_params_.max_boxes > 0 && static_cast<int>(dets.size()) >= decode_params_.max_boxes) {
-          break;
-        }
-      }
-    }
-  } else {
-    // Raw path
+  auto decode_raw = [&]() {
     if (num_classes_ < 0) num_classes_ = std::max(0, C - 5); // assume objness present; if not, handled by loop
     for(int i=0;i<N;i++){
       float cx = logits[0*N + i];
@@ -359,6 +296,87 @@ std::vector<Detection> RknnEngine::infer(const cv::Mat& image){
         }
       }
     }
+  };
+
+  bool fell_back_to_raw = false;
+
+  if (use_dfl) {
+    // DFL path
+    int cls_ch = C - 4 * reg_max;
+    if (cls_ch <= 0) {
+      LOGW("RknnEngine: DFL decode skipped due to invalid class channels (C=", C, ", reg_max=", reg_max, ")");
+      fell_back_to_raw = true;
+    } else {
+      if (num_classes_ < 0) num_classes_ = cls_ch;
+      // Require stride metadata to avoid heuristic mis-decodes
+      std::vector<int> strides = model_meta_.strides;
+      const bool resolved = resolve_stride_set(input_size_, N, strides);
+      if (!resolved || strides.empty()) {
+        LOGW("RknnEngine: missing/invalid stride metadata for DFL decode (anchors=", N, ", img_size=", input_size_, "), falling back to raw decode");
+        fell_back_to_raw = true;
+      } else {
+        AnchorLayout layout = build_anchor_layout(input_size_, N, strides);
+        if (!layout.valid) {
+          LOGW("RknnEngine: anchor layout invalid for provided strides, falling back to raw decode");
+          fell_back_to_raw = true;
+        } else {
+          // Decode distributions to l,t,r,b
+          auto dfl_softmax_project = [&](int base_c, int i)->std::array<float,4> {
+            std::array<float,4> out{};
+            for (int side = 0; side < 4; ++side) {
+              int ch0 = base_c + side * reg_max; // channel start for this side
+              // softmax over reg_max at position i
+              float maxv = -1e30f;
+              for (int k = 0; k < reg_max; ++k) maxv = std::max(maxv, logits[(ch0 + k)*N + i]);
+              float denom = 0.f;
+              std::vector<float> probs(reg_max);
+              for (int k = 0; k < reg_max; ++k) { float v = std::exp(logits[(ch0 + k)*N + i] - maxv); probs[k] = v; denom += v; }
+              float proj = 0.f;
+              for (int k = 0; k < reg_max; ++k) proj += probs[k] * (float)k;
+              out[side] = (denom > 0.f) ? (proj / denom) : 0.f;
+            }
+            return out; // in grid units
+          };
+
+          // For each anchor, compute bbox and class
+          for (int i = 0; i < N; ++i) {
+            auto dfl = dfl_softmax_project(0, i); // 0..(reg_max-1)
+            float s = layout.stride_map[i];
+            // scale distances by stride
+            float l = dfl[0] * s, t = dfl[1] * s, r = dfl[2] * s, b = dfl[3] * s;
+            float x1 = layout.anchor_cx[i] - l;
+            float y1 = layout.anchor_cy[i] - t;
+            float x2 = layout.anchor_cx[i] + r;
+            float y2 = layout.anchor_cy[i] + b;
+            // class scores
+            float best_conf = 0.f; int best_cls = 0;
+            for (int c = 0; c < cls_ch; ++c) {
+              float conf = sigmoid(logits[(4*reg_max + c)*N + i]);
+              if (conf > best_conf) { best_conf = conf; best_cls = c; }
+            }
+            if (best_conf >= decode_params_.conf_thres) {
+              Detection d;
+              float scale = letterbox_info.scale, dx = letterbox_info.dx, dy = letterbox_info.dy;
+              float w = x2 - x1, h = y2 - y1;
+              d.x = (x1 - dx) / scale; d.y = (y1 - dy) / scale;
+              d.w = w / scale; d.h = h / scale;
+              d.confidence = best_conf; d.class_id = best_cls; d.class_name = "class_" + std::to_string(best_cls);
+              dets.push_back(d);
+              if (decode_params_.max_boxes > 0 && static_cast<int>(dets.size()) >= decode_params_.max_boxes) {
+                break;
+              }
+            }
+          }
+        }
+      }
+    }
+  } else if (want_dfl && !has_meta) {
+    LOGW("RknnEngine: DFL-like output detected but missing metadata (reg_max/strides); falling back to raw decode");
+    fell_back_to_raw = true;
+  }
+
+  if (!use_dfl || fell_back_to_raw) {
+    decode_raw();
   }
   rkapp::post::NMSConfig nms_cfg;
   nms_cfg.conf_thres = decode_params_.conf_thres;
