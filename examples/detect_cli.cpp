@@ -100,7 +100,7 @@ Config loadConfig(const std::string& config_path) {
                 config.imgsz = yaml["engine"]["imgsz"].as<int>(640);
                 if (yaml["engine"]["input_size"] && yaml["engine"]["input_size"].IsSequence()) {
                     const auto& s = yaml["engine"]["input_size"];
-                    if (!s.empty()) {
+                    if (s.size() > 0) {
                         config.imgsz = s[0].as<int>(config.imgsz);
                     }
                 }
