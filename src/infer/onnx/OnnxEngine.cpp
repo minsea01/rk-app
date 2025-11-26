@@ -38,7 +38,8 @@ struct OnnxEngine::Impl {
   static std::vector<Detection> parseOutput(Ort::Value& output,
                                             const rkapp::preprocess::LetterboxInfo& letterbox_info,
                                             cv::Size original_size,
-                                            const DecodeParams& params) {
+                                            const DecodeParams& params,
+                                            bool& unsupported_model) {
     std::vector<Detection> detections;
     auto shape = output.GetTensorTypeAndShapeInfo().GetShape();
     float* data = output.GetTensorMutableData<float>();
@@ -68,6 +69,13 @@ struct OnnxEngine::Impl {
     if (num_classes <= 0) {
       LOGW("OnnxEngine: invalid class channel count");
       return detections;
+    }
+    // DFL-style outputs (e.g., YOLOv8/YOLO11) are not supported by this lightweight decoder
+    if (C >= 64) {
+      LOGE("OnnxEngine: detected large channel dimension (C=", C, ") that likely corresponds to a DFL head; "
+           "export a raw head or add DFL decoding before using this engine");
+      unsupported_model = true;
+      return {};
     }
 
     auto sigmoid = [](float x) { return 1.0f / (1.0f + std::exp(-x)); };
@@ -174,9 +182,14 @@ bool OnnxEngine::init(const std::string& model_path, int img_size) {
 
 std::vector<Detection> OnnxEngine::infer(const cv::Mat& image) {
   if (!is_initialized_) { LOGE("OnnxEngine: Not initialized!"); return {}; }
+  if (unsupported_model_) { LOGE("OnnxEngine: Model output layout unsupported (DFL). Aborting inference."); return {}; }
   try {
     rkapp::preprocess::LetterboxInfo letterbox_info;
     cv::Mat processed = rkapp::preprocess::Preprocess::letterbox(image, input_size_, letterbox_info);
+    if (processed.empty()) {
+      LOGE("OnnxEngine: Preprocess failed (empty output). Input may be invalid.");
+      return {};
+    }
     cv::Mat rgb = rkapp::preprocess::Preprocess::convertColor(processed, cv::COLOR_BGR2RGB);
     cv::Mat normalized = rkapp::preprocess::Preprocess::normalize(rgb, 1.0f/255.0f);
     cv::Mat blob = rkapp::preprocess::Preprocess::hwc2chw(normalized);
@@ -197,7 +210,16 @@ std::vector<Detection> OnnxEngine::infer(const cv::Mat& image) {
       LOGW("OnnxEngine inference returned no outputs");
       return {};
     }
-    auto dets = Impl::parseOutput(outputs[0], letterbox_info, image.size(), decode_params_);
+    if (outputs.size() > 1) {
+      LOGW("OnnxEngine: multiple outputs detected (", outputs.size(), "), using first tensor only");
+    }
+    bool unsupported = false;
+    auto dets = Impl::parseOutput(outputs[0], letterbox_info, image.size(), decode_params_, unsupported);
+    if (unsupported) {
+      unsupported_model_ = true;
+      LOGE("OnnxEngine: Unsupported DFL-style output; stopping further inference attempts");
+      return {};
+    }
     rkapp::post::NMSConfig nms_cfg;
     nms_cfg.conf_thres = decode_params_.conf_thres;
     nms_cfg.iou_thres = decode_params_.iou_thres;

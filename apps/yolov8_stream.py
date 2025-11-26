@@ -18,6 +18,7 @@ import cv2
 import numpy as np
 
 from apps.utils.yolo_post import letterbox, nms, sigmoid
+from apps.utils.headless import safe_imshow, safe_waitKey
 
 # Setup logging
 logger = logging.getLogger(__name__)
@@ -177,6 +178,9 @@ def run_stream(args) -> None:
         'infer': StageStats(),
         'post': StageStats(),
     }
+    # shared upload throttle state
+    pending_upload = None
+    last_sent = 0.0
 
     def t_capture() -> None:
         """Capture thread: reads frames from video source."""
@@ -262,9 +266,7 @@ def run_stream(args) -> None:
         if args.names and Path(args.names).exists():
             names = [x.strip() for x in Path(args.names).read_text().splitlines() if x.strip()]
         writer = None
-        if args.save:
-            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-            writer = cv2.VideoWriter(str(args.save), fourcc, max(1, args.fps or 25), (args.width or args.imgsz, args.height or args.imgsz))
+        writer_size = None
         count = 0
         dropped_uploads = 0
         t_start = time.perf_counter()
@@ -312,12 +314,23 @@ def run_stream(args) -> None:
             if args.display:
                 fps = count / max(1e-6, (now - t_start))
                 cv2.putText(frame, f'FPS:{fps:.1f}', (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 0), 2)
-                cv2.imshow('result', frame)
-                if cv2.waitKey(1) & 0xFF == 27:
+                # safe_imshow handles headless fallback
+                if not safe_imshow('result', frame):
+                    logger.debug("safe_imshow failed; continuing without display")
+                if safe_waitKey(1) & 0xFF == 27:
                     stop.set()
                     break
             if writer:
                 writer.write(frame)
+            elif args.save:
+                writer_size = (frame.shape[1], frame.shape[0])
+                fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+                writer = cv2.VideoWriter(str(args.save), fourcc, max(1, args.fps or 25), writer_size)
+                if writer.isOpened():
+                    writer.write(frame)
+                else:
+                    logger.error(f"Failed to open VideoWriter for {args.save}")
+                    writer = None
             if args.max_frames > 0 and count >= args.max_frames:
                 stop.set()
                 break
@@ -327,9 +340,9 @@ def run_stream(args) -> None:
 
     def t_upload() -> None:
         """Upload thread: POST detection results to HTTP endpoint."""
+        nonlocal last_sent, pending_upload
         url = args.upload_http
         headers = {'Content-Type': 'application/json'}
-        last_sent = 0.0
         failed_uploads = 0
         while not stop.is_set():
             if q_up is None:
@@ -339,8 +352,14 @@ def run_stream(args) -> None:
             except Empty:
                 continue
             now = time.time()
+            # Throttle: keep latest payload if not yet time to send
             if args.upload_interval > 0 and (now - last_sent) < args.upload_interval:
+                pending_upload = payload
                 continue
+            # If there is a pending newer payload, replace current
+            if pending_upload is not None:
+                payload = pending_upload
+                pending_upload = None
             req = request.Request(url, data=json.dumps(payload).encode('utf-8'), headers=headers, method='POST')
             try:
                 with request.urlopen(req, timeout=1.0) as resp:
@@ -392,7 +411,7 @@ def main():
     p.add_argument('--fps', type=int, default=0)
     p.add_argument('--width', type=int, default=0)
     p.add_argument('--height', type=int, default=0)
-    p.add_argument('--display', action='store_true', default=True)
+    p.add_argument('--display', action='store_true', default=False, help='show result window (auto-fallback to save when headless)')
     p.add_argument('--save', type=Path, default=None)
     p.add_argument('--max-frames', type=int, default=0)
     p.add_argument('--upload-http', type=str, default=None, help='POST detections JSON to this URL')

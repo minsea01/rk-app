@@ -127,13 +127,20 @@ class ConfigLoader:
             value = os.environ[env_key]
             source = 'ENV'
 
-            # Auto-convert numeric strings
-            if value_type in (int, float):
+            # Auto-convert numeric strings (allow 0x.. for ints)
+            if value_type is int:
                 try:
-                    value = value_type(value)
+                    value = int(value, 0)
                 except ValueError as e:
                     raise ValidationError(
-                        f"Invalid {value_type.__name__} value for {env_key}={value}: {e}"
+                        f"Invalid int value for {env_key}={value}: {e}"
+                    ) from e
+            elif value_type is float:
+                try:
+                    value = float(value)
+                except ValueError as e:
+                    raise ValidationError(
+                        f"Invalid float value for {env_key}={value}: {e}"
                     ) from e
 
         # Priority 3: YAML config

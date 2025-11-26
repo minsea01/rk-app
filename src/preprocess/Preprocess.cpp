@@ -1,6 +1,7 @@
 #include "rkapp/preprocess/Preprocess.hpp"
 #include <algorithm>
 #include <cstring>
+#include <cmath>
 
 namespace rkapp::preprocess {
 
@@ -9,6 +10,15 @@ cv::Mat Preprocess::letterbox(const cv::Mat& src, int target_size, LetterboxInfo
 }
 
 cv::Mat Preprocess::letterbox(const cv::Mat& src, cv::Size target_size, LetterboxInfo& info) {
+    constexpr int kMinDim = 1;
+    constexpr float kMinRatio = 1e-6f;
+    constexpr float kPadEps = 0.1f;  // match Python letterbox rounding
+
+    if (src.empty() || src.cols < kMinDim || src.rows < kMinDim ||
+        target_size.width < kMinDim || target_size.height < kMinDim) {
+        info = {0.f, 0.f, 0.f, 0, 0};
+        return {};
+    }
     int src_w = src.cols;
     int src_h = src.rows;
     int dst_w = target_size.width;
@@ -16,10 +26,14 @@ cv::Mat Preprocess::letterbox(const cv::Mat& src, cv::Size target_size, Letterbo
     
     // Calculate scale factor
     float scale = std::min((float)dst_w / src_w, (float)dst_h / src_h);
+    if (scale < kMinRatio) {
+        info = {0.f, 0.f, 0.f, 0, 0};
+        return {};
+    }
     
     // New dimensions after scaling
-    int new_w = static_cast<int>(src_w * scale);
-    int new_h = static_cast<int>(src_h * scale);
+    int new_w = static_cast<int>(std::round(src_w * scale));
+    int new_h = static_cast<int>(std::round(src_h * scale));
     
     // Calculate padding
     float dx = (dst_w - new_w) / 2.0f;
@@ -44,12 +58,24 @@ cv::Mat Preprocess::letterbox(const cv::Mat& src, cv::Size target_size, Letterbo
     cv::Mat dst(dst_h, dst_w, src.type(), cv::Scalar(114, 114, 114));
     
     // Calculate integer offsets for padding
-    int top = static_cast<int>(dy);
-    int left = static_cast<int>(dx);
+    int top = static_cast<int>(std::round(dy - kPadEps));
+    int left = static_cast<int>(std::round(dx - kPadEps));
+    int bottom = static_cast<int>(std::round(dy + kPadEps));
+    int right = static_cast<int>(std::round(dx + kPadEps));
+    top = std::max(top, 0);
+    left = std::max(left, 0);
+    bottom = std::max(bottom, 0);
+    right = std::max(right, 0);
     
     // Copy resized image to center of padded image
     cv::Rect roi(left, top, new_w, new_h);
-    resized.copyTo(dst(roi));
+    if (roi.x >= 0 && roi.y >= 0 && roi.x + roi.width <= dst.cols && roi.y + roi.height <= dst.rows) {
+        resized.copyTo(dst(roi));
+    } else {
+        // Should not happen, but guard against bad padding calculations
+        info = {0.f, 0.f, 0.f, 0, 0};
+        return {};
+    }
     
     return dst;
 }
