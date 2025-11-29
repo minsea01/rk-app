@@ -15,24 +15,47 @@ from apps.logger import setup_logger
 # Setup logger
 logger = setup_logger(__name__, level='INFO')
 
-def export(weights: str, imgsz: int, opset: int, simplify: bool, dynamic: bool, half: bool, outdir: Path, outfile: str = None):
-    outdir.mkdir(parents=True, exist_ok=True)
+# Lazily-imported YOLO class (tests patch this symbol directly)
+YOLO = None
+
+
+def _get_yolo_class():
+    """Return Ultralytics YOLO class, importing lazily for easier testing."""
+    global YOLO
+    if YOLO is not None:
+        return YOLO
+
     try:
-        from ultralytics import YOLO
+        from ultralytics import YOLO as yolo_cls
     except ImportError as e:
         raise ConfigurationError(
             f"Ultralytics not installed. Please run: pip install ultralytics\nError: {e}"
         ) from e
 
-    # Validate weights file exists
+    YOLO = yolo_cls
+    return YOLO
+
+
+def export(weights: str, imgsz: int, opset: int, simplify: bool, dynamic: bool, half: bool, outdir: Path, outfile: str = None):
+    outdir.mkdir(parents=True, exist_ok=True)
+
+    # Validate weights file exists before importing heavy deps
     weights_path = Path(weights)
     if not weights_path.exists():
         raise ModelLoadError(f"Weights file not found: {weights}")
 
+    yolo_cls = _get_yolo_class()
+
     logger.info(f"Loading model: {weights}")
     try:
-        model = YOLO(weights)
+        model = yolo_cls(weights)
+    except ImportError as e:
+        raise ConfigurationError(
+            f"Ultralytics not installed. Please run: pip install ultralytics\nError: {e}"
+        ) from e
     except (RuntimeError, ValueError, FileNotFoundError) as e:
+        raise ModelLoadError(f"Failed to load model from {weights}: {e}") from e
+    except Exception as e:  # pragma: no cover - defensive
         raise ModelLoadError(f"Failed to load model from {weights}: {e}") from e
 
     logger.info(f"Exporting to ONNX (imgsz={imgsz}, opset={opset}, simplify={simplify})")
@@ -45,7 +68,7 @@ def export(weights: str, imgsz: int, opset: int, simplify: bool, dynamic: bool, 
             dynamic=dynamic,
             half=half,
         )
-    except (RuntimeError, ValueError, TypeError) as e:
+    except Exception as e:
         raise ModelLoadError(f"Failed to export model to ONNX: {e}") from e
 
     # Move result into the outdir if ultralytics writes into CWD
@@ -54,7 +77,7 @@ def export(weights: str, imgsz: int, opset: int, simplify: bool, dynamic: bool, 
     if onnx_path.resolve() != target.resolve():
         try:
             target.write_bytes(onnx_path.read_bytes())
-        except (IOError, OSError, PermissionError) as e:
+        except Exception as e:
             raise ModelLoadError(f"Failed to move ONNX file to {target}: {e}") from e
 
     logger.info(f"Successfully exported ONNX: {target}")
@@ -79,6 +102,9 @@ def main():
         return 0
     except (ModelLoadError, ConfigurationError) as e:
         logger.error(f"Export failed: {e}")
+        return 1
+    except Exception as e:
+        logger.error(f"Unexpected error: {e}")
         return 1
     except KeyboardInterrupt:
         logger.info("Interrupted by user")

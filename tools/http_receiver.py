@@ -20,6 +20,21 @@ class Handler(BaseHTTPRequestHandler):
     # Maximum allowed payload size (10MB)
     MAX_CONTENT_LENGTH = 10 * 1024 * 1024
 
+    def __init__(self, request, client_address, server):
+        # Allow unit tests to instantiate handler without a running server
+        if server is None:
+            self.request = request
+            self.client_address = client_address
+            self.server = server
+            self.rfile = getattr(request, 'rfile', None)
+            self.wfile = getattr(request, 'wfile', None)
+            self.headers = {}
+            self.path = '/'
+            self.request_version = 'HTTP/1.1'
+            self.command = 'POST'
+            return
+        super().__init__(request, client_address, server)
+
     def do_POST(self):
         # Validate Content-Length header
         try:
@@ -39,8 +54,19 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(b'{"error":"Payload too large"}')
             return
 
-        # Read and parse body
-        body = self.rfile.read(length)
+        # Read and normalize body
+        if length > 0:
+            raw_body = self.rfile.read(length)
+        else:
+            raw_body = b''
+
+        if isinstance(raw_body, (bytes, bytearray)):
+            body = bytes(raw_body)
+        elif raw_body is None:
+            body = b''
+        else:
+            body = str(raw_body).encode('utf-8', errors='ignore')
+
         try:
             data = json.loads(body.decode('utf-8'))
         except json.JSONDecodeError as e:
