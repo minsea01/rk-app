@@ -9,16 +9,32 @@ import cv2
 
 def make_input(img_path: Path, size: int) -> np.ndarray:
     img0 = None
-    if img_path and str(img_path):
-        p = Path(img_path)
-        if p.exists():
-            img0 = cv2.imread(str(p))
-    if img0 is None:
+    path_str = str(img_path) if img_path is not None else ''
+    if path_str:
+        img0 = cv2.imread(path_str)
+
+    synthetic = img0 is None
+    if synthetic:
         # synthetic image
         rng = np.random.RandomState(0)
         img0 = (rng.rand(size, size, 3) * 255).astype(np.uint8)
-        cv2.putText(img0, 'SYNTH', (10, size // 2), cv2.FONT_HERSHEY_SIMPLEX, 2.0, (0, 255, 0), 3)
-    img = cv2.resize(img0, (size, size), interpolation=cv2.INTER_LINEAR)
+        if hasattr(cv2, 'putText'):
+            font = getattr(cv2, 'FONT_HERSHEY_SIMPLEX', 0)
+            cv2.putText(img0, 'SYNTH', (10, size // 2), font, 2.0, (0, 255, 0), 3)
+
+    if img0.ndim == 2:
+        img0 = np.stack([img0] * 3, axis=-1)
+
+    needs_resize = not synthetic and (img0.shape[0] != size or img0.shape[1] != size)
+    if needs_resize and hasattr(cv2, 'resize'):
+        img = cv2.resize(img0, (size, size), interpolation=getattr(cv2, 'INTER_LINEAR', 1))
+    else:
+        if img0.shape[0] != size or img0.shape[1] != size:
+            # simple nearest-neighbor fallback using numpy resize
+            img = np.resize(img0, (size, size, img0.shape[2]))
+        else:
+            img = img0
+
     x = (img.astype(np.float32) / 255.0).transpose(2, 0, 1)[None]  # NCHW
     return x
 
