@@ -426,7 +426,7 @@ def postprocess_yolov8(
     """
     # Validate input shape (replace assert with explicit exception)
     if preds.ndim != 3 or preds.shape[0] != 1:
-        raise ValueError(
+        raise AssertionError(
             f"Expected predictions shape (1, N, C), got {preds.shape}. "
             f"ndim={preds.ndim}, batch_size={preds.shape[0] if preds.ndim >= 1 else 'N/A'}"
         )

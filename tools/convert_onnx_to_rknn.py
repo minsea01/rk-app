@@ -18,6 +18,30 @@ from apps.logger import setup_logger
 # Setup logger
 logger = setup_logger(__name__, level='INFO')
 
+# Lazily-imported RKNN class (tests patch this symbol directly)
+RKNN = None
+
+
+def _get_rknn_class():
+    """Return RKNN class, importing lazily to support dependency injection in tests."""
+    global RKNN
+    if RKNN is not None:
+        return RKNN
+
+    try:
+        from rknn.api import RKNN as rknn_cls
+    except ImportError as e:
+        raise ConfigurationError(
+            "rknn-toolkit2 not installed. Please run: pip install rknn-toolkit2"
+        ) from e
+    except (AttributeError, TypeError) as e:
+        raise ConfigurationError(
+            "rknn-toolkit2 version incompatible. Please ensure rknn-toolkit2>=2.3.2 is installed."
+        ) from e
+
+    RKNN = rknn_cls
+    return RKNN
+
 
 @contextmanager
 def rknn_context(verbose: bool = True):
@@ -31,26 +55,19 @@ def rknn_context(verbose: bool = True):
 
     Yields:
         RKNN: Initialized RKNN toolkit instance
-
-    Example:
-        >>> with rknn_context() as rknn:
-        ...     rknn.load_onnx('model.onnx')
-        ...     rknn.build(do_quantization=True, dataset='calib.txt')
-        ...     rknn.export_rknn('model.rknn')
-        ... # rknn.release() automatically called here
     """
+    rknn_cls = _get_rknn_class()
     try:
-        from rknn.api import RKNN
+        rknn = rknn_cls(verbose=verbose)
     except ImportError as e:
         raise ConfigurationError(
-            f"rknn-toolkit2 not installed. Please run: pip install rknn-toolkit2\nError: {e}"
+            "rknn-toolkit2 not installed. Please run: pip install rknn-toolkit2"
         ) from e
     except (AttributeError, TypeError) as e:
         raise ConfigurationError(
-            f"rknn-toolkit2 version incompatible. Please ensure rknn-toolkit2>=2.3.2 is installed.\nError: {e}"
+            "rknn-toolkit2 version incompatible. Please ensure rknn-toolkit2>=2.3.2 is installed."
         ) from e
 
-    rknn = RKNN(verbose=verbose)
     try:
         yield rknn
     finally:
@@ -176,20 +193,43 @@ def build_rknn(
         )
 
         logger.info(f'Loading ONNX: {onnx_path}')
-        ret = rknn.load_onnx(model=str(onnx_path))
+        ret = rknn.load_onnx(str(onnx_path))
         if ret != 0:
             raise ModelLoadError(f'Failed to load ONNX model: {onnx_path}')
 
         dataset = None
-        if do_quant:
+        active_quant = bool(do_quant)
+        if active_quant:
             if calib is None:
-                raise ConfigurationError('INT8 quantization requested but no calibration dataset provided')
-            dataset = str(calib)
-            if not Path(dataset).exists():
-                raise ConfigurationError(f'Calibration file or folder not found: {dataset}')
+                logger.warning(
+                    'INT8 quantization requested but no calibration dataset provided; '
+                    'falling back to float build.'
+                )
+                active_quant = False
+            else:
+                dataset = str(calib)
+                if not Path(dataset).exists():
+                    raise ConfigurationError(f'Calibration file or folder not found: {dataset}')
 
         logger.info('Building RKNN model...')
-        ret = rknn.build(do_quantization=bool(do_quant), dataset=dataset)
+        build_kwargs = {
+            'do_quantization': active_quant,
+        }
+        if dataset is not None:
+            build_kwargs['dataset'] = dataset
+        if quantized_dtype:
+            build_kwargs['quantized_dtype'] = quantized_dtype
+
+        try:
+            ret = rknn.build(**build_kwargs)
+        except TypeError as e:
+            # Older RKNN SDKs may not accept quantized_dtype; try once without it.
+            if 'quantized_dtype' in build_kwargs:
+                build_kwargs.pop('quantized_dtype')
+                ret = rknn.build(**build_kwargs)
+            else:
+                raise
+
         if ret != 0:
             raise ModelLoadError('Failed to build RKNN model')
 

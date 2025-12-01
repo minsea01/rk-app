@@ -14,6 +14,7 @@ Usage:
     # Safe imshow that automatically falls back to file saving
     safe_imshow('window_name', image, fallback_path='output.jpg')
 """
+import importlib
 import os
 import sys
 from pathlib import Path
@@ -23,6 +24,7 @@ from apps.logger import setup_logger
 
 # Lazy import cv2 to avoid hard dependency
 _cv2 = None
+
 
 def _get_cv2():
     """Lazy import of cv2."""
@@ -34,6 +36,16 @@ def _get_cv2():
         except ImportError:
             _cv2 = False  # Mark as unavailable
     return _cv2 if _cv2 is not False else None
+
+
+def _cv2_error_type(cv2_module):
+    """Return a safe cv2 error type for exception handling."""
+    if cv2_module is None:
+        return Exception
+    err_type = getattr(cv2_module, 'error', Exception)
+    if isinstance(err_type, type) and issubclass(err_type, BaseException):
+        return err_type
+    return Exception
 
 logger = setup_logger(__name__, level='INFO')
 
@@ -179,6 +191,7 @@ def safe_imshow(
         True
     """
     cv2 = _get_cv2()
+    cv2_error_type = _cv2_error_type(cv2)
     if cv2 is None:
         # cv2 not available - must save to file
         if fallback_path is None:
@@ -189,8 +202,17 @@ def safe_imshow(
         fallback_path.parent.mkdir(parents=True, exist_ok=True)
 
         # Use PIL as fallback if available
+        Image = None
         try:
-            from PIL import Image
+            Image = importlib.import_module('PIL.Image')  # type: ignore
+        except (ImportError, AttributeError):
+            try:
+                from PIL import Image as Image  # type: ignore
+            except (ImportError, AttributeError):
+                logger.error("Neither cv2 nor PIL available for image saving")
+                return False
+
+        try:
             if hasattr(image, 'shape'):  # numpy array
                 # Convert BGR to RGB if needed
                 if len(image.shape) == 3 and image.shape[2] == 3:
@@ -199,9 +221,6 @@ def safe_imshow(
                 img_pil.save(str(fallback_path))
                 logger.info(f"cv2 unavailable - saved with PIL to: {fallback_path}")
                 return True
-        except ImportError:
-            logger.error("Neither cv2 nor PIL available for image saving")
-            return False
         except (IOError, OSError, ValueError) as e:
             logger.error(f"Failed to save image with PIL: {e}")
             return False
@@ -222,7 +241,7 @@ def safe_imshow(
             cv2.imwrite(str(fallback_path), image)
             logger.info(f"Headless mode - saved image to: {fallback_path}")
             return True
-        except (cv2.error, IOError, OSError) as e:
+        except (cv2_error_type, IOError, OSError) as e:
             logger.error(f"Failed to save image to {fallback_path}: {e}")
             return False
     else:
@@ -232,7 +251,7 @@ def safe_imshow(
             if wait_key >= 0:
                 cv2.waitKey(wait_key)
             return True
-        except cv2.error as e:
+        except cv2_error_type as e:
             logger.error(f"cv2.imshow failed for '{window_name}': {e}")
             return False
 
@@ -252,9 +271,10 @@ def safe_waitKey(delay: int = 0) -> int:
     cv2 = _get_cv2()
     if cv2 is None or is_headless():
         return -1
+    cv2_error_type = _cv2_error_type(cv2)
     try:
         return cv2.waitKey(delay)
-    except cv2.error as e:
+    except cv2_error_type as e:
         logger.debug(f"cv2.waitKey failed: {e}")
         return -1
 

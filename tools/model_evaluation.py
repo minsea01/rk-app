@@ -27,8 +27,18 @@ import numpy as np
 import json
 from collections import defaultdict
 import seaborn as sns
-from ultralytics import YOLO
-import torch
+try:
+    import torch  # type: ignore
+except ImportError:  # pragma: no cover - optional dependency
+    torch = None
+
+try:
+    from ultralytics import YOLO as _ULTRALYTICS_YOLO
+except ImportError:
+    _ULTRALYTICS_YOLO = None
+
+# Expose YOLO symbol for tests to patch
+YOLO = _ULTRALYTICS_YOLO
 
 class ModelEvaluator:
     def __init__(self, model_path, data_yaml_path, conf_threshold=0.25, iou_threshold=0.6):
@@ -43,17 +53,45 @@ class ModelEvaluator:
     def load_model(self):
         """加载YOLO模型"""
         print(f"🤖 加载模型: {self.model_path}")
+        global YOLO
+        if YOLO is None:
+            try:
+                from ultralytics import YOLO as _refreshed_yolo
+            except ImportError as exc:
+                raise RuntimeError("Ultralytics is not installed. Please run: pip install ultralytics") from exc
+            YOLO = _refreshed_yolo
+
         self.model = YOLO(str(self.model_path))
         print(f"✅ 模型加载成功")
         
     def load_config(self):
         """加载数据集配置"""
         with open(self.data_yaml_path, 'r', encoding='utf-8') as f:
-            self.config = yaml.safe_load(f)
-            
-        self.dataset_path = Path(self.config['path'])
-        self.num_classes = self.config['nc']
-        self.class_names = self.config.get('names', [f'class_{i}' for i in range(self.num_classes)])
+            self.config = yaml.safe_load(f) or {}
+
+        cfg = self.config
+        dataset_root = cfg.get('path') or self.data_yaml_path.parent
+        self.dataset_path = Path(dataset_root)
+
+        names_cfg = cfg.get('names')
+        if isinstance(names_cfg, dict):
+            # Preserve ordering by sorted key
+            ordered_names = [names_cfg[k] for k in sorted(names_cfg)]
+        elif isinstance(names_cfg, (list, tuple)):
+            ordered_names = list(names_cfg)
+        else:
+            ordered_names = []
+
+        nc = cfg.get('nc')
+        if nc is None:
+            nc = len(ordered_names)
+        if nc == 0 and not ordered_names:
+            ordered_names = []
+        if not ordered_names:
+            ordered_names = [f'class_{i}' for i in range(nc)]
+
+        self.num_classes = nc
+        self.class_names = ordered_names
         
         print(f"📊 数据集: {self.dataset_path}")
         print(f"📊 类别数: {self.num_classes}")
@@ -64,6 +102,8 @@ class ModelEvaluator:
         print(f"\n🔬 运行 {split} 集验证...")
         
         # 使用ultralytics内置验证
+        use_cuda = torch is not None and torch.cuda.is_available()
+
         results = self.model.val(
             data=str(self.data_yaml_path),
             split=split,
@@ -71,7 +111,7 @@ class ModelEvaluator:
             iou=self.iou_threshold,
             plots=False,  # 我们自己生成图表
             save_json=True,
-            device='0' if torch.cuda.is_available() else 'cpu'
+            device='0' if use_cuda else 'cpu'
         )
         
         self.val_results = results
@@ -81,7 +121,8 @@ class ModelEvaluator:
         """分析预测结果"""
         print(f"\n🔍 分析 {split} 集预测结果...")
         
-        img_dir = self.dataset_path / self.config[split]
+        img_subdir = self.config.get(split, split)
+        img_dir = self.dataset_path / img_subdir
         
         # 获取图像文件列表
         img_files = []
@@ -121,10 +162,26 @@ class ModelEvaluator:
         
         return predictions, confidence_scores
     
-    def plot_pr_curves(self, output_path='pr_curves.png'):
+    def plot_pr_curves(self, precision=None, recall=None, output_path='pr_curves.png'):
         """绘制PR曲线"""
         print(f"\n📈 生成PR曲线...")
-        
+
+        if precision is not None and recall is not None:
+            plt.figure(figsize=(8, 6))
+            plt.plot(recall, precision)
+            plt.xlabel('Recall')
+            plt.ylabel('Precision')
+            plt.title('PR Curve')
+            plt.grid(True, alpha=0.3)
+            plt.savefig(output_path, dpi=150, bbox_inches='tight')
+            plt.close()
+            print(f"📈 PR曲线已保存: {output_path}")
+            return
+
+        if not hasattr(self, 'val_results'):
+            print("⚠️ 无法获取PR曲线数据")
+            return
+
         if not hasattr(self.val_results, 'curves'):
             print("⚠️ 无法获取PR曲线数据")
             return
@@ -175,6 +232,10 @@ Recall: {self.val_results.box.mr:.3f}
     def plot_confusion_matrix(self, output_path='confusion_matrix.png'):
         """绘制混淆矩阵"""
         print(f"\n🔄 生成混淆矩阵...")
+
+        if not hasattr(self, 'val_results'):
+            print("⚠️ 无法获取混淆矩阵数据")
+            return
         
         if hasattr(self.val_results, 'confusion_matrix') and self.val_results.confusion_matrix is not None:
             cm = self.val_results.confusion_matrix.matrix
