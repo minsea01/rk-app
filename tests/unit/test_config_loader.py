@@ -8,7 +8,8 @@ import pytest
 import tempfile
 from pathlib import Path
 
-from apps.config_loader import ConfigLoader
+from apps.config_loader import ConfigLoader, get_loader, _default_loader
+import apps.config_loader as config_loader_module
 from apps.exceptions import ConfigurationError, ValidationError
 from apps.config import ModelConfig
 
@@ -252,3 +253,130 @@ class TestConfigLoaderIntegration:
             Path(yaml_path).unlink()
             if 'RK_IMGSZ' in os.environ:
                 del os.environ['RK_IMGSZ']
+
+
+class TestGetLoader:
+    """Test suite for get_loader() singleton function."""
+
+    def setup_method(self):
+        """Reset global singleton before each test."""
+        config_loader_module._default_loader = None
+
+    def teardown_method(self):
+        """Clean up after each test."""
+        config_loader_module._default_loader = None
+
+    def test_get_loader_returns_config_loader_instance(self):
+        """Test that get_loader returns a ConfigLoader instance."""
+        loader = get_loader()
+        assert isinstance(loader, ConfigLoader)
+
+    def test_get_loader_returns_singleton(self):
+        """Test that get_loader returns the same instance on subsequent calls."""
+        loader1 = get_loader()
+        loader2 = get_loader()
+        assert loader1 is loader2, "get_loader should return singleton instance"
+
+    def test_get_loader_recreates_with_new_config_file(self):
+        """Test that providing config_file creates new instance."""
+        loader1 = get_loader()
+
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+            f.write('imgsz: 640\n')
+            yaml_path = f.name
+
+        try:
+            loader2 = get_loader(config_file=yaml_path)
+            # Should be a different instance
+            assert loader2 is not loader1, "New config_file should create new instance"
+            # Should load the new config
+            assert loader2.get('imgsz', default=416, value_type=int) == 640
+        finally:
+            Path(yaml_path).unlink()
+
+    def test_get_loader_uses_default_config_file(self):
+        """Test that get_loader uses default config file path."""
+        loader = get_loader()
+        assert loader.config_file == ConfigLoader.DEFAULT_CONFIG_FILE
+
+
+class TestConfigLoaderErrorPaths:
+    """Test suite for ConfigLoader error handling paths."""
+
+    def test_float_env_conversion_error(self):
+        """Test that invalid float ENV values raise ValidationError."""
+        loader = ConfigLoader()
+
+        os.environ['RK_CONF_THRESHOLD'] = 'not_a_float'
+
+        try:
+            with pytest.raises(ValidationError, match="Invalid float value"):
+                loader.get('conf_threshold', value_type=float)
+        finally:
+            del os.environ['RK_CONF_THRESHOLD']
+
+    def test_float_env_hex_not_supported(self):
+        """Test that hex strings for float raise ValidationError."""
+        loader = ConfigLoader()
+
+        os.environ['RK_CONF_THRESHOLD'] = '0x10'  # Hex not valid for float
+
+        try:
+            with pytest.raises(ValidationError, match="Invalid float value"):
+                loader.get('conf_threshold', value_type=float)
+        finally:
+            del os.environ['RK_CONF_THRESHOLD']
+
+    def test_get_rknn_config_invalid_optimization_level(self):
+        """Test that invalid optimization level raises ValidationError."""
+        loader = ConfigLoader()
+
+        # Optimization level must be 0-3
+        with pytest.raises(ValidationError, match="Optimization level must be 0-3"):
+            loader.get_rknn_config(optimization_level=5)
+
+    def test_get_rknn_config_negative_optimization_level(self):
+        """Test that negative optimization level raises ValidationError."""
+        loader = ConfigLoader()
+
+        with pytest.raises(ValidationError, match="Optimization level must be 0-3"):
+            loader.get_rknn_config(optimization_level=-1)
+
+    def test_get_model_config_zero_conf_threshold(self):
+        """Test that zero confidence threshold raises ValidationError."""
+        loader = ConfigLoader()
+
+        with pytest.raises(ValidationError, match="Confidence threshold must be in"):
+            loader.get_model_config(conf_threshold=0.0)
+
+    def test_get_model_config_zero_iou_threshold(self):
+        """Test that zero IOU threshold raises ValidationError."""
+        loader = ConfigLoader()
+
+        with pytest.raises(ValidationError, match="IOU threshold must be in"):
+            loader.get_model_config(iou_threshold=0.0)
+
+    def test_yaml_type_conversion_error(self):
+        """Test type conversion error from YAML values."""
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+            f.write('imgsz: "not_an_int"\n')
+            yaml_path = f.name
+
+        try:
+            loader = ConfigLoader(config_file=yaml_path)
+            with pytest.raises(ValidationError, match="Cannot convert"):
+                loader.get('imgsz', value_type=int)
+        finally:
+            Path(yaml_path).unlink()
+
+    def test_int_env_hex_format_supported(self):
+        """Test that hex format is supported for int ENV values."""
+        loader = ConfigLoader()
+
+        os.environ['RK_CORE_MASK'] = '0x7'  # Hex format
+
+        try:
+            result = loader.get('core_mask', value_type=int)
+            assert result == 7, "Hex format should be parsed correctly"
+        finally:
+            del os.environ['RK_CORE_MASK']

@@ -307,3 +307,287 @@ class TestBuildRKNN:
             # Verify that build was called without quantization parameters
             call_kwargs = mock_rknn_instance.build.call_args[1]
             assert call_kwargs.get('do_quantization') is False
+
+    def test_load_onnx_failure_raises_model_load_error(self):
+        """Test that load_onnx failure raises ModelLoadError."""
+        onnx_path = self.temp_path / 'model.onnx'
+        onnx_path.write_text('fake onnx')
+        out_path = self.temp_path / 'model.rknn'
+
+        mock_rknn_class = MagicMock()
+        mock_rknn_instance = MagicMock()
+        mock_rknn_class.return_value = mock_rknn_instance
+
+        mock_rknn_instance.config.return_value = 0
+        mock_rknn_instance.load_onnx.return_value = -1  # Failure
+
+        with patch('tools.convert_onnx_to_rknn.RKNN', mock_rknn_class):
+            with pytest.raises(ModelLoadError, match="Failed to load ONNX"):
+                build_rknn(onnx_path, out_path)
+
+    def test_build_failure_raises_model_load_error(self):
+        """Test that build failure raises ModelLoadError."""
+        onnx_path = self.temp_path / 'model.onnx'
+        onnx_path.write_text('fake onnx')
+        out_path = self.temp_path / 'model.rknn'
+
+        mock_rknn_class = MagicMock()
+        mock_rknn_instance = MagicMock()
+        mock_rknn_class.return_value = mock_rknn_instance
+
+        mock_rknn_instance.config.return_value = 0
+        mock_rknn_instance.load_onnx.return_value = 0
+        mock_rknn_instance.build.return_value = -1  # Failure
+
+        with patch('tools.convert_onnx_to_rknn.RKNN', mock_rknn_class):
+            with pytest.raises(ModelLoadError, match="Failed to build RKNN"):
+                build_rknn(onnx_path, out_path)
+
+    def test_export_rknn_failure_raises_model_load_error(self):
+        """Test that export_rknn failure raises ModelLoadError."""
+        onnx_path = self.temp_path / 'model.onnx'
+        onnx_path.write_text('fake onnx')
+        out_path = self.temp_path / 'model.rknn'
+
+        mock_rknn_class = MagicMock()
+        mock_rknn_instance = MagicMock()
+        mock_rknn_class.return_value = mock_rknn_instance
+
+        mock_rknn_instance.config.return_value = 0
+        mock_rknn_instance.load_onnx.return_value = 0
+        mock_rknn_instance.build.return_value = 0
+        mock_rknn_instance.export_rknn.return_value = -1  # Failure
+
+        with patch('tools.convert_onnx_to_rknn.RKNN', mock_rknn_class):
+            with pytest.raises(ModelLoadError, match="Failed to export RKNN"):
+                build_rknn(onnx_path, out_path)
+
+    def test_calibration_file_not_found_raises_config_error(self):
+        """Test that missing calibration file raises ConfigurationError."""
+        onnx_path = self.temp_path / 'model.onnx'
+        onnx_path.write_text('fake onnx')
+        out_path = self.temp_path / 'model.rknn'
+        calib_path = self.temp_path / 'nonexistent_calib.txt'  # Does not exist
+
+        mock_rknn_class = MagicMock()
+        mock_rknn_instance = MagicMock()
+        mock_rknn_class.return_value = mock_rknn_instance
+
+        mock_rknn_instance.config.return_value = 0
+        mock_rknn_instance.load_onnx.return_value = 0
+
+        with patch('tools.convert_onnx_to_rknn.RKNN', mock_rknn_class):
+            with pytest.raises(ConfigurationError, match="Calibration file or folder not found"):
+                build_rknn(onnx_path, out_path, calib=calib_path, do_quant=True)
+
+    def test_typeerror_fallback_for_older_rknn_sdk(self):
+        """Test that TypeError from old SDK triggers retry without quantized_dtype."""
+        onnx_path = self.temp_path / 'model.onnx'
+        onnx_path.write_text('fake onnx')
+        out_path = self.temp_path / 'model.rknn'
+
+        mock_rknn_class = MagicMock()
+        mock_rknn_instance = MagicMock()
+        mock_rknn_class.return_value = mock_rknn_instance
+
+        mock_rknn_instance.config.return_value = 0
+        mock_rknn_instance.load_onnx.return_value = 0
+        mock_rknn_instance.export_rknn.return_value = 0
+
+        # First call raises TypeError, second call succeeds
+        mock_rknn_instance.build.side_effect = [
+            TypeError("unexpected keyword argument 'quantized_dtype'"),
+            0  # Success on retry
+        ]
+
+        with patch('tools.convert_onnx_to_rknn.RKNN', mock_rknn_class):
+            build_rknn(onnx_path, out_path)
+
+            # Should have called build twice
+            assert mock_rknn_instance.build.call_count == 2
+
+    def test_quant_without_calib_falls_back_to_float(self):
+        """Test that quantization without calibration falls back to float build."""
+        onnx_path = self.temp_path / 'model.onnx'
+        onnx_path.write_text('fake onnx')
+        out_path = self.temp_path / 'model.rknn'
+
+        mock_rknn_class = MagicMock()
+        mock_rknn_instance = MagicMock()
+        mock_rknn_class.return_value = mock_rknn_instance
+
+        mock_rknn_instance.config.return_value = 0
+        mock_rknn_instance.load_onnx.return_value = 0
+        mock_rknn_instance.build.return_value = 0
+        mock_rknn_instance.export_rknn.return_value = 0
+
+        with patch('tools.convert_onnx_to_rknn.RKNN', mock_rknn_class):
+            # Request quantization but don't provide calibration
+            build_rknn(onnx_path, out_path, do_quant=True, calib=None)
+
+            # Should have built without quantization
+            call_kwargs = mock_rknn_instance.build.call_args[1]
+            assert call_kwargs.get('do_quantization') is False
+
+    def test_rknn_release_exception_handled_gracefully(self):
+        """Test that rknn.release() exception is handled gracefully."""
+        onnx_path = self.temp_path / 'model.onnx'
+        onnx_path.write_text('fake onnx')
+        out_path = self.temp_path / 'model.rknn'
+
+        mock_rknn_class = MagicMock()
+        mock_rknn_instance = MagicMock()
+        mock_rknn_class.return_value = mock_rknn_instance
+
+        mock_rknn_instance.config.return_value = 0
+        mock_rknn_instance.load_onnx.return_value = 0
+        mock_rknn_instance.build.return_value = 0
+        mock_rknn_instance.export_rknn.return_value = 0
+        mock_rknn_instance.release.side_effect = RuntimeError("Resource cleanup failed")
+
+        with patch('tools.convert_onnx_to_rknn.RKNN', mock_rknn_class):
+            # Should complete without exception despite release() failure
+            build_rknn(onnx_path, out_path)
+
+            # Verify release was called
+            mock_rknn_instance.release.assert_called_once()
+
+
+class TestRKNNContext:
+    """Test suite for rknn_context context manager."""
+
+    def setup_method(self):
+        """Create temporary directories for testing."""
+        import tempfile
+        self.temp_dir = tempfile.mkdtemp()
+        self.temp_path = Path(self.temp_dir)
+
+    def test_context_manager_calls_release_on_success(self):
+        """Test that rknn_context calls release on successful exit."""
+        from tools.convert_onnx_to_rknn import rknn_context
+
+        mock_rknn_class = MagicMock()
+        mock_rknn_instance = MagicMock()
+        mock_rknn_class.return_value = mock_rknn_instance
+
+        with patch('tools.convert_onnx_to_rknn.RKNN', mock_rknn_class):
+            with rknn_context(verbose=True) as rknn:
+                pass  # Do nothing
+
+            mock_rknn_instance.release.assert_called_once()
+
+    def test_context_manager_calls_release_on_exception(self):
+        """Test that rknn_context calls release even when exception occurs."""
+        from tools.convert_onnx_to_rknn import rknn_context
+
+        mock_rknn_class = MagicMock()
+        mock_rknn_instance = MagicMock()
+        mock_rknn_class.return_value = mock_rknn_instance
+
+        with patch('tools.convert_onnx_to_rknn.RKNN', mock_rknn_class):
+            with pytest.raises(ValueError):
+                with rknn_context(verbose=True) as rknn:
+                    raise ValueError("Test exception")
+
+            # release should still be called
+            mock_rknn_instance.release.assert_called_once()
+
+
+class TestMain:
+    """Test suite for main() function."""
+
+    def setup_method(self):
+        """Create temporary directories for testing."""
+        import tempfile
+        self.temp_dir = tempfile.mkdtemp()
+        self.temp_path = Path(self.temp_dir)
+
+    def test_main_successful_conversion(self):
+        """Test main() with successful conversion."""
+        from tools.convert_onnx_to_rknn import main
+
+        onnx_path = self.temp_path / 'model.onnx'
+        onnx_path.write_text('fake onnx')
+        out_path = self.temp_path / 'model.rknn'
+
+        mock_rknn_class = MagicMock()
+        mock_rknn_instance = MagicMock()
+        mock_rknn_class.return_value = mock_rknn_instance
+
+        mock_rknn_instance.config.return_value = 0
+        mock_rknn_instance.load_onnx.return_value = 0
+        mock_rknn_instance.build.return_value = 0
+        mock_rknn_instance.export_rknn.return_value = 0
+
+        with patch('tools.convert_onnx_to_rknn.RKNN', mock_rknn_class):
+            with patch('sys.argv', ['convert', f'--onnx={onnx_path}', f'--out={out_path}']):
+                result = main()
+                assert result == 0
+
+    def test_main_returns_1_on_error(self):
+        """Test main() returns 1 on conversion error."""
+        from tools.convert_onnx_to_rknn import main
+
+        onnx_path = self.temp_path / 'model.onnx'
+        onnx_path.write_text('fake onnx')
+
+        mock_rknn_class = MagicMock()
+        mock_rknn_instance = MagicMock()
+        mock_rknn_class.return_value = mock_rknn_instance
+
+        mock_rknn_instance.config.return_value = 0
+        mock_rknn_instance.load_onnx.return_value = -1  # Failure
+
+        with patch('tools.convert_onnx_to_rknn.RKNN', mock_rknn_class):
+            with patch('sys.argv', ['convert', f'--onnx={onnx_path}']):
+                result = main()
+                assert result == 1
+
+    def test_main_handles_calib_folder(self):
+        """Test main() creates calib.txt from image folder."""
+        from tools.convert_onnx_to_rknn import main
+
+        onnx_path = self.temp_path / 'model.onnx'
+        onnx_path.write_text('fake onnx')
+        out_path = self.temp_path / 'model.rknn'
+
+        # Create calib folder with images
+        calib_dir = self.temp_path / 'calib'
+        calib_dir.mkdir()
+        (calib_dir / 'img1.jpg').write_bytes(b'fake jpg 1')
+        (calib_dir / 'img2.jpg').write_bytes(b'fake jpg 2')
+
+        mock_rknn_class = MagicMock()
+        mock_rknn_instance = MagicMock()
+        mock_rknn_class.return_value = mock_rknn_instance
+
+        mock_rknn_instance.config.return_value = 0
+        mock_rknn_instance.load_onnx.return_value = 0
+        mock_rknn_instance.build.return_value = 0
+        mock_rknn_instance.export_rknn.return_value = 0
+
+        with patch('tools.convert_onnx_to_rknn.RKNN', mock_rknn_class):
+            with patch('sys.argv', ['convert', f'--onnx={onnx_path}', f'--out={out_path}', f'--calib={calib_dir}']):
+                result = main()
+                assert result == 0
+
+                # calib.txt should have been created
+                calib_txt = calib_dir / 'calib.txt'
+                assert calib_txt.exists()
+
+    def test_main_empty_calib_folder_raises_config_error(self):
+        """Test main() raises ConfigurationError for empty calibration folder."""
+        from tools.convert_onnx_to_rknn import main
+
+        onnx_path = self.temp_path / 'model.onnx'
+        onnx_path.write_text('fake onnx')
+
+        # Create empty calib folder
+        calib_dir = self.temp_path / 'calib'
+        calib_dir.mkdir()
+
+        # The exception is raised before the try block in main()
+        # so it propagates up
+        with patch('sys.argv', ['convert', f'--onnx={onnx_path}', f'--calib={calib_dir}']):
+            with pytest.raises(ConfigurationError, match="No images found"):
+                main()

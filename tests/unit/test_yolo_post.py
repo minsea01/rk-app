@@ -440,3 +440,201 @@ class TestPostprocessYolov8:
                 preds, 640, (480, 640), (1e-10, (0, 0)),  # Nearly zero ratio
                 conf_thres=0.25
             )
+
+    def test_postprocess_invalid_orig_shape(self):
+        """Test postprocess detects invalid original shape."""
+        N = 8400
+        nc = 80
+        preds = np.random.randn(1, N, 64 + nc).astype(np.float32)
+
+        # Invalid original shape (zero dimension)
+        with pytest.raises(ValueError, match="Invalid original shape"):
+            postprocess_yolov8(
+                preds, 640, (0, 640), (1.0, (0, 0)),  # Zero height
+                conf_thres=0.25
+            )
+
+    def test_postprocess_too_few_channels(self):
+        """Test postprocess raises error for too few channels."""
+        N = 8400
+        preds = np.random.randn(1, N, 32).astype(np.float32)  # Only 32 channels, need 64+
+
+        with pytest.raises(ValueError, match="Unexpected YOLOv8 head dims"):
+            postprocess_yolov8(
+                preds, 640, (480, 640), (1.0, (0, 0)),
+                conf_thres=0.25
+            )
+
+
+class TestDflDecodeEdgeCases:
+    """Test suite for DFL decode edge cases."""
+
+    def test_dfl_decode_handles_inf_input(self):
+        """Test dfl_decode handles inf values without crashing."""
+        N = 100
+        reg_max = 16
+        d = np.full((N, 4 * reg_max), -np.inf, dtype=np.float32)
+
+        # Should handle inf values gracefully
+        result = dfl_decode(d, reg_max=reg_max)
+
+        assert result.shape == (N, 4)
+        # Should not produce NaN
+        assert np.all(np.isfinite(result))
+
+    def test_dfl_decode_handles_mixed_inf(self):
+        """Test dfl_decode handles mixed inf and normal values."""
+        N = 100
+        reg_max = 16
+        d = np.random.randn(N, 4 * reg_max).astype(np.float32)
+        # Set some values to -inf
+        d[:10, :] = -np.inf
+
+        result = dfl_decode(d, reg_max=reg_max)
+
+        assert result.shape == (N, 4)
+        # Should not produce NaN
+        assert np.all(np.isfinite(result))
+
+    def test_dfl_decode_handles_very_negative_values(self):
+        """Test dfl_decode handles very negative values."""
+        N = 100
+        reg_max = 16
+        d = np.full((N, 4 * reg_max), -1000, dtype=np.float32)
+
+        result = dfl_decode(d, reg_max=reg_max)
+
+        assert result.shape == (N, 4)
+        assert np.all(np.isfinite(result))
+
+
+class TestStrideMapEdgeCases:
+    """Test suite for _get_stride_map edge cases."""
+
+    def test_stride_map_mismatch_warning(self):
+        """Test that stride map mismatch generates warning."""
+        from apps.utils.yolo_post import _get_stride_map
+        import warnings
+
+        # Use a mismatched n value that doesn't match expected anchor count
+        n = 1000  # Doesn't match any valid stride configuration
+        strides = (8, 16, 32)
+        img_size = 640
+
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            result = _get_stride_map(n, strides, img_size)
+
+            # Should generate a warning about mismatch
+            assert len(w) >= 1
+            assert "mismatch" in str(w[0].message).lower()
+
+        # Should return fallback (ones)
+        assert result.shape == (n,)
+        assert np.all(result == 1.0)
+
+    def test_stride_map_correct_size(self):
+        """Test that correct stride map is generated for valid input."""
+        from apps.utils.yolo_post import _get_stride_map
+
+        # For 640x640 with strides [8, 16, 32]:
+        # (640/8)^2 + (640/16)^2 + (640/32)^2 = 6400 + 1600 + 400 = 8400
+        n = 8400
+        strides = (8, 16, 32)
+        img_size = 640
+
+        result = _get_stride_map(n, strides, img_size)
+
+        assert result.shape == (n,)
+        # First 6400 should be stride 8
+        assert np.all(result[:6400] == 8)
+        # Next 1600 should be stride 16
+        assert np.all(result[6400:8000] == 16)
+        # Last 400 should be stride 32
+        assert np.all(result[8000:] == 32)
+
+
+class TestMakeAnchorsCache:
+    """Test suite for make_anchors caching behavior."""
+
+    def test_make_anchors_cache_hit(self):
+        """Test that make_anchors returns cached results."""
+        strides = [8, 16, 32]
+        img_size = 640
+
+        # First call
+        result1 = make_anchors(strides, img_size)
+        # Second call should return cached
+        result2 = make_anchors(strides, img_size)
+
+        # Should be same object (from cache)
+        assert result1 is result2
+
+    def test_make_anchors_different_sizes(self):
+        """Test make_anchors with different image sizes."""
+        strides = [8, 16, 32]
+
+        result_640 = make_anchors(strides, 640)
+        result_416 = make_anchors(strides, 416)
+
+        # Different sizes should produce different anchor counts
+        assert result_640.shape[0] > result_416.shape[0]
+
+
+class TestLetterboxEdgeCases:
+    """Test suite for letterbox edge cases."""
+
+    def test_letterbox_min_valid_dimension(self):
+        """Test letterbox with minimum valid dimensions."""
+        # Create smallest valid image (1x1)
+        img = np.random.randint(0, 255, (1, 1, 3), dtype=np.uint8)
+
+        # Should work with small images
+        result, ratio, (dw, dh) = letterbox(img, 64)
+        assert result.shape == (64, 64, 3)
+        assert ratio >= 1.0  # Upscaling
+
+    def test_letterbox_tuple_shape(self):
+        """Test letterbox with tuple shape argument."""
+        img = np.random.randint(0, 255, (480, 640, 3), dtype=np.uint8)
+        result, ratio, (dw, dh) = letterbox(img, (640, 640))
+
+        assert result.shape == (640, 640, 3)
+
+
+class TestNMSEdgeCases:
+    """Test suite for NMS edge cases."""
+
+    def test_nms_zero_area_boxes(self):
+        """Test NMS handles zero-area boxes."""
+        # Zero-area boxes (x1 == x2 or y1 == y2)
+        boxes = np.array([
+            [50.0, 50.0, 50.0, 100.0],   # Zero width
+            [100.0, 100.0, 200.0, 200.0]  # Normal box
+        ], dtype=np.float32)
+        scores = np.array([0.9, 0.8])
+
+        # Should not crash
+        keep = nms(boxes, scores, iou_thres=0.5)
+        assert len(keep) >= 1
+
+    def test_nms_single_box(self):
+        """Test NMS with single box."""
+        boxes = np.array([[10.0, 10.0, 100.0, 100.0]], dtype=np.float32)
+        scores = np.array([0.9])
+
+        keep = nms(boxes, scores, iou_thres=0.5)
+        assert len(keep) == 1
+        assert keep[0] == 0
+
+    def test_nms_topk_none(self):
+        """Test NMS with topk=None (no limit)."""
+        boxes = np.random.rand(100, 4).astype(np.float32) * 1000
+        # Ensure boxes are valid (x2 > x1, y2 > y1)
+        boxes[:, 2] = boxes[:, 0] + np.abs(boxes[:, 2] - boxes[:, 0]) + 1
+        boxes[:, 3] = boxes[:, 1] + np.abs(boxes[:, 3] - boxes[:, 1]) + 1
+        scores = np.random.rand(100).astype(np.float32)
+
+        keep = nms(boxes, scores, iou_thres=0.5, topk=None)
+        # Should process all boxes
+        assert len(keep) >= 1
