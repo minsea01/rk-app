@@ -41,8 +41,8 @@ cp artifacts/models/*.rknn "$TEMP_DIR/rk-app/artifacts/models/" 2>/dev/null || {
 }
 
 echo "[5/8] Copying class names..."
-cp config/industrial_classes.txt "$TEMP_DIR/rk-app/config/" 2>/dev/null || {
-    echo "⚠️  Warning: industrial_classes.txt not found"
+cp config/person_classes.txt "$TEMP_DIR/rk-app/config/" 2>/dev/null || {
+    echo "⚠️  Warning: person_classes.txt not found"
 }
 
 echo "[6/8] Copying test assets..."

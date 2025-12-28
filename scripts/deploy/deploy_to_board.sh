@@ -160,33 +160,133 @@ sync_bin() {
       cp "$TMP_BIN" "$TMP_BIN.unstripped"
       aarch64-linux-gnu-strip -S "$TMP_BIN" || mv "$TMP_BIN.unstripped" "$TMP_BIN"
     fi
-    rsync -avz -e "ssh -p $PORT" "$ROOT/out/arm64/bin/" "$REMOTE:$DEST/bin/"
+    # Security: Use escaped destination path to prevent injection
+    rsync -avz -e "ssh -p $PORT" "$ROOT/out/arm64/bin/" "$REMOTE:${DEST_ESCAPED}/bin/"
   else
     echo "➡️  rsync 不可用，使用 scp 复制"
-    scp -P "$PORT" "$ROOT/out/arm64/bin/rk_app" "$REMOTE:$DEST/bin/"
+    # Security: Use escaped destination path to prevent injection
+    scp -P "$PORT" "$ROOT/out/arm64/bin/rk_app" "$REMOTE:${DEST_ESCAPED}/bin/"
+  fi
+}
+
+sync_config() {
+  echo "➡️  同步配置文件到板子"
+  if [[ -d "$ROOT/config" ]]; then
+    if command -v rsync >/dev/null 2>&1; then
+      rsync -avz -e "ssh -p $PORT" "$ROOT/config/" "$REMOTE:${DEST_ESCAPED}/config/"
+    else
+      scp -r -P "$PORT" "$ROOT/config/"* "$REMOTE:${DEST_ESCAPED}/config/"
+    fi
+  else
+    echo "⚠️  config/ 目录不存在，跳过"
+  fi
+}
+
+sync_models() {
+  echo "➡️  同步模型文件到板子"
+  ssh -p "$PORT" "$REMOTE" "mkdir -p ${DEST_ESCAPED}/models" 2>/dev/null || true
+
+  # 同步 .rknn 模型文件
+  if ls "$ROOT/artifacts/models/"*.rknn 1>/dev/null 2>&1; then
+    if command -v rsync >/dev/null 2>&1; then
+      rsync -avz -e "ssh -p $PORT" --include='*.rknn' --include='*.json' --exclude='*' \
+        "$ROOT/artifacts/models/" "$REMOTE:${DEST_ESCAPED}/models/"
+    else
+      scp -P "$PORT" "$ROOT/artifacts/models/"*.rknn "$REMOTE:${DEST_ESCAPED}/models/" 2>/dev/null || true
+      scp -P "$PORT" "$ROOT/artifacts/models/"*.json "$REMOTE:${DEST_ESCAPED}/models/" 2>/dev/null || true
+    fi
+    echo "✅ 模型同步完成"
+  else
+    echo "⚠️  未找到 .rknn 模型文件，跳过"
+  fi
+}
+
+sync_rknn_libs() {
+  echo "➡️  同步 RKNN SDK 库到板子"
+  ssh -p "$PORT" "$REMOTE" "mkdir -p ${DEST_ESCAPED}/lib" 2>/dev/null || true
+
+  # 优先使用 RKNN_HOME 环境变量，否则使用默认路径
+  local RKNN_LIB_SRC="${RKNN_HOME:-/opt/rknpu2}/lib"
+
+  if [[ -d "$RKNN_LIB_SRC" ]]; then
+    if command -v rsync >/dev/null 2>&1; then
+      rsync -avz -e "ssh -p $PORT" --include='*.so*' --exclude='*' \
+        "$RKNN_LIB_SRC/" "$REMOTE:${DEST_ESCAPED}/lib/"
+    else
+      scp -P "$PORT" "$RKNN_LIB_SRC/"*.so* "$REMOTE:${DEST_ESCAPED}/lib/" 2>/dev/null || true
+    fi
+    echo "✅ RKNN SDK 库同步完成"
+  else
+    echo "⚠️  RKNN SDK 库目录不存在: $RKNN_LIB_SRC"
+    echo "   请设置 RKNN_HOME 环境变量或确保 /opt/rknpu2/lib 存在"
+    echo "   板子上可能需要手动安装 RKNN SDK: apt install librknpu2"
+  fi
+}
+
+sync_scripts() {
+  echo "➡️  同步运行脚本到板子"
+  ssh -p "$PORT" "$REMOTE" "mkdir -p ${DEST_ESCAPED}/scripts" 2>/dev/null || true
+
+  # 同步 rk3588_run.sh
+  if [[ -f "$ROOT/scripts/deploy/rk3588_run.sh" ]]; then
+    scp -P "$PORT" "$ROOT/scripts/deploy/rk3588_run.sh" "$REMOTE:${DEST_ESCAPED}/scripts/"
+    ssh -p "$PORT" "$REMOTE" "chmod +x ${DEST_ESCAPED}/scripts/rk3588_run.sh"
+    echo "✅ 运行脚本同步完成"
+  fi
+}
+
+sync_assets() {
+  echo "➡️  同步测试资源到板子"
+  ssh -p "$PORT" "$REMOTE" "mkdir -p ${DEST_ESCAPED}/assets" 2>/dev/null || true
+
+  # 同步测试图片（可选）
+  if [[ -d "$ROOT/assets" ]]; then
+    if command -v rsync >/dev/null 2>&1; then
+      rsync -avz -e "ssh -p $PORT" --include='*.jpg' --include='*.png' --exclude='*' \
+        "$ROOT/assets/" "$REMOTE:${DEST_ESCAPED}/assets/" 2>/dev/null || true
+    else
+      scp -P "$PORT" "$ROOT/assets/"*.jpg "$REMOTE:${DEST_ESCAPED}/assets/" 2>/dev/null || true
+    fi
   fi
 }
 
 echo "⬆️  部署 rk_app"
 sync_bin
+sync_config
+sync_models
+sync_rknn_libs
+sync_scripts
+sync_assets
 
 case "$ACTION" in
   deploy)
-    echo "✅ 部署完成：$REMOTE:$DEST/bin/rk_app"
+    echo "✅ 部署完成：$REMOTE:$DEST/{bin,config,models,lib,scripts,assets}"
+    echo ""
+    echo "📋 板子上运行方式："
+    echo "   cd $DEST && LD_LIBRARY_PATH=./lib ./bin/detect_cli --cfg ./config/detect_rknn.yaml"
+    echo "   或: $DEST/scripts/rk3588_run.sh"
     ;;
   run)
-    echo "🚀 远端运行 rk_app"
-    # Security: Use printf %q for safe shell escaping
-    LD_PATH_ESCAPED=$(printf %q "$LD_LIBRARY_PATH_REMOTE")
-    ssh -p "$PORT" "$REMOTE" "cd ${DEST_ESCAPED} && chmod +x bin/rk_app && LD_LIBRARY_PATH=${LD_PATH_ESCAPED} ./bin/rk_app --config ./config/app.yaml"
+    echo "🚀 远端运行 detect_cli"
+    # 自动添加部署目录的 lib 到 LD_LIBRARY_PATH
+    LD_REMOTE="${DEST}/lib"
+    if [[ -n "$LD_LIBRARY_PATH_REMOTE" ]]; then
+      LD_REMOTE="${LD_REMOTE}:${LD_LIBRARY_PATH_REMOTE}"
+    fi
+    LD_PATH_ESCAPED=$(printf %q "$LD_REMOTE")
+    ssh -p "$PORT" "$REMOTE" "cd ${DEST_ESCAPED} && chmod +x bin/detect_cli && LD_LIBRARY_PATH=${LD_PATH_ESCAPED} ./bin/detect_cli --cfg ./config/detect_rknn.yaml"
     ;;
   gdb)
     echo "🐞 在板子上启动 gdbserver :$GDB_PORT"
     echo "提示: 在本机 VS Code 选择 'Attach gdbserver (ARM64 board)' 后按 F5。"
-    # Security: Use printf %q for safe shell escaping
-    LD_PATH_ESCAPED=$(printf %q "$LD_LIBRARY_PATH_REMOTE")
+    # 自动添加部署目录的 lib 到 LD_LIBRARY_PATH
+    LD_REMOTE="${DEST}/lib"
+    if [[ -n "$LD_LIBRARY_PATH_REMOTE" ]]; then
+      LD_REMOTE="${LD_REMOTE}:${LD_LIBRARY_PATH_REMOTE}"
+    fi
+    LD_PATH_ESCAPED=$(printf %q "$LD_REMOTE")
     GDB_PORT_ESCAPED=$(printf %q "$GDB_PORT")
-    ssh -p "$PORT" "$REMOTE" "cd ${DEST_ESCAPED} && chmod +x bin/rk_app && exec env LD_LIBRARY_PATH=${LD_PATH_ESCAPED} gdbserver :${GDB_PORT_ESCAPED} ./bin/rk_app --config ./config/app.yaml"
+    ssh -p "$PORT" "$REMOTE" "cd ${DEST_ESCAPED} && chmod +x bin/detect_cli && exec env LD_LIBRARY_PATH=${LD_PATH_ESCAPED} gdbserver :${GDB_PORT_ESCAPED} ./bin/detect_cli --cfg ./config/detect_rknn.yaml"
     ;;
   kill)
     echo "🧹 结束远端 gdbserver (best-effort)"

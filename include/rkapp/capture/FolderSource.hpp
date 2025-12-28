@@ -1,5 +1,6 @@
 #pragma once
 
+#include <vector>
 #include "rkapp/capture/ISource.hpp"
 
 namespace rkapp::capture {
@@ -28,4 +29,3 @@ private:
 };
 
 } // namespace rkapp::capture
-

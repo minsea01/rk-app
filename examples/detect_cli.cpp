@@ -447,30 +447,79 @@ int main(int argc, char* argv[]) {
         frame_id++;
       }
     } else {
-      // Async mode: simple 2-stage pipeline with bounded queue
+      // Async mode: simple 2-stage pipeline with bounded queue + pre-allocated Mat pool
+      // Uses shared_ptr for thread-safe state sharing to avoid dangling reference issues
       struct Item { int id; cv::Mat img; };
-      const size_t QMAX = 3;
-      std::mutex mtx; std::condition_variable cv_not_full, cv_not_empty; std::deque<Item> q;
-      bool done = false; std::atomic<int> next_id{0};
+      // QMAX = 3: balance between latency (smaller queue = less lag) and throughput
+      // (larger queue = handles burst). 3 frames = ~100ms buffer at 30fps.
+      constexpr size_t QMAX = 3;
 
-      std::thread t_capture([&]{
+      // Shared state wrapped in struct to ensure proper lifetime management
+      // when captured by the worker thread lambda
+      struct AsyncState {
+        std::mutex mtx;
+        std::condition_variable cv_not_full;
+        std::condition_variable cv_not_empty;
+        std::deque<Item> q;
+        std::atomic<bool> done{false};
+        std::atomic<int> next_id{0};
+        // Pre-allocated Mat pool to avoid per-frame malloc
+        std::mutex pool_mtx;
+        std::vector<cv::Mat> mat_pool;
+      };
+      auto state = std::make_shared<AsyncState>();
+      // Pre-allocate pool (will be sized on first frame)
+      state->mat_pool.reserve(QMAX + 1);
+
+      // Capture source as raw pointer (guaranteed valid for thread lifetime due to join below)
+      // Capture state as shared_ptr to ensure thread-safe access
+      rkapp::capture::ISource* source_ptr = source.get();
+      std::thread t_capture([state, source_ptr, QMAX]{
         cv::Mat f;
-        while (source->read(f)) {
-          std::unique_lock<std::mutex> lk(mtx);
-          cv_not_full.wait(lk, [&]{ return q.size() < QMAX; });
-          q.push_back(Item{next_id++, f.clone()});
-          lk.unlock(); cv_not_empty.notify_one();
+        while (source_ptr->read(f)) {
+          // Get a Mat from pool or create new one (first few frames)
+          cv::Mat pooled;
+          {
+            std::lock_guard<std::mutex> plk(state->pool_mtx);
+            if (!state->mat_pool.empty()) {
+              pooled = std::move(state->mat_pool.back());
+              state->mat_pool.pop_back();
+            }
+          }
+          // Reuse pooled Mat if same size, otherwise allocate
+          if (pooled.rows == f.rows && pooled.cols == f.cols && pooled.type() == f.type()) {
+            f.copyTo(pooled);  // Copy into pre-allocated memory
+          } else {
+            pooled = f.clone();  // First frame or size changed
+          }
+
+          std::unique_lock<std::mutex> lk(state->mtx);
+          state->cv_not_full.wait(lk, [&state, QMAX]{ return state->q.size() < QMAX; });
+          int id = state->next_id.fetch_add(1, std::memory_order_relaxed);
+          state->q.push_back(Item{id, std::move(pooled)});
+          lk.unlock();
+          state->cv_not_empty.notify_one();
         }
-        std::lock_guard<std::mutex> lk(mtx); done = true; cv_not_empty.notify_all();
+        {
+          std::lock_guard<std::mutex> lk(state->mtx);
+          state->done.store(true, std::memory_order_release);
+        }
+        state->cv_not_empty.notify_all();
       });
 
       while (true) {
         Item it; bool has=false;
         {
-          std::unique_lock<std::mutex> lk(mtx);
-          cv_not_empty.wait(lk, [&]{ return !q.empty() || done; });
-          if (!q.empty()) { it = std::move(q.front()); q.pop_front(); has=true; cv_not_full.notify_one(); }
-          else if (done) break;
+          std::unique_lock<std::mutex> lk(state->mtx);
+          state->cv_not_empty.wait(lk, [&state]{ return !state->q.empty() || state->done.load(std::memory_order_acquire); });
+          if (!state->q.empty()) {
+            it = std::move(state->q.front());
+            state->q.pop_front();
+            has = true;
+            state->cv_not_full.notify_one();
+          } else if (state->done.load(std::memory_order_acquire)) {
+            break;
+          }
         }
         if (!has) break;
 
@@ -499,6 +548,15 @@ int main(int argc, char* argv[]) {
             result.detections = detections;
             result.source_uri = config.source_uri;
             output->send(result);
+        }
+
+        // Return Mat to pool for reuse (avoids per-frame malloc)
+        {
+          std::lock_guard<std::mutex> plk(state->pool_mtx);
+          if (state->mat_pool.size() < QMAX + 1) {
+            state->mat_pool.push_back(std::move(it.img));
+          }
+          // else: pool full, let Mat deallocate naturally
         }
       }
       t_capture.join();

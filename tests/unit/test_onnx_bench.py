@@ -6,10 +6,10 @@ Tests ONNX Runtime performance benchmarking utility.
 import tempfile
 from pathlib import Path
 from unittest.mock import patch, MagicMock
-import sys
 
 import pytest
 import numpy as np
+import cv2 as real_cv2
 
 from tools.onnx_bench import make_input, main
 
@@ -20,122 +20,76 @@ class TestMakeInput:
     def test_loads_existing_image(self):
         """Test that existing image is loaded correctly."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            # Create a test image
+            # Create a real test image using actual cv2
             img_path = Path(tmpdir) / 'test.jpg'
+            test_img = np.random.randint(0, 255, (480, 640, 3), dtype=np.uint8)
+            real_cv2.imwrite(str(img_path), test_img)  # type: ignore[attr-defined]
 
-            # Mock cv2.imread
-            with patch('tools.onnx_bench.cv2') as mock_cv2:
-                mock_img = np.random.randint(0, 255, (480, 640, 3), dtype=np.uint8)
-                resized_img = np.random.randint(0, 255, (640, 640, 3), dtype=np.uint8)
-                mock_cv2.imread.return_value = mock_img
-                mock_cv2.resize.return_value = resized_img
-                mock_cv2.INTER_LINEAR = 1  # cv2.INTER_LINEAR constant
+            result = make_input(img_path, size=640)
 
-                result = make_input(img_path, size=640)
-
-                # Verify imread was called
-                mock_cv2.imread.assert_called_once_with(str(img_path))
-
-                # Verify result shape (NCHW format)
-                assert result.shape == (1, 3, 640, 640)
-                assert result.dtype == np.float32
+            # Verify result shape (NCHW format)
+            assert result.shape == (1, 3, 640, 640)
+            assert result.dtype == np.float32
 
     def test_creates_synthetic_image_when_file_not_found(self):
         """Test that synthetic image is created when file doesn't exist."""
         non_existent_path = Path('/nonexistent/image.jpg')
 
-        with patch('tools.onnx_bench.cv2') as mock_cv2:
-            # imread returns None for non-existent file
-            mock_cv2.imread.return_value = None
-            mock_cv2.putText = MagicMock()  # Mock putText
+        result = make_input(non_existent_path, size=640)
 
-            result = make_input(non_existent_path, size=640)
-
-            # Verify synthetic image was created
-            assert result.shape == (1, 3, 640, 640)
-            assert result.dtype == np.float32
-
-            # Verify "SYNTH" text was added
-            mock_cv2.putText.assert_called()
+        # Verify synthetic image was created
+        assert result.shape == (1, 3, 640, 640)
+        assert result.dtype == np.float32
 
     def test_creates_synthetic_image_with_empty_path(self):
         """Test that synthetic image is created with empty path."""
         empty_path = Path('')
 
-        with patch('tools.onnx_bench.cv2') as mock_cv2:
-            mock_cv2.imread.return_value = None
-            mock_cv2.putText = MagicMock()
+        result = make_input(empty_path, size=416)
 
-            result = make_input(empty_path, size=416)
-
-            # Verify synthetic image with correct size
-            assert result.shape == (1, 3, 416, 416)
-            mock_cv2.putText.assert_called()
+        # Verify synthetic image with correct size
+        assert result.shape == (1, 3, 416, 416)
 
     def test_resizes_image_to_target_size(self):
         """Test that image is resized to target size."""
         with tempfile.TemporaryDirectory() as tmpdir:
+            # Create a 1920x1080 test image
             img_path = Path(tmpdir) / 'test.jpg'
+            test_img = np.random.randint(0, 255, (1080, 1920, 3), dtype=np.uint8)
+            real_cv2.imwrite(str(img_path), test_img)  # type: ignore[attr-defined]
 
-            with patch('tools.onnx_bench.cv2') as mock_cv2:
-                # Original image is different size
-                mock_img = np.random.randint(0, 255, (1080, 1920, 3), dtype=np.uint8)
-                mock_cv2.imread.return_value = mock_img
+            result = make_input(img_path, size=640)
 
-                # Resized image
-                resized_img = np.zeros((640, 640, 3), dtype=np.uint8)
-                mock_cv2.resize.return_value = resized_img
-
-                result = make_input(img_path, size=640)
-
-                # Verify resize was called
-                mock_cv2.resize.assert_called_once()
-                call_args = mock_cv2.resize.call_args
-                assert call_args[0][1] == (640, 640)  # Target size
-                assert call_args[1]['interpolation'] == mock_cv2.INTER_LINEAR
+            # Verify resized to target size
+            assert result.shape == (1, 3, 640, 640)
 
     def test_normalizes_pixel_values_to_0_1(self):
         """Test that pixel values are normalized to [0, 1] range."""
-        with patch('tools.onnx_bench.cv2') as mock_cv2:
-            mock_img = np.full((640, 640, 3), 255, dtype=np.uint8)  # All white
-            mock_cv2.imread.return_value = None
-            mock_cv2.putText = MagicMock()
-            mock_cv2.resize.return_value = mock_img
+        # Use synthetic image (no file)
+        result = make_input(Path(''), size=640)
 
-            # Use synthetic image path
-            result = make_input(Path(''), size=640)
-
-            # Pixel values should be in [0, 1] range
-            assert result.max() <= 1.0
-            assert result.min() >= 0.0
+        # Pixel values should be in [0, 1] range
+        assert result.max() <= 1.0
+        assert result.min() >= 0.0
 
     def test_converts_to_nchw_format(self):
         """Test that output is in NCHW (batch, channels, height, width) format."""
-        with patch('tools.onnx_bench.cv2') as mock_cv2:
-            mock_cv2.imread.return_value = None
-            mock_cv2.putText = MagicMock()
-            mock_cv2.FONT_HERSHEY_SIMPLEX = 0
+        result = make_input(Path(''), size=640)
 
-            result = make_input(Path(''), size=640)
-
-            # Verify NCHW format
-            assert result.shape[0] == 1  # Batch size
-            assert result.shape[1] == 3  # Channels (RGB)
-            assert result.shape[2] == 640  # Height
-            assert result.shape[3] == 640  # Width
+        # Verify NCHW format
+        assert result.shape[0] == 1  # Batch size
+        assert result.shape[1] == 3  # Channels (RGB)
+        assert result.shape[2] == 640  # Height
+        assert result.shape[3] == 640  # Width
 
     def test_uses_random_seed_for_reproducibility(self):
         """Test that synthetic images are reproducible with fixed seed."""
-        with patch('tools.onnx_bench.cv2') as mock_cv2:
-            mock_cv2.imread.return_value = None
-            mock_cv2.putText = MagicMock()
+        # Generate twice - should be identical due to fixed seed in make_input
+        result1 = make_input(Path(''), size=640)
+        result2 = make_input(Path(''), size=640)
 
-            # Generate twice with same seed
-            result1 = make_input(Path(''), size=640)
-            result2 = make_input(Path(''), size=640)
-
-            # Should be identical (same random seed)
-            np.testing.assert_array_equal(result1, result2)
+        # Should be identical (same random seed)
+        np.testing.assert_array_equal(result1, result2)
 
 
 class TestONNXBenchMain:
@@ -325,27 +279,17 @@ class TestONNXBenchEdgeCases:
 
     def test_handles_small_image_sizes(self):
         """Test that small image sizes (e.g., 416) are handled."""
-        with patch('tools.onnx_bench.cv2') as mock_cv2:
-            mock_cv2.imread.return_value = None
-            mock_cv2.putText = MagicMock()
-            mock_cv2.FONT_HERSHEY_SIMPLEX = 0
+        result = make_input(Path(''), size=416)
 
-            result = make_input(Path(''), size=416)
-
-            # Verify correct size
-            assert result.shape == (1, 3, 416, 416)
+        # Verify correct size
+        assert result.shape == (1, 3, 416, 416)
 
     def test_handles_large_image_sizes(self):
         """Test that large image sizes (e.g., 1280) are handled."""
-        with patch('tools.onnx_bench.cv2') as mock_cv2:
-            mock_cv2.imread.return_value = None
-            mock_cv2.putText = MagicMock()
-            mock_cv2.FONT_HERSHEY_SIMPLEX = 0
+        result = make_input(Path(''), size=1280)
 
-            result = make_input(Path(''), size=1280)
-
-            # Verify correct size
-            assert result.shape == (1, 3, 1280, 1280)
+        # Verify correct size
+        assert result.shape == (1, 3, 1280, 1280)
 
     def test_handles_single_loop_iteration(self):
         """Test that single loop iteration works."""
@@ -376,22 +320,22 @@ class TestONNXBenchEdgeCases:
 
             with patch('sys.argv', test_args):
                 with patch.dict('sys.modules', {'onnxruntime': mock_ort}):
-                    with patch('tools.onnx_bench.cv2'):
-                        main()
+                    main()
 
-                        # Should complete without error
-                        assert mock_session.run.call_count >= 1
+                    # Should complete without error
+                    assert mock_session.run.call_count >= 1
 
     def test_handles_grayscale_image_conversion(self):
         """Test that grayscale images are converted to RGB."""
         with tempfile.TemporaryDirectory() as tmpdir:
             img_path = Path(tmpdir) / 'gray.jpg'
 
-            with patch('tools.onnx_bench.cv2') as mock_cv2:
-                # Mock grayscale image (H, W) instead of (H, W, 3)
-                gray_img = np.random.randint(0, 255, (640, 640), dtype=np.uint8)
-                mock_cv2.imread.return_value = gray_img
+            # Create a real grayscale image
+            gray_img = np.random.randint(0, 255, (640, 640), dtype=np.uint8)
+            real_cv2.imwrite(str(img_path), gray_img)  # type: ignore[attr-defined]
 
-                # The function should handle this gracefully
-                # This test verifies robustness
-                pass
+            # The function should handle grayscale images
+            # Note: cv2.imread by default reads as BGR (3 channels),
+            # so this test mainly verifies file I/O works
+            result = make_input(img_path, size=640)
+            assert result.shape == (1, 3, 640, 640)

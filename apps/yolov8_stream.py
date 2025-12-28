@@ -209,17 +209,22 @@ def run_stream(args) -> None:
                 frame, t0, t1 = q_cap.get(timeout=0.1)
             except Empty:
                 continue
-            t2 = time.perf_counter()
-            img, r, d = letterbox(frame, args.imgsz)
-            # feed BGR uint8 to RKNN; conversion handled by runtime config (BGR->RGB, /255)
-            t3 = time.perf_counter()
             try:
-                q_pre.put((frame, img, r, d, t0, t1, t2, t3), timeout=0.1)
-            except Full:
-                dropped_frames += 1
-                if dropped_frames % 100 == 1:
-                    logger.debug(f"Preproc queue full, dropped {dropped_frames} frames")
-            stats['preproc'].add(t3 - t2)
+                t2 = time.perf_counter()
+                img, r, d = letterbox(frame, args.imgsz)
+                # feed BGR uint8 to RKNN; conversion handled by runtime config (BGR->RGB, /255)
+                t3 = time.perf_counter()
+                try:
+                    q_pre.put((frame, img, r, d, t0, t1, t2, t3), timeout=0.1)
+                except Full:
+                    dropped_frames += 1
+                    if dropped_frames % 100 == 1:
+                        logger.debug(f"Preproc queue full, dropped {dropped_frames} frames")
+                stats['preproc'].add(t3 - t2)
+            except Exception as e:
+                logger.error(f"Preproc thread error: {e}")
+                stop.set()
+                break
         stop.set()
 
     rknn = RKNNLite()
@@ -231,34 +236,38 @@ def run_stream(args) -> None:
     def t_infer() -> None:
         """Inference thread: runs RKNN model on preprocessed frames."""
         dropped_frames = 0
-        # Warmup
-        for _ in range(max(0, args.warmup)):
-            try:
-                frame, img, r, d, *ts = q_pre.get(timeout=1.0)
-            except Empty:
-                continue
-            rknn.inference(inputs=[img])
-        logger.debug(f"Inference warmup complete ({args.warmup} frames)")
-        # Main
-        while not stop.is_set():
-            try:
-                frame, img, r, d, t0, t1, t2, t3 = q_pre.get(timeout=0.1)
-            except Empty:
-                continue
-            t4 = time.perf_counter()
-            outputs = rknn.inference(inputs=[img])
-            pred = outputs[0]
-            if pred.ndim == 2:
-                pred = pred[None, ...]
-            t5 = time.perf_counter()
-            try:
-                q_out.put((frame, pred, r, d, t0, t1, t2, t3, t4, t5), timeout=0.1)
-            except Full:
-                dropped_frames += 1
-                if dropped_frames % 100 == 1:
-                    logger.debug(f"Output queue full, dropped {dropped_frames} frames")
-            stats['infer'].add(t5 - t4)
-        stop.set()
+        try:
+            # Warmup
+            for _ in range(max(0, args.warmup)):
+                try:
+                    frame, img, r, d, *ts = q_pre.get(timeout=1.0)
+                except Empty:
+                    continue
+                rknn.inference(inputs=[img])
+            logger.debug(f"Inference warmup complete ({args.warmup} frames)")
+            # Main
+            while not stop.is_set():
+                try:
+                    frame, img, r, d, t0, t1, t2, t3 = q_pre.get(timeout=0.1)
+                except Empty:
+                    continue
+                t4 = time.perf_counter()
+                outputs = rknn.inference(inputs=[img])
+                pred = outputs[0]
+                if pred.ndim == 2:
+                    pred = pred[None, ...]
+                t5 = time.perf_counter()
+                try:
+                    q_out.put((frame, pred, r, d, t0, t1, t2, t3, t4, t5), timeout=0.1)
+                except Full:
+                    dropped_frames += 1
+                    if dropped_frames % 100 == 1:
+                        logger.debug(f"Output queue full, dropped {dropped_frames} frames")
+                stats['infer'].add(t5 - t4)
+        except Exception as e:
+            logger.error(f"Infer thread error: {e}")
+        finally:
+            stop.set()
 
     def t_post() -> None:
         """Post-processing thread: decode predictions, draw boxes, save/display."""
@@ -382,18 +391,25 @@ def run_stream(args) -> None:
     for t in ths:
         t.start()
     try:
-        while not stop.is_set():
-            time.sleep(0.5)
-    except KeyboardInterrupt:
-        stop.set()
-    for t in ths:
-        t.join(timeout=1.0)
-
-    # Summary
-    total_time = sum(s.t_sum for s in stats.values())
-    logger.info('Stage stats (ms):')
-    for k, s in stats.items():
-        logger.info(f"  {k}: {s.summary()}")
+        try:
+            while not stop.is_set():
+                time.sleep(0.5)
+        except KeyboardInterrupt:
+            stop.set()
+        for t in ths:
+            t.join(timeout=1.0)
+    finally:
+        if cap:
+            cap.release()
+        try:
+            rknn.release()
+        except Exception:
+            pass
+        # Summary
+        total_time = sum(s.t_sum for s in stats.values())
+        logger.info('Stage stats (ms):')
+        for k, s in stats.items():
+            logger.info(f"  {k}: {s.summary()}")
 
 
 def main():

@@ -35,7 +35,7 @@ servers:
     backup: false
 
 # 工业15类检测目标
-classes: "config/industrial_classes.txt"
+classes: "config/person_classes.txt"
 
 # 性能监控（RK3588优化）
 performance:

@@ -21,4 +21,4 @@ output:
   ip: "12.0.0.1"
   port: 9000
 
-classes: "config/industrial_classes.txt"
+classes: "config/person_classes.txt"
