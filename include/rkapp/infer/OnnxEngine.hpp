@@ -24,6 +24,10 @@ public:
   int getInputWidth() const override;
   int getInputHeight() const override;
 
+  /// Set CUDA device ID for inference. Must be called before init().
+  /// @param device_id CUDA device index (0 = first GPU, 1 = second, etc.)
+  void setCudaDeviceId(int device_id) { cuda_device_id_ = device_id; }
+
 private:
   struct Impl;
   std::unique_ptr<Impl> impl_;
@@ -32,6 +36,7 @@ private:
   bool is_initialized_ = false;
   DecodeParams decode_params_;
   bool unsupported_model_ = false;  // set when encountering unsupported output layout
+  int cuda_device_id_ = 0;  // CUDA device index (configurable, default: 0)
 };
 
 } // namespace rkapp::infer

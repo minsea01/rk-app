@@ -11,6 +11,9 @@ import json
 import pytest
 import numpy as np
 
+# Skip entire module if matplotlib is not installed
+pytest.importorskip("matplotlib", reason="matplotlib not installed")
+
 from tools.model_evaluation import ModelEvaluator
 
 

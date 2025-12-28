@@ -2,7 +2,31 @@
   "version": 3,
   "configurePresets": [
     {
+      "name": "native-release",
+      "displayName": "Native Release (x86_64)",
+      "description": "Build for native x86_64 host - recommended for development",
+      "generator": "Ninja",
+      "binaryDir": "build/native",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_INSTALL_PREFIX": "${sourceDir}/out/native"
+      }
+    },
+    {
+      "name": "native-debug",
+      "displayName": "Native Debug (x86_64)",
+      "description": "Debug build for native x86_64 host",
+      "generator": "Ninja",
+      "binaryDir": "build/native-debug",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_INSTALL_PREFIX": "${sourceDir}/out/native"
+      }
+    },
+    {
       "name": "arm64-release",
+      "displayName": "ARM64 Cross-Compile (requires sysroot)",
+      "description": "Cross-compile for RK3588/aarch64 - requires AARCH64_SYSROOT",
       "generator": "Ninja",
       "binaryDir": "build/arm64",
       "cacheVariables": {
@@ -30,20 +54,55 @@
     }
   ],
   "buildPresets": [
-    { "name": "arm64", "configurePreset": "arm64-release" },
-    { "name": "x86-debug", "configurePreset": "x86-debug" },
-    { "name": "x86-debug-nosan", "configurePreset": "x86-debug-nosan" }
+    {
+      "name": "native-release",
+      "configurePreset": "native-release"
+    },
+    {
+      "name": "native-debug",
+      "configurePreset": "native-debug"
+    },
+    {
+      "name": "arm64",
+      "configurePreset": "arm64-release"
+    },
+    {
+      "name": "x86-debug",
+      "configurePreset": "x86-debug"
+    },
+    {
+      "name": "x86-debug-nosan",
+      "configurePreset": "x86-debug-nosan"
+    }
   ],
   "testPresets": [
     {
+      "name": "native-release",
+      "configurePreset": "native-release",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "native-debug",
+      "configurePreset": "native-debug",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
       "name": "x86-debug",
       "configurePreset": "x86-debug",
-      "output": { "outputOnFailure": true }
+      "output": {
+        "outputOnFailure": true
+      }
     },
     {
       "name": "x86-debug-nosan",
       "configurePreset": "x86-debug-nosan",
-      "output": { "outputOnFailure": true },
+      "output": {
+        "outputOnFailure": true
+      },
       "environment": {
         "LSAN_OPTIONS": "detect_leaks=0",
         "ASAN_OPTIONS": "detect_leaks=0"

@@ -384,7 +384,8 @@ class TestPostprocessYolov8:
         """Test postprocess raises error for invalid input."""
         # Wrong number of dimensions
         preds = np.random.randn(100, 144).astype(np.float32)
-        with pytest.raises(AssertionError):
+        # postprocess_yolov8 raises ValueError for invalid shape (not AssertionError)
+        with pytest.raises(ValueError, match="Expected predictions shape"):
             postprocess_yolov8(
                 preds, 640, (480, 640), (1.0, (0, 0)),
                 conf_thres=0.25, iou_thres=0.45

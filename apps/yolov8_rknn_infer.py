@@ -96,7 +96,8 @@ def main():
     ap = argparse.ArgumentParser(description='YOLOv8 RKNNLite inference on RK3588')
     ap.add_argument('--model', type=Path, required=True, help='path to .rknn model file')
     ap.add_argument('--source', type=Path, help='image path; if omitted, opens /dev/video0')
-    ap.add_argument('--imgsz', type=int, default=640)
+    # 默认使用 416 分辨率以避免 Transpose 回退并提升 NPU 吞吐
+    ap.add_argument('--imgsz', type=int, default=416)
     ap.add_argument(
         '--conf',
         type=float,
@@ -106,6 +107,7 @@ def main():
     ap.add_argument('--iou', type=float, default=0.45)
     ap.add_argument('--names', type=Path, default=None, help='names.txt (one class per line)')
     ap.add_argument('--head', type=str, choices=['auto', 'dfl', 'raw'], default='auto', help='head decode type')
+    # 默认三核全开，满足“轻量化+多核并行”要求
     ap.add_argument('--core-mask', type=lambda x: int(x, 0), default=0x7, help='NPU core mask (e.g., 0x7 for 3 cores)')
     ap.add_argument('--save', type=Path, default=None, help='save annotated result image')
     ap.add_argument(

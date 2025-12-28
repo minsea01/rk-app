@@ -1,8 +1,10 @@
 #include "rkapp/infer/OnnxEngine.hpp"
+#include "rkapp/infer/RknnDecodeUtils.hpp"
 #include "rkapp/preprocess/Preprocess.hpp"
 #include "log.hpp"
 #include "rkapp/post/Postprocess.hpp"
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <onnxruntime_cxx_api.h>
 
@@ -38,6 +40,7 @@ struct OnnxEngine::Impl {
   static std::vector<Detection> parseOutput(Ort::Value& output,
                                             const rkapp::preprocess::LetterboxInfo& letterbox_info,
                                             cv::Size original_size,
+                                            int input_size,
                                             const DecodeParams& params,
                                             bool& unsupported_model) {
     std::vector<Detection> detections;
@@ -47,6 +50,7 @@ struct OnnxEngine::Impl {
     int N = 0, C = 0;
     if (!resolve_layout(shape, N, C)) {
       LOGW("OnnxEngine: unsupported output shape");
+      unsupported_model = true;
       return detections;
     }
 
@@ -63,63 +67,139 @@ struct OnnxEngine::Impl {
       return data[i * C + c];
     };
 
-    const bool has_objness = (C - 5) >= 1;
-    const int cls_offset = has_objness ? 5 : 4;
-    const int num_classes = std::max(0, C - cls_offset);
-    if (num_classes <= 0) {
-      LOGW("OnnxEngine: invalid class channel count");
-      return detections;
-    }
-    // DFL-style outputs (e.g., YOLOv8/YOLO11) are not supported by this lightweight decoder
-    if (C >= 64) {
-      LOGE("OnnxEngine: detected large channel dimension (C=", C, ") that likely corresponds to a DFL head; "
-           "export a raw head or add DFL decoding before using this engine");
-      unsupported_model = true;
-      return {};
-    }
-
     auto sigmoid = [](float x) { return 1.0f / (1.0f + std::exp(-x)); };
 
-    int limit = N;
-    if (params.max_boxes > 0) limit = std::min(limit, params.max_boxes);
+    // Try DFL decode first if channel layout matches YOLOv8/YOLO11 (4*reg_max + classes)
+    constexpr int kRegMax = 16;
+    const int cls_ch = C - 4 * kRegMax;
+    const bool maybe_dfl = cls_ch > 0 && C >= 4 * kRegMax;
 
-    for (int i = 0; i < limit; i++) {
-      // layout: [cx, cy, w, h, (obj), cls...]
-      const float cx = at(0, i);
-      const float cy = at(1, i);
-      const float w  = at(2, i);
-      const float h  = at(3, i);
+    if (maybe_dfl) {
+      std::vector<int> strides;
+      if (!resolve_stride_set(input_size, N, strides)) {
+        LOGW("OnnxEngine: DFL-like output detected but failed to resolve strides (anchors=", N,
+             ", input=", input_size, "), falling back to raw decode");
+      } else {
+        AnchorLayout layout = build_anchor_layout(input_size, N, strides);
+        if (!layout.valid) {
+          LOGW("OnnxEngine: DFL layout invalid for provided strides; falling back to raw decode");
+        } else {
+          auto dfl_softmax_project = [&](int base_c, int i) -> std::array<float, 4> {
+            std::array<float, 4> out{};
+            for (int side = 0; side < 4; ++side) {
+              const int ch0 = base_c + side * kRegMax;
+              float maxv = -1e30f;
+              for (int k = 0; k < kRegMax; ++k) maxv = std::max(maxv, at(ch0 + k, i));
+              float denom = 0.f;
+              std::array<float, kRegMax> probs{};
+              for (int k = 0; k < kRegMax; ++k) {
+                probs[k] = std::exp(at(ch0 + k, i) - maxv);
+                denom += probs[k];
+              }
+              float proj = 0.f;
+              for (int k = 0; k < kRegMax; ++k) proj += probs[k] * static_cast<float>(k);
+              out[side] = (denom > 0.f) ? (proj / denom) : 0.f;
+            }
+            return out;
+          };
 
-      float obj = 1.0f;
-      if (has_objness) obj = sigmoid(at(4, i));
+          for (int i = 0; i < N; ++i) {
+            auto dfl = dfl_softmax_project(0, i);
+            const float stride = layout.stride_map[i];
+            const float l = dfl[0] * stride;
+            const float t = dfl[1] * stride;
+            const float r = dfl[2] * stride;
+            const float b = dfl[3] * stride;
+            const float x1 = layout.anchor_cx[i] - l;
+            const float y1 = layout.anchor_cy[i] - t;
+            const float x2 = layout.anchor_cx[i] + r;
+            const float y2 = layout.anchor_cy[i] + b;
 
-      float best_conf = 0.0f;
-      int best_cls = 0;
-      for (int c = 0; c < num_classes; ++c) {
-        float conf = sigmoid(at(cls_offset + c, i));
-        if (conf > best_conf) { best_conf = conf; best_cls = c; }
+            float best_conf = 0.f;
+            int best_cls = 0;
+            for (int c = 0; c < cls_ch; ++c) {
+              float conf = sigmoid(at(4 * kRegMax + c, i));
+              if (conf > best_conf) { best_conf = conf; best_cls = c; }
+            }
+            if (best_conf < params.conf_thres) continue;
+
+            Detection det;
+            const float scale = letterbox_info.scale;
+            const float dx = letterbox_info.dx;
+            const float dy = letterbox_info.dy;
+            det.x = (x1 - dx) / scale;
+            det.y = (y1 - dy) / scale;
+            det.w = (x2 - x1) / scale;
+            det.h = (y2 - y1) / scale;
+            det.x = std::max(0.0f, std::min(det.x, static_cast<float>(original_size.width)));
+            det.y = std::max(0.0f, std::min(det.y, static_cast<float>(original_size.height)));
+            det.w = std::max(0.0f, std::min(det.w, static_cast<float>(original_size.width) - det.x));
+            det.h = std::max(0.0f, std::min(det.h, static_cast<float>(original_size.height) - det.y));
+            det.confidence = best_conf;
+            det.class_id = best_cls;
+            det.class_name = "class_" + std::to_string(best_cls);
+            detections.push_back(det);
+            if (params.max_boxes > 0 &&
+                static_cast<int>(detections.size()) >= params.max_boxes) {
+              break;
+            }
+          }
+        }
+      }
+    }
+
+    // Raw decode fallback: [cx, cy, w, h, (obj), cls...]
+    if (detections.empty()) {
+      const bool has_objness = (C - 5) >= 1;
+      const int cls_offset = has_objness ? 5 : 4;
+      const int num_classes = std::max(0, C - cls_offset);
+      if (num_classes <= 0) {
+        LOGW("OnnxEngine: invalid class channel count (C=", C, ")");
+        unsupported_model = true;
+        return detections;
       }
 
-      const float combined = obj * best_conf;
-      if (combined < params.conf_thres) continue;
+      int limit = N;
+      if (params.max_boxes > 0) limit = std::min(limit, params.max_boxes);
 
-      Detection det;
-      const float scale = letterbox_info.scale;
-      const float dx = letterbox_info.dx;
-      const float dy = letterbox_info.dy;
-      det.x = (cx - w / 2.0f - dx) / scale;
-      det.y = (cy - h / 2.0f - dy) / scale;
-      det.w = w / scale;
-      det.h = h / scale;
-      det.x = std::max(0.0f, std::min(det.x, static_cast<float>(original_size.width)));
-      det.y = std::max(0.0f, std::min(det.y, static_cast<float>(original_size.height)));
-      det.w = std::max(0.0f, std::min(det.w, static_cast<float>(original_size.width) - det.x));
-      det.h = std::max(0.0f, std::min(det.h, static_cast<float>(original_size.height) - det.y));
-      det.confidence = combined;
-      det.class_id = best_cls;
-      det.class_name = "class_" + std::to_string(best_cls);
-      detections.push_back(det);
+      for (int i = 0; i < limit; i++) {
+        const float cx = at(0, i);
+        const float cy = at(1, i);
+        const float w  = at(2, i);
+        const float h  = at(3, i);
+
+        float obj = 1.0f;
+        if (has_objness) obj = sigmoid(at(4, i));
+
+        float best_conf = 0.0f;
+        int best_cls = 0;
+        for (int c = 0; c < num_classes; ++c) {
+          float conf = sigmoid(at(cls_offset + c, i));
+          if (conf > best_conf) { best_conf = conf; best_cls = c; }
+        }
+
+        const float combined = obj * best_conf;
+        if (combined < params.conf_thres) continue;
+
+        Detection det;
+        const float scale = letterbox_info.scale;
+        const float dx = letterbox_info.dx;
+        const float dy = letterbox_info.dy;
+        det.x = (cx - w / 2.0f - dx) / scale;
+        det.y = (cy - h / 2.0f - dy) / scale;
+        det.w = w / scale;
+        det.h = h / scale;
+        det.x = std::max(0.0f, std::min(det.x, static_cast<float>(original_size.width)));
+        det.y = std::max(0.0f, std::min(det.y, static_cast<float>(original_size.height)));
+        det.w = std::max(0.0f, std::min(det.w, static_cast<float>(original_size.width) - det.x));
+        det.h = std::max(0.0f, std::min(det.h, static_cast<float>(original_size.height) - det.y));
+        det.confidence = combined;
+        det.class_id = best_cls;
+        det.class_name = "class_" + std::to_string(best_cls);
+        detections.push_back(det);
+      }
     }
+    unsupported_model = false;
     return detections;
   }
 };
@@ -142,15 +222,15 @@ bool OnnxEngine::init(const std::string& model_path, int img_size) {
     session_options.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
 
     // Try CUDA if available
-    LOGI("OnnxEngine: Attempting CUDA provider...");
+    LOGI("OnnxEngine: Attempting CUDA provider (device ", cuda_device_id_, ")...");
     try {
       OrtCUDAProviderOptions cuda_opts{};
-      cuda_opts.device_id = 0;
+      cuda_opts.device_id = cuda_device_id_;  // Use configurable device ID (default: 0)
       cuda_opts.arena_extend_strategy = 1;
       cuda_opts.do_copy_in_default_stream = 1;
       session_options.AppendExecutionProvider_CUDA(cuda_opts);
       impl_->use_cuda = true;
-      LOGI("OnnxEngine: CUDA provider added");
+      LOGI("OnnxEngine: CUDA provider added (device ", cuda_device_id_, ")");
     } catch (const std::exception& e) {
       impl_->use_cuda = false;
       LOGW("OnnxEngine: CUDA provider unavailable, CPU fallback: ", e.what());
@@ -182,7 +262,6 @@ bool OnnxEngine::init(const std::string& model_path, int img_size) {
 
 std::vector<Detection> OnnxEngine::infer(const cv::Mat& image) {
   if (!is_initialized_) { LOGE("OnnxEngine: Not initialized!"); return {}; }
-  if (unsupported_model_) { LOGE("OnnxEngine: Model output layout unsupported (DFL). Aborting inference."); return {}; }
   try {
     rkapp::preprocess::LetterboxInfo letterbox_info;
     cv::Mat processed = rkapp::preprocess::Preprocess::letterbox(image, input_size_, letterbox_info);
@@ -214,11 +293,13 @@ std::vector<Detection> OnnxEngine::infer(const cv::Mat& image) {
       LOGW("OnnxEngine: multiple outputs detected (", outputs.size(), "), using first tensor only");
     }
     bool unsupported = false;
-    auto dets = Impl::parseOutput(outputs[0], letterbox_info, image.size(), decode_params_, unsupported);
+    auto dets = Impl::parseOutput(outputs[0], letterbox_info, image.size(), input_size_, decode_params_, unsupported);
     if (unsupported) {
       unsupported_model_ = true;
-      LOGE("OnnxEngine: Unsupported DFL-style output; stopping further inference attempts");
+      LOGE("OnnxEngine: Unsupported output layout; stopping further inference attempts");
       return {};
+    } else {
+      unsupported_model_ = false;
     }
     rkapp::post::NMSConfig nms_cfg;
     nms_cfg.conf_thres = decode_params_.conf_thres;

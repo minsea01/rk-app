@@ -268,17 +268,25 @@ std::vector<Detection> RknnEngine::infer(const cv::Mat& image){
   const bool use_dfl = want_dfl && has_meta;
 
   auto decode_raw = [&]() {
-    if (num_classes_ < 0) num_classes_ = std::max(0, C - 5); // assume objness present; if not, handled by loop
+    if (C < 5) {
+      LOGW("RknnEngine: raw decode aborted due to insufficient channels (C=", C, ")");
+      return;
+    }
+    const int cls_offset = 5;
+    const int cls_ch = C - cls_offset;
+    if (cls_ch <= 0) {
+      LOGW("RknnEngine: raw decode aborted due to missing class channels (C=", C, ")");
+      return;
+    }
+    if (num_classes_ < 0) num_classes_ = cls_ch; // assume objness present
     for(int i=0;i<N;i++){
       float cx = logits[0*N + i];
       float cy = logits[1*N + i];
       float w  = logits[2*N + i];
       float h  = logits[3*N + i];
-      int cls_offset = 4;
-      float obj = 1.0f;
-      if (C >= 5) { obj = sigmoid(logits[4*N + i]); cls_offset = 5; }
+      float obj = sigmoid(logits[4*N + i]);
       float max_conf = 0.f; int best = 0;
-      for(int c=0; c < (C - cls_offset); c++){
+      for(int c=0; c < cls_ch; c++){
         float conf = sigmoid(logits[(cls_offset + c)*N + i]);
         if(conf > max_conf){ max_conf = conf; best = c; }
       }

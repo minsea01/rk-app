@@ -37,7 +37,7 @@ private:
   std::string model_path_;
   int input_size_ = 640;
   bool is_initialized_ = false;
-  uint32_t core_mask_ = 0; // 0=runtime默认；位掩码映射到核
+  uint32_t core_mask_ = 0x7; // 默认三核并行；可被 setCoreMask 覆盖
   
   // Auto-inferred detection parameters
   int num_classes_ = -1;

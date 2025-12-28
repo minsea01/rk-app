@@ -3,13 +3,16 @@
     "dev-tools": {
       "command": "python3",
       "args": ["-m", "mcp_dev"],
-      "env": { "WORKDIR": "." }
+      "env": { "WORKDIR": "/home/minsea/rk-app" }
     },
     "git-summary": {
       "command": "python3",
       "args": ["-m", "mcp_git_summary"],
-      "env": { "WORKDIR": "." }
+      "env": { "WORKDIR": "/home/minsea/rk-app" }
+    },
+    "docker": {
+      "command": "python3",
+      "args": ["-m", "mcp_docker"]
     }
   }
 }
-

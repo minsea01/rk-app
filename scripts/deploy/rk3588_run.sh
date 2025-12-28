@@ -3,13 +3,39 @@ set -euo pipefail
 
 # Minimal runner for RK3588: prepares LD_LIBRARY_PATH and runs detect_cli (RKNN)
 # Fallback to Python RKNNLite runner when CLI binary is unavailable.
+#
+# Supports two modes:
+# 1. Development (WSL): runs from source tree with out/arm64/bin/detect_cli
+# 2. Deployment (Board): runs from /opt/rk_app with bin/detect_cli
 
-ROOT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)
-OUT_BIN="$ROOT_DIR/out/arm64/bin/detect_cli"
-OUT_LIB="$ROOT_DIR/out/arm64/lib"
-CFG="$ROOT_DIR/config/detection/detect_rknn.yaml"
-MODEL_DEFAULT="$ROOT_DIR/artifacts/models/best.rknn"
-NAMES_DEFAULT="$ROOT_DIR/config/industrial_classes.txt"
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+
+# Detect if running from deployment directory or source tree
+if [[ -x "$SCRIPT_DIR/../../bin/detect_cli" ]]; then
+  # Deployment mode: script is in $DEST/scripts/ or similar
+  ROOT_DIR=$(cd -- "$SCRIPT_DIR/../.." && pwd)
+  OUT_BIN="$ROOT_DIR/bin/detect_cli"
+  OUT_LIB="$ROOT_DIR/lib"
+  CFG="$ROOT_DIR/config/detect_rknn.yaml"
+  MODEL_DEFAULT="$ROOT_DIR/models/best.rknn"
+  NAMES_DEFAULT="$ROOT_DIR/config/person_classes.txt"
+elif [[ -d "$SCRIPT_DIR/../../out/arm64/bin" ]]; then
+  # Development mode: running from source tree
+  ROOT_DIR=$(cd -- "$SCRIPT_DIR/../.." && pwd)
+  OUT_BIN="$ROOT_DIR/out/arm64/bin/detect_cli"
+  OUT_LIB="$ROOT_DIR/out/arm64/lib"
+  CFG="$ROOT_DIR/config/detection/detect_rknn.yaml"
+  MODEL_DEFAULT="$ROOT_DIR/artifacts/models/best.rknn"
+  NAMES_DEFAULT="$ROOT_DIR/config/person_classes.txt"
+else
+  # Fallback: assume we're in deployment root
+  ROOT_DIR=$(pwd)
+  OUT_BIN="$ROOT_DIR/bin/detect_cli"
+  OUT_LIB="$ROOT_DIR/lib"
+  CFG="$ROOT_DIR/config/detect_rknn.yaml"
+  MODEL_DEFAULT="$ROOT_DIR/models/best.rknn"
+  NAMES_DEFAULT="$ROOT_DIR/config/person_classes.txt"
+fi
 
 usage() {
   echo "Usage: $0 [--cfg <yaml>] [--model <rknn>] [--runner cli|python] [-- core args...]"

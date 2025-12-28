@@ -153,7 +153,7 @@ target_include_directories(rkapp_decode_utils PUBLIC include)
 if (ENABLE_ONNX)
     add_library(rkapp_infer_onnx src/infer/onnx/OnnxEngine.cpp)
     target_include_directories(rkapp_infer_onnx PUBLIC include)
-    target_link_libraries(rkapp_infer_onnx PUBLIC ${OpenCV_LIBS} rkapp_core)
+    target_link_libraries(rkapp_infer_onnx PUBLIC ${OpenCV_LIBS} rkapp_core rkapp_decode_utils)
 
     # Prefer external ORT if ORT_HOME is set; fallback to third_party
     if(DEFINED ENV{ORT_HOME})

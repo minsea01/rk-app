@@ -150,14 +150,24 @@ logger = setup_logger(__name__)
 INPUT_SOURCE = "$INPUT_SOURCE"
 OUTPUT_HOST = "$OUTPUT_HOST"
 OUTPUT_PORT = $OUTPUT_PORT
+OUTPUT_IP = "$OUTPUT_IP"  # bind TX to上传网口
 MODEL_PATH = "$MODEL"
 IMGSZ = $IMGSZ
 CONF = $CONF
 FORMAT = "$FORMAT"
 
+def bind_if_possible(sock):
+    """Bind socket to output interface IP if present to force eth1 egress."""
+    if OUTPUT_IP:
+        try:
+            sock.bind((OUTPUT_IP, 0))
+        except OSError as e:
+            logger.warning(f"Bind to {OUTPUT_IP} failed: {e}")
+
 def send_udp(data, host, port):
     """Send detection results via UDP"""
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    bind_if_possible(sock)
     payload = json.dumps(data).encode('utf-8')
     sock.sendto(payload, (host, port))
     sock.close()
@@ -166,6 +176,7 @@ def send_tcp(data, host, port):
     """Send detection results via TCP"""
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.settimeout(5.0)
+    bind_if_possible(sock)
     try:
         sock.connect((host, port))
         payload = json.dumps(data).encode('utf-8')

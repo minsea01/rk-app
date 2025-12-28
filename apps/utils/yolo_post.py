@@ -1,9 +1,8 @@
-from typing import Tuple, List, Union, Optional
+from typing import Dict, Tuple, List, Union, Optional
 import threading
 import warnings
 import numpy as np
 import cv2
-from functools import lru_cache
 
 # Constants with detailed engineering rationale
 # =============================================================================
@@ -155,23 +154,24 @@ def letterbox(
             f"Resize ratio {r} too small. Image dimensions {shape} vs target {new_shape}"
         )
     new_unpad = (int(round(shape[1] * r)), int(round(shape[0] * r)))
-    dw, dh = new_shape[1] - new_unpad[0], new_shape[0] - new_unpad[1]
-    dw /= 2  # divide padding into 2 sides
-    dh /= 2
+    dw: float = (new_shape[1] - new_unpad[0]) / 2  # divide padding into 2 sides
+    dh: float = (new_shape[0] - new_unpad[1]) / 2
 
     if shape[::-1] != new_unpad:
-        im = cv2.resize(im, new_unpad, interpolation=cv2.INTER_LINEAR)
+        im = cv2.resize(im, new_unpad, interpolation=cv2.INTER_LINEAR)  # type: ignore[attr-defined]
     # Use epsilon for symmetric rounding to avoid floating-point precision issues
     top = int(round(dh - PADDING_ROUNDING_EPSILON))
     bottom = int(round(dh + PADDING_ROUNDING_EPSILON))
     left = int(round(dw - PADDING_ROUNDING_EPSILON))
     right = int(round(dw + PADDING_ROUNDING_EPSILON))
-    im = cv2.copyMakeBorder(im, top, bottom, left, right, cv2.BORDER_CONSTANT, value=color)
+    im = cv2.copyMakeBorder(  # type: ignore[attr-defined]
+        im, top, bottom, left, right, cv2.BORDER_CONSTANT, value=color
+    )
     return im, r, (dw, dh)
 
 
 # Thread-safe cache for anchors to avoid recomputation
-_anchor_cache = {}
+_anchor_cache: Dict[Tuple[int, Tuple[int, ...]], np.ndarray] = {}
 _anchor_cache_lock = threading.Lock()
 
 def make_anchors(strides: List[int], img_size: int) -> np.ndarray:
@@ -196,7 +196,7 @@ def make_anchors(strides: List[int], img_size: int) -> np.ndarray:
             return _anchor_cache[cache_key]
 
     # Compute anchors outside the lock (expensive operation)
-    anchors = []
+    anchors: List[np.ndarray] = []
     for s in strides:
         fm = img_size // s  # Feature map size
         grid_y, grid_x = np.meshgrid(np.arange(fm), np.arange(fm), indexing='ij')
@@ -205,7 +205,7 @@ def make_anchors(strides: List[int], img_size: int) -> np.ndarray:
         cy = (grid_y.ravel() + 0.5) * s
         anchors.append(np.stack([cx, cy], axis=1))
 
-    result = np.vstack(anchors).astype(np.float32)
+    result: np.ndarray = np.vstack(anchors).astype(np.float32)
 
     # Thread-safe cache insertion
     with _anchor_cache_lock:
@@ -248,7 +248,7 @@ def dfl_decode(d: np.ndarray, reg_max: int = 16) -> np.ndarray:
     if np.any(np.isinf(d_max)):
         # Replace -inf with smallest representable float32 value
         d = np.where(np.isinf(d), np.finfo(np.float32).min, d)
-        d_max = d.max(axis=2, keepdims=True)
+        d_max = d.max(axis=2, keepdims=True)  # type: ignore[call-overload]
 
     d = np.exp(d - d_max)
     d_sum = d.sum(axis=2, keepdims=True)
@@ -258,13 +258,18 @@ def dfl_decode(d: np.ndarray, reg_max: int = 16) -> np.ndarray:
     d = d / d_sum
 
     # Calculate expected value
-    project = np.arange(reg_max, dtype=np.float32)
-    out = (d * project).sum(axis=2)
+    project: np.ndarray = np.arange(reg_max, dtype=np.float32)
+    out: np.ndarray = (d * project).sum(axis=2)
 
     return out  # l, t, r, b in grid units
 
 
-def nms(boxes: np.ndarray, scores: np.ndarray, iou_thres: float = 0.45, topk: Optional[int] = 300) -> List[int]:
+def nms(
+    boxes: np.ndarray,
+    scores: np.ndarray,
+    iou_thres: float = 0.45,
+    topk: Optional[int] = 300
+) -> List[int]:
     """Non-Maximum Suppression for object detection.
 
     Args:
@@ -337,7 +342,7 @@ def nms(boxes: np.ndarray, scores: np.ndarray, iou_thres: float = 0.45, topk: Op
 __all__ = ['letterbox', 'postprocess_yolov8', 'nms', 'sigmoid']
 
 # Thread-safe cache for stride maps to avoid recomputation
-_stride_map_cache = {}
+_stride_map_cache: Dict[Tuple[int, Tuple[int, ...], int], np.ndarray] = {}
 _stride_map_cache_lock = threading.Lock()
 
 def _get_stride_map(n: int, strides: Tuple[int, ...], img_size: int) -> np.ndarray:
@@ -361,7 +366,7 @@ def _get_stride_map(n: int, strides: Tuple[int, ...], img_size: int) -> np.ndarr
             return _stride_map_cache[cache_key]
 
     # Compute stride map outside the lock
-    s_map = np.zeros(n, dtype=np.float32)
+    s_map: np.ndarray = np.zeros(n, dtype=np.float32)
     idx = 0
     for s in strides:
         fm = img_size // s
@@ -401,7 +406,7 @@ def postprocess_yolov8(
     conf_thres: float = 0.25,
     iou_thres: float = 0.45,
     reg_max: int = 16,
-    strides: List[int] = (8, 16, 32),
+    strides: Tuple[int, ...] = (8, 16, 32),  # Fixed: Tuple matches tuple default value
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Post-process YOLOv8 model outputs.
 
@@ -464,8 +469,8 @@ def postprocess_yolov8(
 
     # Class scores
     scores = sigmoid(cls_logits)
-    class_ids = scores.argmax(axis=1)
-    confs = scores.max(axis=1)
+    class_ids: np.ndarray = scores.argmax(axis=1)  # type: ignore[union-attr]
+    confs: np.ndarray = scores.max(axis=1)  # type: ignore[union-attr]
     mask = confs >= conf_thres
     boxes = np.stack([x1, y1, x2, y2], axis=1)[mask]
     confs = confs[mask]
@@ -473,9 +478,9 @@ def postprocess_yolov8(
 
     # Early return if no detections passed threshold
     if len(boxes) == 0:
-        empty_boxes = np.empty((0, 4), dtype=np.float32)
-        empty_confs = np.array([], dtype=np.float32)
-        empty_ids = np.array([], dtype=np.int64)
+        empty_boxes: np.ndarray = np.empty((0, 4), dtype=np.float32)
+        empty_confs: np.ndarray = np.array([], dtype=np.float32)
+        empty_ids: np.ndarray = np.array([], dtype=np.int64)
         return empty_boxes, empty_confs, empty_ids
 
     # NMS per-image
@@ -484,20 +489,21 @@ def postprocess_yolov8(
         boxes, confs, class_ids = boxes[keep], confs[keep], class_ids[keep]
     except ValueError as e:
         # NMS validation failed, return empty
-        import warnings
         warnings.warn(f"NMS failed: {e}. Returning empty detections.")
-        empty_boxes = np.empty((0, 4), dtype=np.float32)
-        empty_confs = np.array([], dtype=np.float32)
-        empty_ids = np.array([], dtype=np.int64)
-        return empty_boxes, empty_confs, empty_ids
+        return (
+            np.empty((0, 4), dtype=np.float32),
+            np.array([], dtype=np.float32),
+            np.array([], dtype=np.int64),
+        )
 
     # Scale boxes back to original image
-    r, (dw, dh) = ratio_pad
+    scale_ratio, pad_wh = ratio_pad
+    pad_w, pad_h = pad_wh
 
     # Validate ratio to prevent division by near-zero
-    if r < MIN_VALID_RATIO:
+    if scale_ratio < MIN_VALID_RATIO:
         raise ValueError(
-            f"Invalid scale ratio {r}. Check letterbox output."
+            f"Invalid scale ratio {scale_ratio}. Check letterbox output."
         )
 
     # Validate original shape
@@ -509,9 +515,9 @@ def postprocess_yolov8(
         )
 
     # Remove padding and scale to original coordinates
-    boxes[:, [0, 2]] -= dw
-    boxes[:, [1, 3]] -= dh
-    boxes /= r
+    boxes[:, [0, 2]] -= pad_w
+    boxes[:, [1, 3]] -= pad_h
+    boxes /= scale_ratio
 
     # Clip to image boundaries (floating-point coordinates in [0, width) and [0, height))
     # Modern computer vision uses continuous coordinates, so max value is width/height, not width-1

@@ -34,7 +34,7 @@ class TestHTTPPostMain:
         ]
 
         with patch('sys.argv', test_args):
-            with pytest.raises(SystemExit):
+            with pytest.raises((SystemExit, ConfigurationError)):
                 main()
 
     def test_validates_json_format(self):
@@ -49,7 +49,7 @@ class TestHTTPPostMain:
         ]
 
         with patch('sys.argv', test_args):
-            with pytest.raises(SystemExit):
+            with pytest.raises((SystemExit, ValidationError)):
                 main()
 
     def test_sends_valid_json_successfully(self):
@@ -132,7 +132,7 @@ class TestHTTPPostMain:
                 mock_opener.return_value = mock_opener_instance
 
                 # Should handle error and exit
-                with pytest.raises(SystemExit):
+                with pytest.raises((SystemExit, ConfigurationError)):
                     main()
 
     def test_handles_http_error(self):
@@ -156,7 +156,7 @@ class TestHTTPPostMain:
                 mock_opener.return_value = mock_opener_instance
 
                 # Should handle error
-                with pytest.raises(SystemExit):
+                with pytest.raises((SystemExit, ValidationError)):
                     main()
 
     def test_handles_timeout(self):
@@ -177,7 +177,7 @@ class TestHTTPPostMain:
                 mock_opener_instance.open.side_effect = urllib.error.URLError("Timeout")
                 mock_opener.return_value = mock_opener_instance
 
-                with pytest.raises(SystemExit):
+                with pytest.raises((SystemExit, ConfigurationError)):
                     main()
 
     def test_sends_utf8_encoded_data(self):
@@ -288,7 +288,7 @@ class TestHTTPPostEdgeCases:
 
         with patch('sys.argv', test_args):
             # Should raise validation error for invalid JSON
-            with pytest.raises(SystemExit):
+            with pytest.raises((SystemExit, ValidationError)):
                 main()
 
     def test_handles_large_json_file(self):

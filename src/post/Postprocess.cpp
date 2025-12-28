@@ -125,7 +125,7 @@ std::vector<std::string> Postprocess::loadClassNames(const std::string& path) {
     std::ifstream file(path);
     
     if (!file.is_open()) {
-        std::cerr << "Failed to open class names file: " << path << std::endl;
+        LOGE("Failed to open class names file: ", path);
         return class_names;
     }
     
@@ -138,7 +138,7 @@ std::vector<std::string> Postprocess::loadClassNames(const std::string& path) {
         if (!line.empty()) class_names.push_back(line);
     }
     
-    std::cout << "Loaded " << class_names.size() << " class names from " << path << std::endl;
+    LOGI("Loaded ", class_names.size(), " class names from ", path);
     return class_names;
 }
 

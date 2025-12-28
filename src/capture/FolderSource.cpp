@@ -46,21 +46,17 @@ bool FolderSource::open(const std::string& folder_path) {
 }
 
 bool FolderSource::read(cv::Mat& frame) {
-  if (!is_opened_ || current_index_ >= image_files_.size()) {
-    return false;
+  if (!is_opened_) return false;
+
+  while (current_index_ < image_files_.size()) {
+    const std::string& current_file = image_files_[current_index_++];
+    frame = cv::imread(current_file, cv::IMREAD_COLOR);
+    if (!frame.empty()) {
+      return true;
+    }
+    std::cerr << "Failed to read image: " << current_file << " (skipping)" << std::endl;
   }
-
-  std::string current_file = image_files_[current_index_];
-  frame = cv::imread(current_file, cv::IMREAD_COLOR);
-
-  if (frame.empty()) {
-    std::cerr << "Failed to read image: " << current_file << std::endl;
-    current_index_++;
-    return false;
-  }
-
-  current_index_++;
-  return true;
+  return false;
 }
 
 void FolderSource::release() {
