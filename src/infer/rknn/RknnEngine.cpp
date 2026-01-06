@@ -120,34 +120,65 @@ bool RknnEngine::init(const std::string& model_path, int img_size){
     LOGE("RknnEngine: model file empty: ", model_path);
     return false;
   }
-  // 支持可选核心掩码：若SDK支持rknn_init_ext可使用；否则回退rknn_init
-  int ret = RKNN_SUCC;
-#if defined(RKNN_API_VERSION) && (RKNN_API_VERSION >= 0x010400) // 假设1.4.0+提供扩展
-  // 伪代码：如存在rknn_init_with_core_mask之类扩展API，可在此调用
-  // ret = rknn_init_with_core_mask(&impl_->ctx, blob.data(), blob.size(), core_mask_);
-  // 暂时回退
-  (void)core_mask_;
-  ret = rknn_init(&impl_->ctx, blob.data(), blob.size(), 0, nullptr);
-#else
-  ret = rknn_init(&impl_->ctx, blob.data(), blob.size(), 0, nullptr);
-#endif
+
+  // Step 1: Initialize RKNN context
+  int ret = rknn_init(&impl_->ctx, blob.data(), blob.size(), 0, nullptr);
   if(ret != RKNN_SUCC){
     LOGE("RknnEngine: rknn_init failed with code ", ret);
     return false;
   }
 
-  // Try to configure NPU core mask if supported by SDK and user specified a non-zero mask
-#if defined(RKNN_CONFIG_NPU_CORE_MASK)
+  // Step 2: Configure NPU core mask using official rknn_set_core_mask API
+  // This is the correct API for RK3588 multi-core scheduling (SDK 1.3.0+)
+  // Reference: https://github.com/rockchip-linux/rknpu2/blob/master/runtime/RK3588/Linux/librknn_api/include/rknn_api.h
+  //
+  // Core mask values (rknn_core_mask enum):
+  //   RKNN_NPU_CORE_AUTO    = 0  (default, auto-select idle core)
+  //   RKNN_NPU_CORE_0       = 1  (2 TOPS)
+  //   RKNN_NPU_CORE_1       = 2  (2 TOPS)
+  //   RKNN_NPU_CORE_2       = 4  (2 TOPS)
+  //   RKNN_NPU_CORE_0_1     = 3  (4 TOPS, dual-core)
+  //   RKNN_NPU_CORE_0_1_2   = 7  (6 TOPS, tri-core - recommended for max throughput)
+  //
+  // Note: Multi-core mode accelerates: Conv, DepthwiseConv, Add, Concat, Relu, Clip, Relu6,
+  //       ThresholdedRelu, Prelu, LeakyRelu. Other ops fallback to Core0.
   if (core_mask_ != 0) {
-    int cm = static_cast<int>(core_mask_);
-    int cfg_ret = rknn_config(impl_->ctx, RKNN_CONFIG_NPU_CORE_MASK, &cm);
-    if (cfg_ret != RKNN_SUCC) {
-      LOGW("RknnEngine: rknn_config(NPU_CORE_MASK) failed: ", cfg_ret);
-    } else {
-      LOGI("RknnEngine: NPU core mask configured: 0x", std::hex, core_mask_, std::dec);
+    // Map our core_mask_ to rknn_core_mask enum
+    rknn_core_mask npu_core_mask = RKNN_NPU_CORE_AUTO;
+    switch (core_mask_) {
+      case 0x1: npu_core_mask = RKNN_NPU_CORE_0; break;
+      case 0x2: npu_core_mask = RKNN_NPU_CORE_1; break;
+      case 0x4: npu_core_mask = RKNN_NPU_CORE_2; break;
+      case 0x3: npu_core_mask = RKNN_NPU_CORE_0_1; break;
+      case 0x7: npu_core_mask = RKNN_NPU_CORE_0_1_2; break;
+      default:
+        // For any other mask, use all three cores for maximum throughput
+        LOGW("RknnEngine: Unknown core_mask 0x", std::hex, core_mask_, std::dec,
+             ", defaulting to RKNN_NPU_CORE_0_1_2 (6 TOPS)");
+        npu_core_mask = RKNN_NPU_CORE_0_1_2;
+        break;
     }
+
+    int mask_ret = rknn_set_core_mask(impl_->ctx, npu_core_mask);
+    if (mask_ret != RKNN_SUCC) {
+      // Non-fatal: log warning but continue (single-core fallback)
+      LOGW("RknnEngine: rknn_set_core_mask failed (code ", mask_ret,
+           "). Running on default core. This may reduce throughput by up to 66%.");
+    } else {
+      const char* core_desc = "AUTO";
+      switch (npu_core_mask) {
+        case RKNN_NPU_CORE_0: core_desc = "Core0 (2 TOPS)"; break;
+        case RKNN_NPU_CORE_1: core_desc = "Core1 (2 TOPS)"; break;
+        case RKNN_NPU_CORE_2: core_desc = "Core2 (2 TOPS)"; break;
+        case RKNN_NPU_CORE_0_1: core_desc = "Core0+1 (4 TOPS)"; break;
+        case RKNN_NPU_CORE_0_1_2: core_desc = "Core0+1+2 (6 TOPS)"; break;
+        default: break;
+      }
+      LOGI("RknnEngine: NPU multi-core enabled: ", core_desc);
+    }
+  } else {
+    LOGI("RknnEngine: NPU core_mask=0, using RKNN_NPU_CORE_AUTO mode");
   }
-#endif
 
   ret = rknn_query(impl_->ctx, RKNN_QUERY_IN_OUT_NUM, &impl_->io_num, sizeof(impl_->io_num));
   if(ret != RKNN_SUCC){
