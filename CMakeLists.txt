@@ -131,9 +131,27 @@ add_library(rkapp_core
     src/preprocess/Preprocess.cpp
     src/post/Postprocess.cpp
     src/output/TcpOutput.cpp
+    src/common/DmaBuf.cpp
 )
 target_include_directories(rkapp_core PUBLIC include)
 target_link_libraries(rkapp_core PUBLIC ${OpenCV_LIBS})
+
+# OpenMP for parallel NMS (optional)
+find_package(OpenMP QUIET)
+if(OpenMP_CXX_FOUND)
+    target_link_libraries(rkapp_core PUBLIC OpenMP::OpenMP_CXX)
+    message(STATUS "OpenMP found - parallel NMS enabled")
+endif()
+
+# DRM/DMA-BUF support for zero-copy pipeline (ARM64 only)
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm")
+    find_library(DRM_LIB drm)
+    if(DRM_LIB)
+        target_link_libraries(rkapp_core PUBLIC ${DRM_LIB})
+        target_compile_definitions(rkapp_core PUBLIC RKAPP_WITH_DRM=1)
+        message(STATUS "Found libdrm - DMA-BUF zero-copy enabled")
+    endif()
+endif()
 if(YAML_CPP_FOUND)
     target_link_libraries(rkapp_core PUBLIC ${YAML_CPP_LIBRARIES})
     target_include_directories(rkapp_core PUBLIC ${YAML_CPP_INCLUDE_DIRS})
