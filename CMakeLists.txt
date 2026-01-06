@@ -15,7 +15,9 @@ option(ENABLE_COVERAGE "Enable coverage flags on x86 Debug" OFF)
 option(ENABLE_ONNX "Enable ONNXRuntime engine" ON)
 option(ENABLE_RKNN "Enable RKNN engine" OFF)
 option(ENABLE_RGA "Enable RGA acceleration (if available)" ON)
+option(ENABLE_MPP "Enable MPP hardware video decoding (RK3588)" OFF)
 set(RKNN_HOME "/opt/rknpu2" CACHE PATH "RKNN SDK root")
+set(MPP_HOME "/usr/include/rockchip" CACHE PATH "MPP SDK headers")
 
 if (CMAKE_BUILD_TYPE STREQUAL "Debug" AND CMAKE_SYSTEM_PROCESSOR MATCHES "(x86_64|AMD64|i.86)")
   if (ENABLE_SANITIZERS)
@@ -124,6 +126,7 @@ endif()
 add_library(rkapp_core
     src/capture/FolderSource.cpp
     src/capture/VideoSource.cpp
+    src/capture/MppSource.cpp
     $<$<AND:$<BOOL:${ENABLE_GIGE}>,$<BOOL:${GST_FOUND}>>:src/capture/GigeSource.cpp>
     src/preprocess/Preprocess.cpp
     src/post/Postprocess.cpp
@@ -142,6 +145,42 @@ if(ENABLE_GIGE AND GST_FOUND AND GST_APP_FOUND)
     if(ARAVIS_FOUND)
         target_link_libraries(rkapp_core PUBLIC ${ARAVIS_LIBRARIES})
         target_include_directories(rkapp_core PUBLIC ${ARAVIS_INCLUDE_DIRS})
+    endif()
+endif()
+
+# MPP hardware video decoding (RK3588)
+if (ENABLE_MPP)
+    find_library(MPP_LIB rockchip_mpp HINTS /usr/lib/aarch64-linux-gnu)
+    find_package(PkgConfig QUIET)
+    if (PKG_CONFIG_FOUND)
+        pkg_check_modules(AVFORMAT libavformat)
+        pkg_check_modules(AVCODEC libavcodec)
+        pkg_check_modules(AVUTIL libavutil)
+    endif()
+
+    if (MPP_LIB)
+        message(STATUS "Found MPP: ${MPP_LIB}")
+        target_compile_definitions(rkapp_core PUBLIC RKAPP_WITH_MPP=1)
+        target_link_libraries(rkapp_core PUBLIC ${MPP_LIB})
+        target_include_directories(rkapp_core PUBLIC ${MPP_HOME})
+
+        # FFmpeg for demuxing (optional but recommended)
+        if (AVFORMAT_FOUND AND AVCODEC_FOUND)
+            message(STATUS "Found FFmpeg for MPP demuxing")
+            target_link_libraries(rkapp_core PUBLIC
+                ${AVFORMAT_LIBRARIES}
+                ${AVCODEC_LIBRARIES}
+                ${AVUTIL_LIBRARIES}
+            )
+            target_include_directories(rkapp_core PUBLIC
+                ${AVFORMAT_INCLUDE_DIRS}
+                ${AVCODEC_INCLUDE_DIRS}
+            )
+        else()
+            message(WARNING "FFmpeg not found - MPP will have limited format support")
+        endif()
+    else()
+        message(WARNING "MPP library not found - hardware video decoding disabled")
     endif()
 endif()
 

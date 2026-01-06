@@ -10,7 +10,8 @@ enum class SourceType {
     FOLDER,
     VIDEO,
     RTSP,
-    GIGE
+    GIGE,
+    MPP     // Hardware-accelerated video via RK3588 MPP
 };
 
 class ISource {
