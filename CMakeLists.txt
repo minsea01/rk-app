@@ -259,6 +259,21 @@ if (ENABLE_RKNN)
     endif()
 endif()
 
+# High-performance detection pipeline (integrates all hardware acceleration)
+add_library(rkapp_pipeline src/pipeline/DetectionPipeline.cpp)
+target_include_directories(rkapp_pipeline PUBLIC include)
+target_link_libraries(rkapp_pipeline PUBLIC rkapp_core)
+
+if (ENABLE_RKNN)
+    target_link_libraries(rkapp_pipeline PUBLIC rkapp_infer_rknn)
+    target_compile_definitions(rkapp_pipeline PUBLIC RKAPP_WITH_RKNN=1)
+endif()
+
+if (ENABLE_ONNX)
+    target_link_libraries(rkapp_pipeline PUBLIC rkapp_infer_onnx)
+    target_compile_definitions(rkapp_pipeline PUBLIC RKAPP_WITH_ONNX=1)
+endif()
+
 # Detection CLI application
 add_executable(detect_cli examples/detect_cli.cpp)
 target_link_libraries(detect_cli PRIVATE rkapp_core ${OpenCV_LIBS})
@@ -284,4 +299,9 @@ if (ENABLE_RKNN)
   add_executable(detect_rknn_multicore examples/detect_rknn_multicore.cpp)
   target_link_libraries(detect_rknn_multicore PRIVATE rkapp_infer_rknn ${OpenCV_LIBS})
   install(TARGETS detect_rknn_multicore RUNTIME DESTINATION bin)
+
+  # High-performance pipeline demo
+  add_executable(detect_pipeline examples/detect_pipeline.cpp)
+  target_link_libraries(detect_pipeline PRIVATE rkapp_pipeline ${OpenCV_LIBS})
+  install(TARGETS detect_pipeline RUNTIME DESTINATION bin)
 endif()
