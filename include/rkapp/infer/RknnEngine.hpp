@@ -7,6 +7,11 @@
 #include <opencv2/opencv.hpp>
 #include "rkapp/infer/IInferEngine.hpp"
 
+// Forward declaration for zero-copy input
+namespace rkapp::common {
+class DmaBuf;
+}
+
 namespace rkapp::infer {
 
 class RknnEngine : public IInferEngine {
@@ -18,6 +23,24 @@ public:
   std::vector<Detection> infer(const cv::Mat& image) override;
   void warmup() override;
   void release() override;
+
+  /**
+   * @brief Zero-copy inference from DMA-BUF backed memory
+   *
+   * This method avoids CPU memory copies by directly importing
+   * the DMA-BUF fd into RKNN for NPU access.
+   *
+   * Supported input formats:
+   * - RGB888 (3-channel, already letterboxed to input_size_)
+   * - NV12/NV21 (will use RGA for hardware color conversion)
+   *
+   * @param input DMA-BUF containing preprocessed image
+   * @param letterbox_info Letterbox parameters for coordinate mapping
+   * @return Detection results
+   */
+  std::vector<Detection> inferDmaBuf(
+      rkapp::common::DmaBuf& input,
+      const struct rkapp::preprocess::LetterboxInfo& letterbox_info);
 
   // 可选：设置NPU核心掩码（例如：1<<0, 1<<1, 1<<2）。若运行库不支持，将被忽略。
   void setCoreMask(uint32_t core_mask) { core_mask_ = core_mask; }
