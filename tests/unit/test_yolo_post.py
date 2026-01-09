@@ -391,6 +391,16 @@ class TestPostprocessYolov8:
                 conf_thres=0.25, iou_thres=0.45
             )
 
+    def test_postprocess_anchor_mismatch(self):
+        """Test postprocess rejects mismatched anchor counts."""
+        # N does not match anchors for 640 with strides (8,16,32)
+        preds = np.random.randn(1, 1000, 65).astype(np.float32)
+        with pytest.raises(ValueError, match="Anchor count mismatch"):
+            postprocess_yolov8(
+                preds, 640, (480, 640), (1.0, (0, 0)),
+                conf_thres=0.25, iou_thres=0.45
+            )
+
     def test_postprocess_box_coordinates_valid(self):
         """Test postprocess produces valid box coordinates."""
         N = 8400  # Match anchor grid for 640

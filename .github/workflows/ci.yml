@@ -25,15 +25,13 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install black flake8 || true
+          pip install black flake8
 
       - name: Check code formatting with black (allow failure)
-        run: black --check apps/ tools/ tests/ || true
-        continue-on-error: true
+        run: black --check apps/ tools/ tests/
 
       - name: Lint with flake8 (critical errors only)
-        run: flake8 apps/ tools/ tests/ --count --select=E9,F63,F7,F82 --show-source --statistics || true
-        continue-on-error: true
+        run: flake8 apps/ tools/ tests/ --count --select=E9,F63,F7,F82 --show-source --statistics
 
   # Python unit tests - simplified
   python-tests:
@@ -54,12 +52,11 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install numpy opencv-python-headless pillow pytest pytest-cov || true
+          pip install numpy opencv-python-headless pillow pytest pytest-cov
 
       - name: Run tests
         run: |
-          pytest tests/unit/ -v || echo "Some tests failed but continuing"
-        continue-on-error: true
+          pytest tests/unit/ -v
 
   # File validation
   file-validation:
@@ -98,7 +95,26 @@ jobs:
             echo "Checking $script..."
             shellcheck "$script" || echo "Warning: shellcheck found issues in $script"
           done
-        continue-on-error: true
+
+  cpp-build-tests:
+    name: C++ Build and Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Install C++ dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build pkg-config libopencv-dev libyaml-cpp-dev
+
+      - name: Configure (x86 debug)
+        run: cmake --preset x86-debug
+
+      - name: Build (x86 debug)
+        run: cmake --build --preset x86-debug
+
+      - name: Run CTest
+        run: ctest --preset x86-debug
 
   # Model files validation
   model-validation:
@@ -178,7 +194,7 @@ jobs:
   # CI Success
   ci-success:
     name: CI Pipeline Complete
-    needs: [python-quality, python-tests, file-validation, model-validation, docs-check, project-stats]
+    needs: [python-quality, python-tests, file-validation, model-validation, docs-check, project-stats, cpp-build-tests]
     runs-on: ubuntu-latest
     if: always()
     steps:

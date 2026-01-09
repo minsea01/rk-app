@@ -26,6 +26,7 @@ private:
   std::vector<std::string> image_files_;
   size_t current_index_ = 0;
   bool is_opened_ = false;
+  cv::Size cached_size_{0, 0};  // 缓存图像尺寸，避免重复读取
 };
 
 } // namespace rkapp::capture

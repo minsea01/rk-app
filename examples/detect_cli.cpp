@@ -82,6 +82,14 @@ rklog::Level parseLogLevel(const std::string& level_name) {
     return rklog::INFO;
 }
 
+bool shouldRetryRead(const std::string& source_type, rkapp::capture::SourceType actual_type) {
+    if (source_type == "rtsp" || source_type == "gige") {
+        return true;
+    }
+    return actual_type == rkapp::capture::SourceType::RTSP ||
+           actual_type == rkapp::capture::SourceType::GIGE;
+}
+
 Config loadConfig(const std::string& config_path) {
     Config config;
     
@@ -408,7 +416,21 @@ int main(int argc, char* argv[]) {
     int frame_id = 0;
 
     if (!config.async) {
-      while (source->read(frame)) {
+      const bool retry_on_fail = shouldRetryRead(config.source_type, source->getType());
+      int read_failures = 0;
+      for (;;) {
+        if (!source->read(frame)) {
+          if (!retry_on_fail) {
+            break;
+          }
+          ++read_failures;
+          if (read_failures % 10 == 1) {
+            LOGW("Frame read failed (stream). Retrying...");
+          }
+          std::this_thread::sleep_for(std::chrono::milliseconds(200));
+          continue;
+        }
+        read_failures = 0;
         auto start_time = std::chrono::high_resolution_clock::now();
         
         // Inference (engine handles its own letterbox consistently)
@@ -474,9 +496,23 @@ int main(int argc, char* argv[]) {
       // Capture source as raw pointer (guaranteed valid for thread lifetime due to join below)
       // Capture state as shared_ptr to ensure thread-safe access
       rkapp::capture::ISource* source_ptr = source.get();
-      std::thread t_capture([state, source_ptr, QMAX]{
+      const bool retry_on_fail = shouldRetryRead(config.source_type, source_ptr->getType());
+      std::thread t_capture([state, source_ptr, QMAX, retry_on_fail]{
         cv::Mat f;
-        while (source_ptr->read(f)) {
+        int read_failures = 0;
+        for (;;) {
+          if (!source_ptr->read(f)) {
+            if (!retry_on_fail) {
+              break;
+            }
+            ++read_failures;
+            if (read_failures % 10 == 1) {
+              LOGW("Frame read failed (stream). Retrying...");
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(200));
+            continue;
+          }
+          read_failures = 0;
           // Get a Mat from pool or create new one (first few frames)
           cv::Mat pooled;
           {

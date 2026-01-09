@@ -88,6 +88,91 @@ Validate model accuracy (ONNX vs RKNN comparison)
 
 ---
 
+## 毕业设计专用命令 (Graduation Design Commands)
+
+以下命令根据《仪器与电子学院毕业设计工作手册》设计：
+
+### `/midterm-check`
+中期检查准备
+
+**Usage:**
+```
+/midterm-check
+```
+
+**What it does:**
+- 检查佐证材料完成情况
+- 统计代码/文档/测试数据
+- 对照评分标准评估进度
+- 生成中期检查报告模板
+
+---
+
+### `/pre-acceptance`
+预验收准备
+
+**Usage:**
+```
+/pre-acceptance
+```
+
+**What it does:**
+- 测试演示环境
+- 准备演示内容和素材
+- 生成演示脚本
+- 对照任务书指标
+
+---
+
+### `/defense-prep`
+答辩准备
+
+**Usage:**
+```
+/defense-prep
+```
+
+**What it does:**
+- 生成PPT大纲（20-25页）
+- 生成演讲稿
+- 准备常见问题Q&A
+- 收集关键数据用于图表
+
+---
+
+### `/evidence-collect`
+佐证材料收集
+
+**Usage:**
+```
+/evidence-collect
+```
+
+**What it does:**
+- 代码行数统计
+- 测试覆盖率报告
+- 仿真结果整理
+- Git提交记录收集
+- 生成材料清单
+
+---
+
+### `/progress-log`
+进度日志生成
+
+**Usage:**
+```
+/progress-log
+```
+
+**What it does:**
+- 从Git提交生成周工作记录
+- 适配毕业设计记录本格式
+- 生成辅导记录模板
+- 满足中期检查页数要求
+
+---
+
 ## How to Use
 
 Simply type the slash command in your Claude Code conversation:
@@ -155,6 +240,15 @@ These commands execute the workflows defined in `.claude/skills/`:
 /performance-test    → Latest metrics
 /model-validate      → Visual results
 /thesis-report       → Complete summary
+```
+
+**毕业设计检查流程 (Graduation Design Check):**
+```
+/progress-log        → 生成工作日志（记录本用）
+/evidence-collect    → 收集佐证材料
+/midterm-check       → 中期检查准备（12月/4月）
+/pre-acceptance      → 预验收准备（5月）
+/defense-prep        → 答辩准备（6月）
 ```
 
 ## Troubleshooting

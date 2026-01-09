@@ -38,6 +38,33 @@ def parse_source(src: str) -> Union[int, str]:
     return src
 
 
+def _should_use_gstreamer(src: str) -> bool:
+    """Heuristic to decide if GStreamer backend is required."""
+    if not src:
+        return False
+    lowered = src.lower()
+    return (
+        lowered.startswith("rtsp://")
+        or lowered.startswith("rtsps://")
+        or lowered.startswith("gst:")
+        or "!" in src
+    )
+
+
+def _should_retry_capture(src: str, cap_src: Union[int, str]) -> bool:
+    """Return True if the source is a live stream that should reconnect on failure."""
+    if isinstance(cap_src, int):
+        return True
+    if not src:
+        return False
+    lowered = src.lower()
+    if lowered.startswith(("/dev/video", "rtsp://", "rtsps://", "http://", "https://")):
+        return True
+    if lowered.startswith("gst:") or "!" in src:
+        return True
+    return False
+
+
 def decode_predictions(
     pred: np.ndarray,
     imgsz: int,
@@ -157,12 +184,18 @@ def run_stream(args) -> None:
         raise SystemExit(f"rknn-toolkit-lite2 not installed: {e}")
 
     cap_src = parse_source(args.source)
-    cap = cv2.VideoCapture(cap_src, cv2.CAP_GSTREAMER if isinstance(cap_src, str) else 0)
-    if args.width > 0 and args.height > 0:
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, args.width)
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, args.height)
-    if args.fps > 0:
-        cap.set(cv2.CAP_PROP_FPS, args.fps)
+    use_gst = isinstance(cap_src, str) and _should_use_gstreamer(cap_src)
+
+    def _open_capture():
+        cap_obj = cv2.VideoCapture(cap_src, cv2.CAP_GSTREAMER if use_gst else 0)
+        if args.width > 0 and args.height > 0:
+            cap_obj.set(cv2.CAP_PROP_FRAME_WIDTH, args.width)
+            cap_obj.set(cv2.CAP_PROP_FRAME_HEIGHT, args.height)
+        if args.fps > 0:
+            cap_obj.set(cv2.CAP_PROP_FPS, args.fps)
+        return cap_obj
+
+    cap = _open_capture()
     if not cap.isOpened():
         raise SystemExit(f'Failed to open source: {args.source}')
 
@@ -184,13 +217,31 @@ def run_stream(args) -> None:
 
     def t_capture() -> None:
         """Capture thread: reads frames from video source."""
+        nonlocal cap
         dropped_frames = 0
+        retry_on_fail = _should_retry_capture(args.source, cap_src)
+        reconnect_delay = 0.5
+        reconnect_max = 5.0
+        reconnect_attempts = 0
         while not stop.is_set():
             t0 = time.perf_counter()
             ok, frame = cap.read()
             if not ok:
-                logger.warning("Video capture ended or failed")
-                break
+                if not retry_on_fail:
+                    logger.warning("Video capture ended or failed")
+                    break
+                reconnect_attempts += 1
+                if reconnect_attempts % 10 == 1:
+                    logger.warning("Capture read failed; reconnecting (attempt %d)", reconnect_attempts)
+                cap.release()
+                time.sleep(reconnect_delay)
+                cap = _open_capture()
+                if cap.isOpened():
+                    reconnect_attempts = 0
+                    reconnect_delay = 0.5
+                    continue
+                reconnect_delay = min(reconnect_max, reconnect_delay * 2)
+                continue
             t1 = time.perf_counter()
             try:
                 q_cap.put((frame, t0, t1), timeout=0.1)
@@ -285,7 +336,14 @@ def run_stream(args) -> None:
             except Empty:
                 continue
             t6 = time.perf_counter()
-            boxes, confs, cls_ids = decode_predictions(pred, args.imgsz, args.conf, args.iou, head=args.head)
+            try:
+                boxes, confs, cls_ids = decode_predictions(
+                    pred, args.imgsz, args.conf, args.iou, head=args.head
+                )
+            except Exception as e:
+                logger.error(f"Postprocess error: {e}")
+                stop.set()
+                break
             # scale boxes back to original frame size when using letterbox
             if len(boxes) > 0:
                 boxes[:, [0, 2]] -= d[0]

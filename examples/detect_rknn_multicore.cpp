@@ -44,27 +44,27 @@ int main(int argc, char** argv){
   std::mutex mtx; std::condition_variable cv_not_full, cv_not_empty; std::deque<Item> q; const size_t QMAX = 4;
   std::atomic<bool> done{false}; std::atomic<int> next_id{0};
 
-  // Producer thread
-  std::thread t_cap([&]{
+  // Producer thread - 显式捕获避免悬垂引用风险
+  std::thread t_cap([&cap, &mtx, &cv_not_full, &cv_not_empty, &q, QMAX, &next_id, &done]{
     cv::Mat f;
     while(cap.read(f)){
       std::unique_lock<std::mutex> lk(mtx);
-      cv_not_full.wait(lk, [&]{ return q.size() < QMAX; });
+      cv_not_full.wait(lk, [&q, QMAX]{ return q.size() < QMAX; });
       q.push_back(Item{next_id++, f.clone()});
       lk.unlock(); cv_not_empty.notify_one();
     }
     std::lock_guard<std::mutex> lk(mtx); done = true; cv_not_empty.notify_all();
   });
 
-  // Worker threads mapped to engines
+  // Worker threads mapped to engines - 显式捕获
   std::atomic<int> processed{0};
-  auto worker = [&](int idx){
+  auto worker = [&engines, &mtx, &cv_not_full, &cv_not_empty, &q, &done, &processed](int idx){
     auto& eng = *engines[idx];
     while(true){
       Item it{}; bool has=false;
       {
         std::unique_lock<std::mutex> lk(mtx);
-        cv_not_empty.wait(lk, [&]{ return !q.empty() || done; });
+        cv_not_empty.wait(lk, [&q, &done]{ return !q.empty() || done; });
         if(!q.empty()){ it = std::move(q.front()); q.pop_front(); has=true; cv_not_full.notify_one(); }
         else if(done) break;
       }

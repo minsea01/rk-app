@@ -42,6 +42,40 @@ See `.claude/commands/README.md` for detailed documentation.
 
 ## Key Commands
 
+### C++ 构建与测试
+
+```bash
+# 主机调试构建 (ONNX)
+cmake --preset x86-debug && cmake --build --preset x86-debug
+./build/x86-debug/detect_cli --cfg config/detection/detect.yaml
+
+# RK3588 交叉编译 (RKNN)
+cmake --preset arm64-release -DENABLE_RKNN=ON && cmake --build --preset arm64
+cmake --install build/arm64
+
+# C++ 单元测试
+ctest --preset x86-debug
+```
+
+**CMake 选项：**
+- `-DENABLE_ONNX=ON`（默认）：主机 ONNX 推理，可通过 `ORT_HOME` 指定外部路径
+- `-DENABLE_RKNN=ON`：启用 RKNN SDK（默认 `RKNN_HOME=/opt/rknpu2`）
+- `-DENABLE_GIGE=ON`：启用 GigE 相机（需要 aravis/gstreamer）
+
+### Makefile 快捷命令
+
+```bash
+# 完整流水线：训练 → 导出 → 转换
+make RUN_NAME=<exp> all MODEL_PREFIX=yolo11n
+
+# 单独目标
+make compare COMPARE_IMG=<img>                    # PC vs RKNN 对比
+make calib CALIB_SRC=/path/to/data.yaml CALIB_N=300  # 生成校准集
+make vis IMG=/path/to/image.jpg                   # 可视化推理
+make validate VALIDATE_IMG=assets/test.jpg       # 验证模型
+make convert-fp16                                  # 仅 FP16 转换
+```
+
 ### Model Conversion Workflow
 
 ```bash
@@ -63,18 +97,20 @@ python3 scripts/run_rknn_sim.py
 python3 scripts/compare_onnx_rknn.py
 ```
 
-### Testing & Quality
+### Python 测试与质量
 
 ```bash
-# Run all tests (9 files, 49 cases, 88-100% coverage)
+# Python 单元测试（跳过需要硬件的测试）
+pytest tests/unit -m "not requires_hardware" -v
 pytest tests/unit -v --cov=apps --cov=tools --cov-report=html
 
-# Code quality
+# 代码质量检查
+pre-commit run --all-files  # 或单独运行：
 black apps/ tools/ tests/
-pylint apps/ tools/
 flake8 apps/ tools/ tests/
-mypy apps/config.py apps/exceptions.py apps/logger.py
 ```
+
+代码风格、提交规范详见 `AGENTS.md`。
 
 ### Calibration Dataset
 
@@ -213,24 +249,28 @@ RKNN NPU has a 16384-element limit for Transpose operations:
 
 ## Project Structure
 
-**Key directories:**
-- `.claude/` - 5 slash commands + 5 skills (automation)
-- `apps/` - 12 Python modules (config, exceptions, logger, inference, utils)
-- `tests/unit/` - 9 test files, 49 test cases (88-100% coverage)
-- `tools/` - 24 conversion/benchmark/evaluation tools
-- `scripts/` - 49 shell scripts (deploy, network, profiling, train, datasets)
-- `docs/` - 72+ markdown files (thesis, guides, reports)
-- `artifacts/` - Build outputs, models, reports
+**C++ 核心流水线：**
+- `src/` - 核心实现（capture/preprocess/infer/post/output）
+- `include/rkapp/` - 公共头文件
+- `examples/` - CLI 示例（`detect_cli.cpp`）
 
-**Core modules:**
-- `apps/config.py` - Centralized configuration (ModelConfig, RKNNConfig, PreprocessConfig)
-- `apps/config_loader.py` - Priority chain: CLI > ENV > YAML > defaults
-- `apps/exceptions.py` - Custom exception hierarchy (RKNNError, PreprocessError, etc.)
-- `apps/logger.py` - Unified logging system
-- `apps/utils/preprocessing.py` - Image preprocessing (ONNX/RKNN/board modes)
-- `apps/utils/yolo_post.py` - Post-processing (letterbox, NMS, decoder)
+**Python 工具链：**
+- `apps/` - 板端 Python Runner（`yolov8_rknn_infer.py` 等）
+- `tools/` - 转换/评估工具（`convert_onnx_to_rknn.py` 等）
+- `scripts/` - 部署/压测脚本
 
-See `docs/` for detailed structure documentation.
+**其他目录：**
+- `.claude/` - 5 个斜杠命令 + 5 个技能
+- `artifacts/` - 模型与构建产物
+- `configs/` / `config/` - 实验配置
+- `tests/` - Python + C++ 测试
+
+**核心模块：**
+- `apps/config.py` - 配置中心（ModelConfig, RKNNConfig）
+- `apps/config_loader.py` - 优先级链：CLI > ENV > YAML > defaults
+- `apps/exceptions.py` - 自定义异常层次
+- `apps/utils/preprocessing.py` - 图像预处理
+- `apps/utils/yolo_post.py` - 后处理（letterbox, NMS）
 
 ## Python Environment
 
@@ -243,6 +283,32 @@ pip install -r requirements.txt
 pip install -r requirements-dev.txt  # Development only
 ```
 
+## Training Resources (~/yolo_env/)
+
+训练相关文件位于 `~/yolo_env/` 目录，不在项目仓库内：
+
+**预训练模型：**
+- `~/yolo_env/yolov8n.pt` - YOLOv8n 预训练权重（已复制到 artifacts/models/）
+- `~/yolo_env/yolo11n.pt` - YOLO11n 预训练权重
+- `~/yolo_env/yolov5su.pt` - YOLOv5s-u 预训练权重
+
+**行人检测项目：**
+- `~/yolo_env/pedestrian_detection/` - 行人检测训练项目
+  - `datasets/pedestrian/pedestrian.yaml` - 数据集配置
+  - `outputs/` - 训练输出目录
+  - `scripts/` - 训练脚本
+  - `TRAINING_GUIDE.md` - 训练指南
+  - `QUICKSTART.md` - 快速开始
+
+**数据集：**
+- `~/yolo_env/datasets/coco/` - COCO 数据集
+- `~/yolo_env/datasets/coco8/` - COCO8 mini 数据集
+
+**辅助脚本：**
+- `~/yolo_env/download_crowdhuman.sh` - CrowdHuman 下载脚本
+- `~/yolo_env/monitor_training.sh` - 训练监控脚本
+- `~/yolo_env/training.log` - 训练日志
+
 **Key packages:**
 - numpy<2.0 (RKNN toolkit compatibility)
 - opencv-python-headless==4.9.0.80
@@ -253,49 +319,11 @@ pip install -r requirements-dev.txt  # Development only
 
 ## Code Quality Standards
 
-### Exception Handling
+**异常处理：** 使用 `apps/exceptions.py` 中的自定义异常（`PreprocessError`, `InferenceError` 等），避免裸 `except` 或过宽的 `except Exception`。
 
-**Do:**
-```python
-from apps.exceptions import PreprocessError, InferenceError
+**配置管理：** 使用 `apps/config_loader.py`，优先级链：CLI > ENV > YAML > defaults。避免魔法数字。
 
-try:
-    img = cv2.imread(path)
-    if img is None:
-        raise PreprocessError(f"Failed to load image: {path}")
-except PreprocessError as e:
-    logger.error(f"Preprocessing failed: {e}")
-    raise  # Re-raise after logging
-```
-
-**Don't:**
-```python
-except:  # Bare except - catches KeyboardInterrupt, SystemExit
-    pass
-except Exception as e:  # Too broad
-    print(f"Error: {e}")  # Use logger, not print()
-```
-
-### Configuration Usage
-
-**Do:**
-```python
-from apps.config_loader import load_config
-
-# Priority chain: CLI > ENV > YAML > Defaults
-config = load_config(
-    cli_args={'model': 'yolo11n.onnx'},
-    yaml_path='config/model.yaml',
-    defaults={'conf_threshold': 0.25}
-)
-```
-
-**Don't:**
-```python
-# Magic numbers scattered throughout code
-conf_threshold = 0.25
-size = 416
-```
+**日志：** 使用 `apps/logger.py`，避免 `print()`。
 
 ## Common Issues
 
@@ -334,58 +362,52 @@ size = 416
 - Use conf≥0.5 for industrial applications (avoid NMS bottleneck)
 - Target <45ms end-to-end latency (camera → inference → UDP)
 
-## Current Project Status (Nov 22, 2025)
+## Cloud Training (AutoDL 4090)
 
-### Phase 1 Completed (98%) ✅
+云端训练脚本位于 `cloud_training/` 目录，用于在 AutoDL 租用 4090 训练 YOLOv8n 行人检测模型。
 
-**Core Infrastructure:**
-- ✅ Model conversion pipeline (PyTorch → ONNX → RKNN INT8)
-- ✅ Cross-compilation toolchain (CMake presets for x86/arm64)
-- ✅ PC boardless validation (ONNX GPU + RKNN simulator)
-- ✅ One-click deployment (`rk3588_run.sh`)
-- ✅ Performance optimization (conf=0.5 → 60+ FPS)
+**训练包文件：**
+- `cloud_training.tar.gz` - 打包好的训练脚本
+- `cloud_training/setup_autodl.sh` - 环境配置
+- `cloud_training/train.sh` - 训练脚本 (100 epochs)
+- `cloud_training/export_onnx.sh` - ONNX导出
+- `cloud_training/README.md` - 完整使用指南
 
-**Code Quality:**
-- ✅ 49 test cases (88-100% coverage)
-- ✅ Code quality modules (config, exceptions, logger)
-- ✅ CI/CD pipeline (7-job GitHub Actions)
-- ✅ S-Level rating (95/100)
+**AutoDL 配置：**
+- GPU: RTX 4090 (24GB)
+- 镜像: PyTorch 2.0.0 / Python 3.10 / CUDA 11.8
+- 费用: ~¥2.5-3/小时，训练约3小时 ≈ ¥10
 
-**Documentation:**
-- ✅ 7 thesis chapters + opening report (~18,000 words)
-- ✅ Defense materials (PPT outline + speech script)
-- ✅ 10 Mermaid workflow diagrams
-- ✅ Technical guides (CONFIG, RGMII, CityPersons fine-tuning)
+**训练流程：**
+```bash
+# 1. 本地上传到AutoDL
+scp -P <端口> cloud_training.tar.gz root@<地址>:~/
 
-**Model & Evaluation:**
-- ✅ Model size: 4.7MB (meets <5MB requirement)
-- ✅ mAP baseline: 61.57% (pathway to ≥90% established)
-- ✅ CityPersons fine-tuning setup (dataset + training scripts)
+# 2. SSH连接后执行
+tar -xzf cloud_training.tar.gz && cd cloud_training
+bash setup_autodl.sh    # 安装依赖
+bash train.sh           # 训练 (2-4小时)
+bash export_onnx.sh     # 导出ONNX
 
-### Phase 2 Pending (Hardware Required) ⏸️
+# 3. 下载模型回本地
+scp -P <端口> root@<地址>:~/pedestrian_training/outputs/yolov8n_pedestrian/weights/best.pt ./artifacts/models/
+scp -P <端口> root@<地址>:~/pedestrian_training/outputs/yolov8n_pedestrian/weights/best.onnx ./artifacts/models/
 
-**Dual-NIC Driver Development:**
-- ⏸️ Network throughput validation (≥900Mbps)
-- ⏸️ Port 1: Industrial camera (1080P capture)
-- ⏸️ Port 2: Detection result upload
+# 4. 本地RKNN转换
+python3 tools/convert_onnx_to_rknn.py --onnx artifacts/models/best.onnx --out artifacts/models/yolov8n_pedestrian_int8.rknn --calib datasets/coco/calib_images/calib.txt --target rk3588
+```
 
-**On-Device Testing:**
-- ⏸️ NPU inference latency measurement
-- ⏸️ FPS validation (>30 FPS target)
-- ⏸️ Multi-core NPU parallel processing
+**预期结果：** mAP ≥90% (CityPersons), 模型 ~4.8MB
 
-**Optional Fine-tuning:**
-- ⏸️ CityPersons fine-tuning execution (2-4 hours GPU, ≥90% mAP achievable)
+## Current Status
 
-**Timeline:**
-- ✅ Phase 1 (Oct-Nov 2025): Thesis + PC validation → 98% complete
-- ⏸️ Phase 2 (Dec 2025): Optional improvements (hardware-dependent)
-- 📅 Defense (June 2026): Core work complete, ready for defense
+**Phase 1 已完成 (98%)：** 模型转换流水线、交叉编译工具链、PC 无板验证、一键部署脚本、论文文档（7章+开题报告）
 
-**Graduation Requirements Compliance:**
-- ✅ Model size <5MB: 4.7MB
-- ⏸️ FPS >30: Estimated 25-35 FPS (needs board validation)
-- ✅ mAP@0.5 >90%: Pathway established (CityPersons fine-tuning)
-- ⏸️ Dual-NIC ≥900Mbps: Theoretical design complete
-- ✅ Working software: PC simulation complete, board deployment scripted
-- ✅ Thesis documentation: 7 chapters + opening report complete
+**Phase 2 待定（需硬件）：** 双网卡驱动验证（≥900Mbps）、NPU 实机测试（>30 FPS）、CityPersons 微调
+
+**待办：云端训练** - AutoDL 4090 训练 YOLOv8n 行人检测，提升 mAP 到 ≥90%
+
+**关键指标：**
+- 模型大小：4.8MB ✅（YOLOv8n RKNN INT8，要求 <5MB）
+- mAP 基线：61.57%（CityPersons 微调可达 ≥90%）
+- 答辩时间：2026年6月

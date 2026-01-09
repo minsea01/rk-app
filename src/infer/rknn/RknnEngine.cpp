@@ -5,6 +5,7 @@
 #include "rkapp/common/DmaBuf.hpp"
 #include "log.hpp"
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstring>
 #include <fstream>
@@ -31,6 +32,11 @@ struct RknnEngine::Impl {
   rknn_tensor_attr out_attr{};
   int out_elems = 0;
   int out_c = 0, out_n = 0; // C (8), N (8400) or transposed
+
+  // 预分配缓冲区 - 避免每帧分配
+  std::vector<float> logits_buffer;     // 推理输出缓冲区
+  std::vector<float> transpose_buffer;  // 转置临时缓冲区
+  std::array<float, 32> dfl_probs;      // DFL softmax 缓冲区 (reg_max 最大 32)
 #endif
 };
 
@@ -43,8 +49,8 @@ std::vector<uint8_t> read_file(const std::string& p){
 
 // Best-effort model metadata loader to avoid纯启发式解码。
 // 优先读取侧car文件：<model_path>.json / <model_path>.meta / artifacts/models/decode_meta.json
-rkapp::infer::RknnEngine::ModelMeta load_model_meta(const std::string& model_path) {
-  rkapp::infer::RknnEngine::ModelMeta meta;
+rkapp::infer::ModelMeta load_model_meta(const std::string& model_path) {
+  rkapp::infer::ModelMeta meta;
   const std::vector<std::string> candidates = {
       model_path + ".json",
       model_path + ".meta",
@@ -224,6 +230,11 @@ bool RknnEngine::init(const std::string& model_path, int img_size){
   }
   // Defer num_classes_ until we inspect C in infer()
   num_classes_ = -1;
+
+  // 预分配缓冲区以避免推理时每帧分配
+  impl_->logits_buffer.resize(impl_->out_elems);
+  impl_->transpose_buffer.resize(impl_->out_elems);
+  LOGI("RknnEngine: Preallocated buffers (", impl_->out_elems, " floats)");
 #else
   LOGW("RknnEngine: RKNN platform not enabled at build time");
 #endif
@@ -268,24 +279,27 @@ std::vector<Detection> RknnEngine::infer(const cv::Mat& image){
     return {};
   }
 
-  rknn_output out{}; out.want_float = 1; out.is_prealloc = 0;
+  rknn_output out{};
+  out.want_float = 1;
+  out.is_prealloc = 1;
+  out.buf = impl_->logits_buffer.data();
+  out.size = impl_->logits_buffer.size() * sizeof(float);
   ret = rknn_outputs_get(impl_->ctx, 1, &out, nullptr);
   if(ret != RKNN_SUCC){
     LOGE("RknnEngine: rknn_outputs_get failed: ", ret);
     return {};
   }
 
-  std::vector<float> logits;
-  logits.assign((float*)out.buf, (float*)out.buf + impl_->out_elems);
-  rknn_outputs_release(impl_->ctx, 1, &out);
+  // 使用预分配缓冲区，避免每帧动态分配/额外 memcpy
+  float* logits = impl_->logits_buffer.data();
 
-  // If output is [1,8400,8], transpose to [1,8,8400]
+  // If output is [1,8400,8], transpose to [1,8,8400] using preallocated buffer
   if(impl_->out_attr.dims[1] == impl_->out_n && impl_->out_attr.dims[2] == impl_->out_c){
-    std::vector<float> trans(impl_->out_elems);
+    float* trans = impl_->transpose_buffer.data();
     for(int n=0;n<impl_->out_n;n++)
       for(int c=0;c<impl_->out_c;c++)
         trans[c*impl_->out_n + n] = logits[n*impl_->out_c + c];
-    logits.swap(trans);
+    logits = trans;  // 切换到转置后的缓冲区
   }
 
   // Decode to detections. Support两种头：
@@ -294,6 +308,15 @@ std::vector<Detection> RknnEngine::infer(const cv::Mat& image){
   std::vector<Detection> dets;
   int N = impl_->out_n;
   int C = impl_->out_c;
+  const float img_w = static_cast<float>(image.cols);
+  const float img_h = static_cast<float>(image.rows);
+
+  auto clamp_det = [&](Detection& d) {
+    d.x = std::max(0.0f, std::min(d.x, img_w));
+    d.y = std::max(0.0f, std::min(d.y, img_h));
+    d.w = std::max(0.0f, std::min(d.w, img_w - d.x));
+    d.h = std::max(0.0f, std::min(d.h, img_h - d.y));
+  };
 
   auto sigmoid = [](float x){ return 1.0f / (1.0f + std::exp(-x)); };
 
@@ -313,6 +336,12 @@ std::vector<Detection> RknnEngine::infer(const cv::Mat& image){
     const int cls_ch = C - cls_offset;
     if (cls_ch <= 0) {
       LOGW("RknnEngine: raw decode aborted due to missing class channels (C=", C, ")");
+      return;
+    }
+    // 边界检查：确保最大索引不越界
+    const int max_idx = (cls_offset + cls_ch - 1) * N + (N - 1);
+    if (max_idx >= impl_->out_elems) {
+      LOGE("RknnEngine: raw decode aborted - index out of bounds (max_idx=", max_idx, ", out_elems=", impl_->out_elems, ")");
       return;
     }
     if (num_classes_ < 0) num_classes_ = cls_ch; // assume objness present
@@ -335,6 +364,7 @@ std::vector<Detection> RknnEngine::infer(const cv::Mat& image){
         d.y = (cy - h/2 - dy) / scale;
         d.w = w / scale; d.h = h / scale;
         d.confidence = conf; d.class_id = best; d.class_name = "class_" + std::to_string(best);
+        clamp_det(d);
         dets.push_back(d);
         if (decode_params_.max_boxes > 0 && static_cast<int>(dets.size()) >= decode_params_.max_boxes) {
           break;
@@ -365,7 +395,8 @@ std::vector<Detection> RknnEngine::infer(const cv::Mat& image){
           LOGW("RknnEngine: anchor layout invalid for provided strides, falling back to raw decode");
           fell_back_to_raw = true;
         } else {
-          // Decode distributions to l,t,r,b
+          // Decode distributions to l,t,r,b (使用预分配的 dfl_probs 缓冲区)
+          auto& probs_buf = impl_->dfl_probs;
           auto dfl_softmax_project = [&](int base_c, int i)->std::array<float,4> {
             std::array<float,4> out{};
             for (int side = 0; side < 4; ++side) {
@@ -374,10 +405,9 @@ std::vector<Detection> RknnEngine::infer(const cv::Mat& image){
               float maxv = -1e30f;
               for (int k = 0; k < reg_max; ++k) maxv = std::max(maxv, logits[(ch0 + k)*N + i]);
               float denom = 0.f;
-              std::vector<float> probs(reg_max);
-              for (int k = 0; k < reg_max; ++k) { float v = std::exp(logits[(ch0 + k)*N + i] - maxv); probs[k] = v; denom += v; }
+              for (int k = 0; k < reg_max; ++k) { float v = std::exp(logits[(ch0 + k)*N + i] - maxv); probs_buf[k] = v; denom += v; }
               float proj = 0.f;
-              for (int k = 0; k < reg_max; ++k) proj += probs[k] * (float)k;
+              for (int k = 0; k < reg_max; ++k) proj += probs_buf[k] * (float)k;
               out[side] = (denom > 0.f) ? (proj / denom) : 0.f;
             }
             return out; // in grid units
@@ -406,6 +436,7 @@ std::vector<Detection> RknnEngine::infer(const cv::Mat& image){
               d.x = (x1 - dx) / scale; d.y = (y1 - dy) / scale;
               d.w = w / scale; d.h = h / scale;
               d.confidence = best_conf; d.class_id = best_cls; d.class_name = "class_" + std::to_string(best_cls);
+              clamp_det(d);
               dets.push_back(d);
               if (decode_params_.max_boxes > 0 && static_cast<int>(dets.size()) >= decode_params_.max_boxes) {
                 break;
@@ -430,7 +461,9 @@ std::vector<Detection> RknnEngine::infer(const cv::Mat& image){
     nms_cfg.max_det = decode_params_.max_boxes;
     nms_cfg.topk = decode_params_.max_boxes;
   }
-  return rkapp::post::Postprocess::nms(dets, nms_cfg);
+  auto nms_result = rkapp::post::Postprocess::nms(dets, nms_cfg);
+  rknn_outputs_release(impl_->ctx, 1, &out);
+  return nms_result;
 #else
   // Non-RKNN build: return empty
   return {};

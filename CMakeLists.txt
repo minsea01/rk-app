@@ -4,6 +4,26 @@ project(rk_app LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# ARM64 (RK3588) 平台优化
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64|ARM64")
+  message(STATUS "Configuring for ARM64 (RK3588) with Cortex-A76 optimizations")
+  add_compile_options(
+    -march=armv8.2-a+crypto+fp16  # RK3588 支持 ARMv8.2-A
+    -mtune=cortex-a76             # 大核优化
+  )
+  add_compile_definitions(ARM_NEON=1)
+  # Release-only aggressive optimizations (avoid fast-math in Debug)
+  if(CMAKE_BUILD_TYPE STREQUAL "Release")
+    add_compile_options(
+      -O3
+      -ffast-math
+      -ftree-vectorize
+      -fomit-frame-pointer
+    )
+    set(CMAKE_INTERPROCEDURAL_OPTIMIZATION TRUE)
+  endif()
+endif()
+
 # 导出 compile_commands.json 供 VS Code 智能感知
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
@@ -112,7 +132,30 @@ list(APPEND CMAKE_PREFIX_PATH
 )
 find_package(OpenCV REQUIRED)
 find_package(PkgConfig REQUIRED)
-pkg_check_modules(YAML_CPP yaml-cpp)
+find_package(Threads REQUIRED)
+set(HAVE_YAML_CPP OFF)
+find_package(yaml-cpp QUIET)
+if(yaml-cpp_FOUND)
+  set(HAVE_YAML_CPP ON)
+  if(TARGET yaml-cpp::yaml-cpp)
+    set(YAML_CPP_TARGET yaml-cpp::yaml-cpp)
+  else()
+    set(YAML_CPP_TARGET yaml-cpp)
+  endif()
+else()
+  pkg_check_modules(YAML_CPP yaml-cpp)
+  if(YAML_CPP_FOUND)
+    add_library(yaml-cpp::yaml-cpp INTERFACE IMPORTED)
+    target_include_directories(yaml-cpp::yaml-cpp INTERFACE ${YAML_CPP_INCLUDE_DIRS})
+    target_link_libraries(yaml-cpp::yaml-cpp INTERFACE ${YAML_CPP_LIBRARIES})
+    set(HAVE_YAML_CPP ON)
+    set(YAML_CPP_TARGET yaml-cpp::yaml-cpp)
+  endif()
+endif()
+
+if(NOT HAVE_YAML_CPP)
+  message(FATAL_ERROR "yaml-cpp not found. Install libyaml-cpp-dev or provide pkg-config.")
+endif()
 option(ENABLE_GIGE "Enable GigE Vision (Aravis) source" OFF)
 if (ENABLE_GIGE)
   # Aravis（可选，用于未来直接使用Aravis API）；当前GigeSource仅依赖GStreamer
@@ -132,6 +175,7 @@ add_library(rkapp_core
     src/post/Postprocess.cpp
     src/output/TcpOutput.cpp
     src/common/DmaBuf.cpp
+    src/common/FramePool.cpp
 )
 target_include_directories(rkapp_core PUBLIC include)
 target_link_libraries(rkapp_core PUBLIC ${OpenCV_LIBS})
@@ -297,11 +341,17 @@ install(TARGETS detect_cli RUNTIME DESTINATION bin)
 # RKNN multicore sample (only built when RKNN enabled)
 if (ENABLE_RKNN)
   add_executable(detect_rknn_multicore examples/detect_rknn_multicore.cpp)
-  target_link_libraries(detect_rknn_multicore PRIVATE rkapp_infer_rknn ${OpenCV_LIBS})
+  target_link_libraries(detect_rknn_multicore PRIVATE rkapp_infer_rknn ${OpenCV_LIBS} Threads::Threads)
   install(TARGETS detect_rknn_multicore RUNTIME DESTINATION bin)
 
   # High-performance pipeline demo
   add_executable(detect_pipeline examples/detect_pipeline.cpp)
   target_link_libraries(detect_pipeline PRIVATE rkapp_pipeline ${OpenCV_LIBS})
   install(TARGETS detect_pipeline RUNTIME DESTINATION bin)
+
+  # End-to-end latency benchmark
+  add_executable(bench_e2e_cpp examples/bench_e2e_cpp.cpp)
+  target_link_libraries(bench_e2e_cpp PRIVATE rkapp_infer_rknn ${OpenCV_LIBS})
+  target_compile_definitions(bench_e2e_cpp PRIVATE RKAPP_WITH_RKNN=1)
+  install(TARGETS bench_e2e_cpp RUNTIME DESTINATION bin)
 endif()

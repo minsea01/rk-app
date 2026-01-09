@@ -197,7 +197,8 @@ class TestOnnxModelInference:
 
         try:
             # Preprocess
-            input_tensor = preprocess_onnx(img_path, target_size=640)
+            input_size = 416
+            input_tensor = preprocess_onnx(img_path, target_size=input_size)
 
             # Run inference
             session = ort.InferenceSession(str(model_path))
@@ -207,7 +208,7 @@ class TestOnnxModelInference:
             # Decode predictions
             boxes, confs, cls_ids = decode_predictions(
                 outputs[0],
-                imgsz=640,
+                imgsz=input_size,
                 conf_thres=0.25,
                 iou_thres=0.45,
                 head='dfl'

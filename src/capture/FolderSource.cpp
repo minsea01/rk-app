@@ -38,8 +38,12 @@ bool FolderSource::open(const std::string& folder_path) {
 
   if (image_files_.empty()) {
     std::cerr << "No image files found in folder: " << folder_path << std::endl;
+    cached_size_ = cv::Size(0, 0);
   } else {
     std::cout << "Found " << image_files_.size() << " images in folder" << std::endl;
+    // 缓存第一张图片的尺寸，避免 getSize() 每次都读取
+    cv::Mat sample = cv::imread(image_files_[0], cv::IMREAD_COLOR);
+    cached_size_ = sample.empty() ? cv::Size(0, 0) : sample.size();
   }
 
   return is_opened_;
@@ -70,9 +74,7 @@ bool FolderSource::isOpened() const { return is_opened_; }
 double FolderSource::getFPS() const { return 30.0; }
 
 cv::Size FolderSource::getSize() const {
-  if (image_files_.empty()) return cv::Size(0, 0);
-  cv::Mat sample = cv::imread(image_files_[0], cv::IMREAD_COLOR);
-  return sample.empty() ? cv::Size(0, 0) : sample.size();
+  return cached_size_;  // 使用 open() 中缓存的尺寸
 }
 
 int FolderSource::getTotalFrames() const { return static_cast<int>(image_files_.size()); }
