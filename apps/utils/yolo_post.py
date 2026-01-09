@@ -431,7 +431,7 @@ def postprocess_yolov8(
     """
     # Validate input shape (replace assert with explicit exception)
     if preds.ndim != 3 or preds.shape[0] != 1:
-        raise AssertionError(
+        raise ValueError(
             f"Expected predictions shape (1, N, C), got {preds.shape}. "
             f"ndim={preds.ndim}, batch_size={preds.shape[0] if preds.ndim >= 1 else 'N/A'}"
         )
@@ -452,6 +452,11 @@ def postprocess_yolov8(
         alt = make_anchors(list(strides)[::-1], img_size)
         if alt.shape[0] == n:
             anchors = alt
+        else:
+            raise ValueError(
+                f"Anchor count mismatch: preds={n}, anchors={anchors.shape[0]}, "
+                f"alt_anchors={alt.shape[0]}, strides={strides}, img_size={img_size}"
+            )
     # l,t,r,b to xyxy
     cx, cy = anchors[:, 0], anchors[:, 1]
     l, t, r, b = dfl[:, 0], dfl[:, 1], dfl[:, 2], dfl[:, 3]

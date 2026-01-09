@@ -121,6 +121,15 @@ def main():
 
     logger = setup_logger(__name__, level=getattr(logging, args.log_level.upper()))
 
+    if args.source is not None:
+        if not args.source.exists():
+            raise PreprocessError(f"Source path not found: {args.source}")
+        if not args.source.is_file():
+            raise PreprocessError(
+                "Source must be an image file. Omit --source to use the camera: "
+                f"{args.source}"
+            )
+
     try:
         from rknnlite.api import RKNNLite
     except ImportError as e:
@@ -159,7 +168,7 @@ def main():
 
     class_names = load_labels(args.names)
 
-    if args.source and args.source.exists():
+    if args.source is not None:
         # Load and preprocess image
         try:
             img0 = cv2.imread(str(args.source))
@@ -198,9 +207,20 @@ def main():
 
     # Fallback to camera
     cap = None
+    reconnect_delay = 0.5
+    reconnect_max = 5.0
+    reconnect_attempts = 0
+
+    def open_camera():
+        cap_obj = cv2.VideoCapture(0)
+        if not cap_obj.isOpened():
+            cap_obj.release()
+            return None
+        return cap_obj
+
     try:
-        cap = cv2.VideoCapture(0)
-        if not cap.isOpened():
+        cap = open_camera()
+        if cap is None:
             # Important: Release cap even if it failed to open
             # cv2.VideoCapture() returns an object even on failure
             if cap is not None:
@@ -210,10 +230,28 @@ def main():
 
         fps_hist = []
         while True:
+            if cap is None or not cap.isOpened():
+                cap = open_camera()
+                if cap is None:
+                    reconnect_attempts += 1
+                    if reconnect_attempts % 10 == 1:
+                        logger.warning("Camera unavailable; retrying (attempt %d)", reconnect_attempts)
+                    time.sleep(reconnect_delay)
+                    reconnect_delay = min(reconnect_max, reconnect_delay * 2)
+                    continue
+                reconnect_attempts = 0
+                reconnect_delay = 0.5
+
             ret, img0 = cap.read()
             if not ret:
-                logger.info("Video capture ended")
-                break
+                reconnect_attempts += 1
+                if reconnect_attempts % 10 == 1:
+                    logger.warning("Video capture failed; reconnecting (attempt %d)", reconnect_attempts)
+                cap.release()
+                cap = None
+                time.sleep(reconnect_delay)
+                reconnect_delay = min(reconnect_max, reconnect_delay * 2)
+                continue
             try:
                 img, r, d = letterbox(img0, args.imgsz)
                 t0 = time.time()

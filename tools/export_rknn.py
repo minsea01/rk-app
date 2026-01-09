@@ -69,8 +69,14 @@ def convert_to_rknn(
             'optimization_level': 3,
             'output_optimize': True
         }
-        
-        if quant_dataset and os.path.exists(quant_dataset):
+
+        quantize = False
+        if quant_dataset:
+            if not os.path.exists(quant_dataset):
+                raise FileNotFoundError(f"Quantization dataset not found: {quant_dataset}")
+            quantize = True
+
+        if quantize:
             # INT8 quantization
             config_params.update({
                 'quantized_dtype': 'asymmetric_quantized-u8',
@@ -83,9 +89,7 @@ def convert_to_rknn(
             })
             logger.info("   ✓ INT8 quantization enabled")
         else:
-            # FP16 for development/testing
-            config_params['quantized_dtype'] = 'asymmetric_quantized-u8'
-            logger.info("   ✓ Using FP16 precision")
+            logger.info("   ✓ No quantization (FP16/FP32 depends on toolkit)")
         
         rknn.config(**config_params)
         
@@ -99,7 +103,7 @@ def convert_to_rknn(
         # Build RKNN model
         logger.info("🔨 Building RKNN model...")
         build_params = {}
-        if quant_dataset and os.path.exists(quant_dataset):
+        if quantize:
             build_params['do_quantization'] = True
             build_params['dataset'] = quant_dataset
         

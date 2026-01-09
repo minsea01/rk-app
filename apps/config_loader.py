@@ -48,6 +48,7 @@ from apps.config import (
 )
 from apps.logger import setup_logger
 from apps.exceptions import ConfigurationError, ValidationError
+from apps.utils.paths import get_project_root
 
 logger = setup_logger(__name__, level='INFO')
 
@@ -77,19 +78,21 @@ class ConfigLoader:
     def _load_yaml_config(self):
         """Load YAML configuration file if it exists."""
         config_path = Path(self.config_file)
+        if not config_path.is_absolute():
+            config_path = get_project_root() / config_path
 
         if not config_path.exists():
-            logger.debug(f"YAML config not found: {self.config_file} (using defaults)")
+            logger.debug(f"YAML config not found: {config_path} (using defaults)")
             return
 
         try:
             with open(config_path, 'r', encoding='utf-8') as f:
                 self._yaml_config = yaml.safe_load(f) or {}
-            logger.debug(f"Loaded YAML config from: {self.config_file}")
+            logger.debug(f"Loaded YAML config from: {config_path}")
         except yaml.YAMLError as e:
-            raise ConfigurationError(f"Invalid YAML in {self.config_file}: {e}") from e
+            raise ConfigurationError(f"Invalid YAML in {config_path}: {e}") from e
         except (IOError, OSError) as e:
-            raise ConfigurationError(f"Failed to read {self.config_file}: {e}") from e
+            raise ConfigurationError(f"Failed to read {config_path}: {e}") from e
 
     def get(
         self,

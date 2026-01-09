@@ -1,5 +1,7 @@
 #include "rkapp/capture/VideoSource.hpp"
 #include <iostream>
+#include <thread>
+#include <chrono>
 
 namespace rkapp::capture {
 
@@ -37,15 +39,62 @@ bool VideoSource::open(const std::string& video_path) {
 
 bool VideoSource::read(cv::Mat& frame) {
   if (!cap_.isOpened()) {
+    // 尝试重连流媒体
+    if (isStreamSource()) {
+      return tryReconnect() && cap_.read(frame);
+    }
     return false;
   }
 
   bool result = cap_.read(frame);
+
+  if (!result && isStreamSource()) {
+    // 流媒体断开，尝试重连
+    std::cerr << "VideoSource: stream read failed, attempting reconnect..." << std::endl;
+    return tryReconnect() && cap_.read(frame);
+  }
+
   if (result) {
     current_frame_++;
+    reconnect_attempts_ = 0;  // 成功读取后重置重连计数
   }
 
   return result;
+}
+
+bool VideoSource::tryReconnect() {
+  if (reconnect_attempts_ >= kMaxReconnectAttempts) {
+    std::cerr << "VideoSource: max reconnect attempts (" << kMaxReconnectAttempts
+              << ") reached, giving up" << std::endl;
+    return false;
+  }
+
+  // 指数退避延迟: 500ms, 1s, 2s, 4s, 8s
+  int delay_ms = kInitialReconnectDelayMs * (1 << reconnect_attempts_);
+  reconnect_attempts_++;
+
+  std::cerr << "VideoSource: reconnect attempt " << reconnect_attempts_
+            << "/" << kMaxReconnectAttempts
+            << ", waiting " << delay_ms << "ms..." << std::endl;
+
+  std::this_thread::sleep_for(std::chrono::milliseconds(delay_ms));
+
+  cap_.release();
+
+  bool success = cap_.open(video_path_);
+  if (success) {
+    std::cout << "VideoSource: reconnected successfully to " << video_path_ << std::endl;
+    reconnect_attempts_ = 0;
+  }
+
+  return success;
+}
+
+bool VideoSource::isStreamSource() const {
+  return video_path_.find("rtsp://") == 0 ||
+         video_path_.find("rtmp://") == 0 ||
+         video_path_.find("http://") == 0 ||
+         video_path_.find("https://") == 0;
 }
 
 void VideoSource::release() {

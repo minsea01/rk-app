@@ -256,7 +256,7 @@ cv::Mat Preprocess::letterboxCpu(const cv::Mat& src, cv::Size target_size, Lette
     if (scale != 1.0f) {
         cv::resize(src, resized, cv::Size(new_w, new_h), 0, 0, cv::INTER_LINEAR);
     } else {
-        resized = src.clone();
+        resized = src;  // 浅拷贝，避免不必要的内存分配
     }
 
     cv::Mat dst(dst_h, dst_w, src.type(), cv::Scalar(114, 114, 114));

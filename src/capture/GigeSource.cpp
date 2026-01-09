@@ -466,7 +466,7 @@ bool GigeSource::createPipeline() {
 void GigeSource::destroyPipeline() {
   if (pipeline_) {
     gst_element_set_state(pipeline_, GST_STATE_NULL);
-    gst_element_get_state(pipeline_, nullptr, nullptr, GST_CLOCK_TIME_NONE);
+    gst_element_get_state(pipeline_, nullptr, nullptr, 1 * GST_SECOND);
   }
   if (sink_element_) {
     gst_object_unref(sink_element_);

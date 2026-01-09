@@ -12,7 +12,18 @@ namespace rkapp::common {
 class DmaBuf;
 }
 
+namespace rkapp::preprocess {
+struct LetterboxInfo;
+}
+
 namespace rkapp::infer {
+
+// Model metadata for inference optimization
+struct ModelMeta {
+  int reg_max = -1;
+  std::vector<int> strides;
+  std::string head; // "dfl" / "raw" / ""
+};
 
 class RknnEngine : public IInferEngine {
 public:
@@ -67,12 +78,7 @@ private:
   bool has_objness_ = true;  // Most YOLO exports include objectness score
   std::vector<std::string> class_names_;
   DecodeParams decode_params_;
-
-  struct ModelMeta {
-    int reg_max = -1;
-    std::vector<int> strides;
-    std::string head; // "dfl" / "raw" / ""
-  } model_meta_;
+  ModelMeta model_meta_;
 };
 
 } // namespace rkapp::infer

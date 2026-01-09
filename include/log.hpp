@@ -28,9 +28,18 @@ inline void write(Level l, const char* file, int line, const A&... a) {
   if (l < current) return;
   std::ostringstream os; (void)std::initializer_list<int>{(os << a, 0)...};
   auto t = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+
+  // 使用线程安全的 localtime_r (POSIX) 替代 localtime
+  struct tm tm_buf;
+#if defined(_WIN32) || defined(_WIN64)
+  localtime_s(&tm_buf, &t);  // Windows 线程安全版本
+#else
+  localtime_r(&t, &tm_buf);  // POSIX 线程安全版本
+#endif
+
   std::lock_guard<std::mutex> lk(g_mu);
   std::cerr << "[" << lvlstr(l) << "] "
-            << std::put_time(std::localtime(&t), "%F %T")
+            << std::put_time(&tm_buf, "%F %T")
             << " " << file << ":" << line << " | " << os.str() << "\n";
 }
 }  // namespace rklog
