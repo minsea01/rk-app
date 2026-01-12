@@ -352,6 +352,7 @@ std::vector<Detection> RknnEngine::inferPreprocessed(
   out.is_prealloc = 1;
   out.buf = impl_->logits_buffer.data();
   out.size = impl_->logits_buffer.size() * sizeof(float);
+  out.index = impl_->out_attr.index;  // Use the selected best output index
   ret = rknn_outputs_get(impl_->ctx, 1, &out, nullptr);
   if(ret != RKNN_SUCC){
     LOGE("RknnEngine: rknn_outputs_get failed: ", ret);
@@ -417,7 +418,15 @@ std::vector<Detection> RknnEngine::inferPreprocessed(
   }
 
   const bool has_meta = model_meta_.reg_max > 0 && !model_meta_.strides.empty();
-  const bool use_dfl = want_dfl && has_meta;
+  bool use_dfl = want_dfl && has_meta;
+
+  // CRITICAL: Guard against reg_max > 32 buffer overflow
+  // dfl_probs is std::array<float, 32>, accessing probs_buf[k] with k >= 32 causes UB
+  constexpr int MAX_REG_MAX = 32;
+  if (use_dfl && reg_max > MAX_REG_MAX) {
+    LOGE("RknnEngine: reg_max=", reg_max, " exceeds buffer size (", MAX_REG_MAX, "), disabling DFL decode");
+    use_dfl = false;
+  }
 
   auto decode_raw = [&]() {
     if (C < 5) {
@@ -743,6 +752,7 @@ std::vector<Detection> RknnEngine::inferDmaBuf(
   out.is_prealloc = 1;  // Use preallocated buffer
   out.buf = impl_->logits_buffer.data();
   out.size = impl_->logits_buffer.size() * sizeof(float);
+  out.index = impl_->out_attr.index;  // Use the selected best output index
   ret = rknn_outputs_get(impl_->ctx, 1, &out, nullptr);
 
   // NOW safe to close the fd after inference and output retrieval complete
@@ -810,39 +820,70 @@ std::vector<Detection> RknnEngine::inferDmaBuf(
   }
 
   const bool has_meta = model_meta_.reg_max > 0 && !model_meta_.strides.empty();
-  const bool use_dfl = want_dfl && has_meta;
+  bool use_dfl = want_dfl && has_meta;
+
+  // CRITICAL: Guard against reg_max > 32 buffer overflow
+  // dfl_probs is std::array<float, 32>, accessing probs_buf[k] with k >= 32 causes UB
+  constexpr int MAX_REG_MAX = 32;
+  if (use_dfl && reg_max > MAX_REG_MAX) {
+    LOGE("RknnEngine: reg_max=", reg_max, " exceeds buffer size (", MAX_REG_MAX, "), disabling DFL decode");
+    use_dfl = false;
+  }
 
   auto decode_raw = [&]() {
-    // Detect whether model has objectness channel (same logic as inferPreprocessed)
+    if (C < 5) {
+      LOGW("RknnEngine::inferDmaBuf: raw decode aborted due to insufficient channels (C=", C, ")");
+      return;
+    }
+
+    // Detect whether model has objectness channel
+    // UNIFIED LOGIC: Same as inferPreprocessed() to ensure consistency
+    // YOLOv5/v7: [cx, cy, w, h, obj, cls...]  -> C = 5 + num_classes (has obj)
+    // YOLOv8/v11: [cx, cy, w, h, cls...]      -> C = 4 + num_classes (no obj)
     bool has_objectness = false;
-    int cls_offset = 4;
+    int cls_offset = 4;  // Start of class channels
     int cls_ch = 0;
 
     if (C >= 5) {
-      int potential_classes_with_obj = C - 5;
-      int potential_classes_no_obj = C - 4;
+      int classes_if_no_obj = C - 4;   // e.g., C=84 → 80 classes
+      int classes_if_has_obj = C - 5;  // e.g., C=85 → 80 classes
 
-      if (potential_classes_with_obj > 0 && potential_classes_with_obj <= 1000) {
+      // Common class counts in YOLO models
+      constexpr int common_classes[] = {1, 2, 3, 4, 5, 20, 80, 91, 100};
+
+      bool no_obj_matches = false;
+      bool has_obj_matches = false;
+
+      // Check if either matches common class counts
+      for (int common : common_classes) {
+        if (classes_if_no_obj == common) no_obj_matches = true;
+        if (classes_if_has_obj == common) has_obj_matches = true;
+      }
+
+      // Decision: prefer no_obj unless has_obj clearly wins
+      if (no_obj_matches && !has_obj_matches) {
+        // Only no_obj matches → definitely no obj (e.g., C=84 → 80 classes)
+        has_objectness = false;
+        cls_offset = 4;
+        cls_ch = classes_if_no_obj;
+      } else if (has_obj_matches && !no_obj_matches) {
+        // Only has_obj matches → definitely has obj (e.g., C=85 → 80 classes)
         has_objectness = true;
         cls_offset = 5;
-        cls_ch = potential_classes_with_obj;
-      } else if (potential_classes_no_obj > 0 && potential_classes_no_obj <= 1000) {
-        has_objectness = false;
-        cls_offset = 4;
-        cls_ch = potential_classes_no_obj;
+        cls_ch = classes_if_has_obj;
       } else {
-        LOGW("RknnEngine::inferDmaBuf: Ambiguous objectness (C=", C, "), assuming no objectness");
-        has_objectness = false;
-        cls_offset = 4;
-        cls_ch = C - 4;
+        // Both match or neither → default no_obj (modern YOLO standard)
+        if (classes_if_no_obj > 0 && classes_if_no_obj <= 1000) {
+          has_objectness = false;
+          cls_offset = 4;
+          cls_ch = classes_if_no_obj;
+        } else {
+          LOGW("RknnEngine::inferDmaBuf: Ambiguous objectness (C=", C, "), defaulting to no_obj");
+          has_objectness = false;
+          cls_offset = 4;
+          cls_ch = C - 4;
+        }
       }
-    } else if (C >= 4) {
-      has_objectness = false;
-      cls_offset = 4;
-      cls_ch = C - 4;
-    } else {
-      LOGW("RknnEngine::inferDmaBuf: raw decode aborted due to insufficient channels (C=", C, ")");
-      return;
     }
 
     if (cls_ch <= 0) {
