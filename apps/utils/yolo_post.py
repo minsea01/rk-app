@@ -102,12 +102,16 @@ def sigmoid(x: Union[float, np.ndarray]) -> Union[float, np.ndarray]:
     Returns:
         Sigmoid activation: 1 / (1 + exp(-x))
     """
+    # Clip to prevent overflow: exp(500) ≈ 1e217, exp(-500) ≈ 0
+    # This prevents inf/nan propagation from extreme logits
+    x_clipped = np.clip(x, -500, 500)
+
     # For x >= 0: use standard formula to avoid exp overflow
     # For x < 0: use exp(x) / (1 + exp(x)) to avoid division issues
     return np.where(
-        x >= 0,
-        1 / (1 + np.exp(-x)),
-        np.exp(x) / (1 + np.exp(x))
+        x_clipped >= 0,
+        1 / (1 + np.exp(-x_clipped)),
+        np.exp(x_clipped) / (1 + np.exp(x_clipped))
     )
 
 

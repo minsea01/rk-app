@@ -1,11 +1,12 @@
 #pragma once
 
-#include <memory>
-#include <string>
-#include <vector>
+#include <atomic>
 #include <functional>
 #include <future>
-#include <atomic>
+#include <memory>
+#include <optional>
+#include <string>
+#include <vector>
 #include <opencv2/opencv.hpp>
 
 #include "rkapp/capture/ISource.hpp"
