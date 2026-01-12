@@ -42,9 +42,9 @@ public:
     MppSource(const MppSource&) = delete;
     MppSource& operator=(const MppSource&) = delete;
 
-    // Enable move
-    MppSource(MppSource&&) noexcept;
-    MppSource& operator=(MppSource&&) noexcept;
+    // Disable move (std::atomic members cannot be moved)
+    MppSource(MppSource&&) = delete;
+    MppSource& operator=(MppSource&&) = delete;
 
     // ========== ISource Interface ==========
 

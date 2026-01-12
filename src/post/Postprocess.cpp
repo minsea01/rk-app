@@ -2,6 +2,7 @@
 #include <fstream>
 #include <sstream>
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <iostream>
 #include <limits>
@@ -162,7 +163,11 @@ std::vector<rkapp::infer::Detection> Postprocess::nms(
     }
 
     const size_t n = boxes.size();
-    std::vector<bool> suppressed(n, false);
+    // Use atomic<bool> for thread-safe parallel NMS
+    std::vector<std::atomic<bool>> suppressed(n);
+    for (size_t i = 0; i < n; ++i) {
+        suppressed[i].store(false, std::memory_order_relaxed);
+    }
 
     // ========== Stage 3: NMS with optional parallelization ==========
     // For small N (<100), serial is faster due to parallel overhead
@@ -181,7 +186,7 @@ std::vector<rkapp::infer::Detection> Postprocess::nms(
 #endif
 
     for (size_t i = 0; i < n; ++i) {
-        if (suppressed[i]) continue;
+        if (suppressed[i].load(std::memory_order_acquire)) continue;
 
         result.push_back(detections[boxes[i].original_idx]);
 
@@ -229,19 +234,19 @@ std::vector<rkapp::infer::Detection> Postprocess::nms(
                         vst1q_f32(iou_vals, iou);
 
                         for (int k = 0; k < 4; ++k) {
-                            if (!suppressed[j+k] && iou_vals[k] > iou_thres) {
-                                suppressed[j+k] = true;
+                            if (!suppressed[j+k].load(std::memory_order_relaxed) && iou_vals[k] > iou_thres) {
+                                suppressed[j+k].store(true, std::memory_order_release);
                             }
                         }
                     } else {
                         // Scalar fallback for mixed classes
                         for (size_t k = j; k < j + 4 && k < n; ++k) {
-                            if (!suppressed[k] && boxes[k].class_id == ref_class) {
+                            if (!suppressed[k].load(std::memory_order_relaxed) && boxes[k].class_id == ref_class) {
                                 float iou = calculateIOU(
                                     detections[boxes[i].original_idx],
                                     detections[boxes[k].original_idx]);
                                 if (iou > iou_thres) {
-                                    suppressed[k] = true;
+                                    suppressed[k].store(true, std::memory_order_release);
                                 }
                             }
                         }
@@ -249,12 +254,12 @@ std::vector<rkapp::infer::Detection> Postprocess::nms(
                 } else {
                     // Handle remaining boxes (< 4)
                     for (size_t k = j; k < n; ++k) {
-                        if (!suppressed[k] && boxes[k].class_id == ref_class) {
+                        if (!suppressed[k].load(std::memory_order_relaxed) && boxes[k].class_id == ref_class) {
                             float iou = calculateIOU(
                                 detections[boxes[i].original_idx],
                                 detections[boxes[k].original_idx]);
                             if (iou > config.iou_thres) {
-                                suppressed[k] = true;
+                                suppressed[k].store(true, std::memory_order_release);
                             }
                         }
                     }
@@ -269,12 +274,12 @@ std::vector<rkapp::infer::Detection> Postprocess::nms(
             #pragma omp parallel for schedule(dynamic) if(n - i > 100)
 #endif
             for (size_t j = i + 1; j < n; ++j) {
-                if (!suppressed[j] && boxes[j].class_id == ref_class) {
+                if (!suppressed[j].load(std::memory_order_relaxed) && boxes[j].class_id == ref_class) {
                     float iou = calculateIOU(
                         detections[boxes[i].original_idx],
                         detections[boxes[j].original_idx]);
                     if (iou > config.iou_thres) {
-                        suppressed[j] = true;
+                        suppressed[j].store(true, std::memory_order_release);
                     }
                 }
             }

@@ -49,6 +49,9 @@ See `.claude/commands/README.md` for detailed documentation.
 cmake --preset x86-debug && cmake --build --preset x86-debug
 ./build/x86-debug/detect_cli --cfg config/detection/detect.yaml
 
+# 主机 Release 构建（推荐开发用）
+cmake --preset native-release && cmake --build --preset native-release
+
 # RK3588 交叉编译 (RKNN)
 cmake --preset arm64-release -DENABLE_RKNN=ON && cmake --build --preset arm64
 cmake --install build/arm64
@@ -57,10 +60,17 @@ cmake --install build/arm64
 ctest --preset x86-debug
 ```
 
+**CMake Presets：**
+- `x86-debug` / `native-debug` - Debug 构建（自动启用 Sanitizers）
+- `native-release` - Release 构建（推荐开发用）
+- `arm64-release` - RK3588 交叉编译（需要 sysroot 和 toolchain）
+- `x86-debug-nosan` - Debug 构建（禁用 Sanitizers）
+
 **CMake 选项：**
 - `-DENABLE_ONNX=ON`（默认）：主机 ONNX 推理，可通过 `ORT_HOME` 指定外部路径
 - `-DENABLE_RKNN=ON`：启用 RKNN SDK（默认 `RKNN_HOME=/opt/rknpu2`）
 - `-DENABLE_GIGE=ON`：启用 GigE 相机（需要 aravis/gstreamer）
+- `-DENABLE_MPP=ON`：启用 MPP 硬件视频解码（RK3588）
 
 ### Makefile 快捷命令
 
@@ -265,12 +275,20 @@ RKNN NPU has a 16384-element limit for Transpose operations:
 - `configs/` / `config/` - 实验配置
 - `tests/` - Python + C++ 测试
 
-**核心模块：**
+**核心模块（Python）：**
 - `apps/config.py` - 配置中心（ModelConfig, RKNNConfig）
 - `apps/config_loader.py` - 优先级链：CLI > ENV > YAML > defaults
 - `apps/exceptions.py` - 自定义异常层次
+- `apps/logger.py` - 统一日志接口
 - `apps/utils/preprocessing.py` - 图像预处理
 - `apps/utils/yolo_post.py` - 后处理（letterbox, NMS）
+
+**关键工具（tools/）：**
+- `convert_onnx_to_rknn.py` - ONNX → RKNN 转换（INT8/FP16）
+- `export_yolov8_to_onnx.py` - PyTorch → ONNX 导出
+- `pc_compare.py` - ONNX vs RKNN 对比验证
+- `bench_onnx_latency.py` - ONNX 推理性能基准
+- `model_evaluation.py` - 模型 mAP 评估
 
 ## Python Environment
 
@@ -278,7 +296,7 @@ RKNN NPU has a 16384-element limit for Transpose operations:
 
 ```bash
 source ~/yolo_env/bin/activate
-export PYTHONPATH=/home/user/rk-app  # Required for apps/ imports
+export PYTHONPATH=$PWD  # Required for apps/ imports
 pip install -r requirements.txt
 pip install -r requirements-dev.txt  # Development only
 ```
@@ -324,6 +342,13 @@ pip install -r requirements-dev.txt  # Development only
 **配置管理：** 使用 `apps/config_loader.py`，优先级链：CLI > ENV > YAML > defaults。避免魔法数字。
 
 **日志：** 使用 `apps/logger.py`，避免 `print()`。
+
+**Git Commit规范：**
+- 使用Conventional Commit格式：`feat:`, `fix:`, `docs:`, `refactor:` 等
+- ⛔ **禁止使用 `Co-Authored-By` 标签** - 这是个人毕业设计项目
+- Commit message应简洁明了，描述实际变更
+- 例如：`feat: add RKNN INT8 quantization support` ✅
+- 避免：自动生成的Claude署名、Co-Authored-By行 ❌
 
 ## Common Issues
 
@@ -403,11 +428,31 @@ python3 tools/convert_onnx_to_rknn.py --onnx artifacts/models/best.onnx --out ar
 
 **Phase 1 已完成 (98%)：** 模型转换流水线、交叉编译工具链、PC 无板验证、一键部署脚本、论文文档（7章+开题报告）
 
-**Phase 2 待定（需硬件）：** 双网卡驱动验证（≥900Mbps）、NPU 实机测试（>30 FPS）、CityPersons 微调
+**Phase 2 进行中 (60% ✅)：**
+- ✅ 板端系统环境配置（Ubuntu 20.04.6 + NPU v0.8.2）
+- ✅ RKNN 推理测试成功（25.31ms @ 416×416，约 40 FPS）
+- ✅ Python Runner 板端部署验证
+- ⏸️ 双网卡千兆吞吐量测试（≥900Mbps，需硬件）
+- ⏸️ C++ CLI 板端部署优化
+- ⏸️ CityPersons 微调（目标 mAP ≥90%）
+
+**板端部署成功 (2026-01-07)：**
+- 板卡：RK3588 (Talowe)，IP: 192.168.137.226
+- 推理性能：yolo11n_416.rknn @ 25.31ms (40 FPS) ✅
+- 检测结果：25 个目标，输出正常 ✅
+- 详细报告：`artifacts/board_deployment_success_report.md`
 
 **待办：云端训练** - AutoDL 4090 训练 YOLOv8n 行人检测，提升 mAP 到 ≥90%
 
 **关键指标：**
-- 模型大小：4.8MB ✅（YOLOv8n RKNN INT8，要求 <5MB）
-- mAP 基线：61.57%（CityPersons 微调可达 ≥90%）
+- 模型大小：4.3-4.8MB ✅（要求 <5MB）
+- 推理速度：40 FPS ✅（要求 >30 FPS）
+- NPU 利用率：3核心并行 ✅
+- **mAP 精度：80% ✅**（COCO Person，yolov8n_person_80map.pt）
+- mAP 提升目标：90%（CrowdHuman + COCO合并训练）
 - 答辩时间：2026年6月
+
+**可用模型列表：**
+- `yolo11n_416.rknn` - 4.3MB, 25.31ms @ 416×416 (40 FPS)
+- `yolov8n_person_80map_int8.rknn` - 4.8MB, 80% mAP ✅
+- `best.rknn` - 4.7MB, 基线模型 (61.57% mAP)

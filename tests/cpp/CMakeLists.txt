@@ -5,8 +5,9 @@ cmake_minimum_required(VERSION 3.16)
 # Enable testing
 enable_testing()
 
-# Find Google Test
+# Find required packages
 find_package(GTest)
+find_package(OpenCV REQUIRED)
 
 if(NOT GTest_FOUND)
     message(STATUS "Google Test not found, fetching from GitHub...")
@@ -46,4 +47,48 @@ set_tests_properties(PreprocessTests PROPERTIES
 if(ENABLE_COVERAGE)
     target_compile_options(test_preprocess PRIVATE --coverage)
     target_link_options(test_preprocess PRIVATE --coverage)
+endif()
+
+# Test executable for RKNN decode utilities
+add_executable(test_rknn_decode test_rknn_decode.cpp)
+
+target_link_libraries(test_rknn_decode
+    PRIVATE
+        GTest::gtest
+        GTest::gtest_main
+        rkapp_decode_utils
+)
+
+add_test(NAME RknnDecodeTests COMMAND test_rknn_decode)
+
+set_tests_properties(RknnDecodeTests PROPERTIES
+    TIMEOUT 30
+    LABELS "unit"
+)
+
+if(ENABLE_COVERAGE)
+    target_compile_options(test_rknn_decode PRIVATE --coverage)
+    target_link_options(test_rknn_decode PRIVATE --coverage)
+endif()
+
+# Test executable for RKNN inference consistency
+add_executable(test_rknn_infer_consistency test_rknn_infer_consistency.cpp)
+
+target_link_libraries(test_rknn_infer_consistency
+    PRIVATE
+        GTest::gtest
+        GTest::gtest_main
+        ${OpenCV_LIBS}
+)
+
+add_test(NAME RknnInferConsistencyTests COMMAND test_rknn_infer_consistency)
+
+set_tests_properties(RknnInferConsistencyTests PROPERTIES
+    TIMEOUT 30
+    LABELS "unit"
+)
+
+if(ENABLE_COVERAGE)
+    target_compile_options(test_rknn_infer_consistency PRIVATE --coverage)
+    target_link_options(test_rknn_infer_consistency PRIVATE --coverage)
 endif()

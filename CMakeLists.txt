@@ -64,6 +64,7 @@ set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
 # 测试配置（默认仅在非交叉编译时启用）。在受限网络下禁用自动拉取。
 option(ENABLE_TESTS "Enable building tests" ON)
 option(FETCH_GTEST "Fetch GoogleTest if not found" ON)
+set(RKAPP_ENABLE_CPP_TESTS OFF)
 include(CTest)
 if(BUILD_TESTING AND ENABLE_TESTS AND NOT CMAKE_CROSSCOMPILING)
   message(STATUS "Building tests for native host")
@@ -91,34 +92,7 @@ if(BUILD_TESTING AND ENABLE_TESTS AND NOT CMAKE_CROSSCOMPILING)
   endif()
 
   if(GTest_FOUND OR TARGET GTest::gtest_main)
-    # PID tests removed
-
-
-    add_executable(rknn_decode_tests tests/test_rknn_decode.cpp)
-    target_link_libraries(rknn_decode_tests PRIVATE rkapp_decode_utils)
-    if(TARGET GTest::gtest_main)
-      target_link_libraries(rknn_decode_tests PRIVATE GTest::gtest GTest::gtest_main)
-    else()
-      target_link_libraries(rknn_decode_tests PRIVATE GTest::GTest GTest::Main)
-    endif()
-    add_test(NAME rknn_decode_tests COMMAND rknn_decode_tests)
-
-    set(CORE_IO_TEST_SOURCES
-      tests/unit/test_capture_gige.cpp
-      tests/unit/test_output_tcp.cpp
-    )
-    if(NOT (ENABLE_GIGE AND GST_FOUND))
-      list(APPEND CORE_IO_TEST_SOURCES src/capture/GigeSource.cpp)
-    endif()
-
-    add_executable(core_io_tests ${CORE_IO_TEST_SOURCES})
-    target_include_directories(core_io_tests PRIVATE include)
-    if(TARGET GTest::gtest_main)
-      target_link_libraries(core_io_tests PRIVATE GTest::gtest GTest::gtest_main rkapp_core)
-    else()
-      target_link_libraries(core_io_tests PRIVATE GTest::GTest GTest::Main rkapp_core)
-    endif()
-    add_test(NAME core_io_tests COMMAND core_io_tests)
+    set(RKAPP_ENABLE_CPP_TESTS ON)
   else()
     message(STATUS "GTest not available; tests will not be built. Enable FETCH_GTEST to download.")
   endif()
@@ -249,6 +223,28 @@ endif()
 # Shared decode utilities used by RKNN path and tests
 add_library(rkapp_decode_utils src/infer/rknn/RknnDecodeUtils.cpp)
 target_include_directories(rkapp_decode_utils PUBLIC include)
+
+if(RKAPP_ENABLE_CPP_TESTS)
+  # C++ tests are in tests/cpp/CMakeLists.txt and depend on core libraries.
+  add_subdirectory(tests/cpp)
+
+  set(CORE_IO_TEST_SOURCES
+    tests/unit/test_capture_gige.cpp
+    tests/unit/test_output_tcp.cpp
+  )
+  if(NOT (ENABLE_GIGE AND GST_FOUND))
+    list(APPEND CORE_IO_TEST_SOURCES src/capture/GigeSource.cpp)
+  endif()
+
+  add_executable(core_io_tests ${CORE_IO_TEST_SOURCES})
+  target_include_directories(core_io_tests PRIVATE include)
+  if(TARGET GTest::gtest_main)
+    target_link_libraries(core_io_tests PRIVATE GTest::gtest GTest::gtest_main rkapp_core)
+  else()
+    target_link_libraries(core_io_tests PRIVATE GTest::GTest GTest::Main rkapp_core)
+  endif()
+  add_test(NAME core_io_tests COMMAND core_io_tests)
+endif()
 
 # ONNX inference engine (optional)
 if (ENABLE_ONNX)

@@ -355,8 +355,14 @@ cv::Mat Preprocess::normalize(const cv::Mat& src, float scale) {
 }
 
 cv::Mat Preprocess::hwc2chw(const cv::Mat& src) {
+    // Validate input type - must be CV_32F (float)
+    if (src.type() != CV_32FC3 && src.type() != CV_32FC1) {
+        LOGE("Preprocess::hwc2chw: Expected CV_32F input, got type: ", src.type());
+        return cv::Mat();  // Return empty on error
+    }
+
     if (src.channels() == 1) {
-        return src.clone();
+        return src.clone().reshape(1, 1);
     }
 
     std::vector<cv::Mat> channels;

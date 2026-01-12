@@ -7,10 +7,11 @@
 #include "log.hpp"
 
 #include <chrono>
-#include <thread>
-#include <mutex>
 #include <condition_variable>
+#include <mutex>
+#include <optional>
 #include <queue>
+#include <thread>
 
 namespace rkapp::pipeline {
 
@@ -133,6 +134,10 @@ bool DetectionPipeline::init(const PipelineConfig& config) {
     decode_params.max_boxes = config.max_detections;
     impl_->engine->setDecodeParams(decode_params);
 
+    // Reset zero-copy state for clean re-init
+    impl_->buffer_pool.reset();
+    impl_->stats.zero_copy_enabled = false;
+
     // Create DMA buffer pool for zero-copy (if enabled and supported)
     if (config.use_zero_copy && common::DmaBuf::isSupported()) {
         impl_->buffer_pool = std::make_unique<common::DmaBufPool>(
@@ -231,23 +236,40 @@ PipelineResult DetectionPipeline::process(const cv::Mat& image) {
                 // Cast to RknnEngine for inferDmaBuf
                 auto* rknn_engine = dynamic_cast<infer::RknnEngine*>(impl_->engine.get());
                 if (rknn_engine) {
-                    result.detections = rknn_engine->inferDmaBuf(*dma_buf, letterbox_info);
+                    result.detections = rknn_engine->inferDmaBuf(*dma_buf, image.size(), letterbox_info);
                 } else {
-                    // Fallback for non-RKNN engines
-                    result.detections = impl_->engine->infer(preprocessed);
+                    // Non-RKNN engines do their own preprocessing
+                    result.detections = impl_->engine->infer(image);
                 }
             } else {
-                // Fallback on copy failure
-                result.detections = impl_->engine->infer(preprocessed);
+                // Fallback on copy failure: use preprocessed path for RKNN, otherwise original image
+                auto* rknn_engine = dynamic_cast<infer::RknnEngine*>(impl_->engine.get());
+                if (rknn_engine) {
+                    result.detections = rknn_engine->inferPreprocessed(preprocessed, image.size(), letterbox_info);
+                } else {
+                    result.detections = impl_->engine->infer(image);
+                }
             }
             impl_->buffer_pool->release(dma_buf);
         } else {
             // No buffer available, use regular path
-            result.detections = impl_->engine->infer(preprocessed);
+            auto* rknn_engine = dynamic_cast<infer::RknnEngine*>(impl_->engine.get());
+            if (rknn_engine) {
+                result.detections = rknn_engine->inferPreprocessed(preprocessed, image.size(), letterbox_info);
+            } else {
+                result.detections = impl_->engine->infer(image);
+            }
         }
     } else {
-        // Standard inference path
-        result.detections = impl_->engine->infer(preprocessed);
+        // Standard inference path: pass preprocessed image to avoid double letterbox
+        // Cast to RknnEngine to use inferPreprocessed
+        auto* rknn_engine = dynamic_cast<infer::RknnEngine*>(impl_->engine.get());
+        if (rknn_engine) {
+            result.detections = rknn_engine->inferPreprocessed(preprocessed, image.size(), letterbox_info);
+        } else {
+            // Fallback: use original image (engine will do its own preprocessing)
+            result.detections = impl_->engine->infer(image);
+        }
     }
 
     if (impl_->config.enable_profiling) {
@@ -277,15 +299,44 @@ void DetectionPipeline::runAsync(ResultCallback callback) {
     impl_->worker_thread = std::thread([this]() {
         LOGI("DetectionPipeline: Async worker started");
 
+        // Retry logic for transient failures (e.g., RTSP/GIGE timeouts)
+        constexpr int MAX_CONSECUTIVE_FAILURES = 3;
+        constexpr int RETRY_DELAY_MS = 100;
+        int consecutive_failures = 0;
+
         while (impl_->running) {
-            auto result = next();
+            auto result = this->next();
+
             if (!result) {
-                // End of stream
-                break;
+                // Read failure - check if transient or fatal
+                consecutive_failures++;
+
+                if (consecutive_failures >= MAX_CONSECUTIVE_FAILURES) {
+                    LOGE("DetectionPipeline: Max consecutive read failures reached (",
+                         MAX_CONSECUTIVE_FAILURES, "), stopping");
+                    break;
+                }
+
+                LOGW("DetectionPipeline: Read failed (", consecutive_failures, "/",
+                     MAX_CONSECUTIVE_FAILURES, "), retrying...");
+                std::this_thread::sleep_for(std::chrono::milliseconds(RETRY_DELAY_MS));
+                continue;
             }
 
+            // Reset failure counter on success
+            consecutive_failures = 0;
+
+            // Invoke callback with exception handling
             if (impl_->result_callback) {
-                impl_->result_callback(std::move(*result));
+                try {
+                    impl_->result_callback(std::move(*result));
+                } catch (const std::exception& e) {
+                    LOGE("DetectionPipeline: Callback threw exception: ", e.what());
+                    // Continue processing despite callback error
+                } catch (...) {
+                    LOGE("DetectionPipeline: Callback threw unknown exception");
+                    // Continue processing despite callback error
+                }
             }
         }
 

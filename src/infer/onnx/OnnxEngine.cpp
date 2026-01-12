@@ -44,8 +44,61 @@ struct OnnxEngine::Impl {
                                             const DecodeParams& params,
                                             bool& unsupported_model) {
     std::vector<Detection> detections;
-    auto shape = output.GetTensorTypeAndShapeInfo().GetShape();
-    float* data = output.GetTensorMutableData<float>();
+    auto type_info = output.GetTensorTypeAndShapeInfo();
+    auto shape = type_info.GetShape();
+    ONNXTensorElementDataType data_type = type_info.GetElementType();
+
+    // Handle different output data types
+    float* data = nullptr;
+    std::vector<float> converted_data;  // For type conversion if needed
+
+    switch (data_type) {
+      case ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT: {
+        // Native float32 - direct access (most common)
+        data = output.GetTensorMutableData<float>();
+        break;
+      }
+      case ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16: {
+        // Convert FP16 → FP32
+        auto fp16_data = output.GetTensorData<Ort::Float16_t>();
+        size_t total = type_info.GetElementCount();
+        converted_data.resize(total);
+        for (size_t i = 0; i < total; ++i) {
+          converted_data[i] = static_cast<float>(fp16_data[i]);
+        }
+        data = converted_data.data();
+        break;
+      }
+      case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8: {
+        // Convert INT8 → FP32 (dequantize)
+        auto int8_data = output.GetTensorData<int8_t>();
+        size_t total = type_info.GetElementCount();
+        converted_data.resize(total);
+        // Simple dequantization (assumes symmetric quantization)
+        for (size_t i = 0; i < total; ++i) {
+          converted_data[i] = static_cast<float>(int8_data[i]) / 127.0f;
+        }
+        data = converted_data.data();
+        break;
+      }
+      case ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8: {
+        // Convert UINT8 → FP32 (dequantize)
+        auto uint8_data = output.GetTensorData<uint8_t>();
+        size_t total = type_info.GetElementCount();
+        converted_data.resize(total);
+        // Simple dequantization (assumes zero-point 128)
+        for (size_t i = 0; i < total; ++i) {
+          converted_data[i] = (static_cast<float>(uint8_data[i]) - 128.0f) / 127.0f;
+        }
+        data = converted_data.data();
+        break;
+      }
+      default: {
+        LOGE("OnnxEngine: Unsupported output data type: ", static_cast<int>(data_type));
+        unsupported_model = true;
+        return detections;
+      }
+    }
 
     int N = 0, C = 0;
     if (!resolve_layout(shape, N, C)) {

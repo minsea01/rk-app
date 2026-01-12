@@ -62,6 +62,9 @@ struct MppSource::Impl {
     // Current DMA-BUF fd (when in DMA-BUF mode)
     int current_dma_fd = -1;
 
+    // EOF handling for proper decoder flush
+    bool eof_reached = false;
+
     // Thread safety
     std::mutex mtx;
 
@@ -143,9 +146,6 @@ MppSource::~MppSource() {
     release();
 }
 
-MppSource::MppSource(MppSource&&) noexcept = default;
-MppSource& MppSource::operator=(MppSource&&) noexcept = default;
-
 // ============================================================================
 // ISource Interface Implementation
 // ============================================================================
@@ -158,6 +158,7 @@ bool MppSource::open(const std::string& uri) {
 
     release();  // Clean up any previous state
     uri_ = uri;
+    impl_->eof_reached = false;  // Reset EOF flag for new stream
 
     // Determine codec type from file extension or probe
     MppCodingType coding_type = MPP_VIDEO_CodingAVC;  // Default H.264
@@ -256,6 +257,16 @@ bool MppSource::open(const std::string& uri) {
 
         LOGI("Opened video: ", width_, "x", height_, " @ ", fps_, " fps, codec: ",
              avcodec_get_name(codecpar->codec_id));
+    } else {
+        // Unsupported URI format
+        LOGE("MppSource::open: Unsupported URI format (not RTSP or known video file extension): ", uri);
+        return false;
+    }
+
+    // Validate that fmt_ctx was initialized
+    if (!impl_->fmt_ctx) {
+        LOGE("MppSource::open: Failed to initialize demuxer for URI: ", uri);
+        return false;
     }
 
     // Initialize MPP decoder
@@ -306,57 +317,100 @@ bool MppSource::read(cv::Mat& frame) {
 
     auto start_time = std::chrono::high_resolution_clock::now();
 
-    // Read packet from demuxer
-    while (true) {
-        int ret = av_read_frame(impl_->fmt_ctx, impl_->pkt);
-        if (ret < 0) {
-            if (ret == AVERROR_EOF) {
-                LOGI("End of stream");
-            }
+    // Retry limit to prevent infinite loop (was recursive, could cause stack overflow)
+    constexpr int MAX_DECODE_RETRIES = 30;  // ~1 second at 30fps
+    int retry_count = 0;
+
+    MppFrame mpp_frame = nullptr;
+
+    // Main decode loop - replaces recursive calls
+    while (retry_count < MAX_DECODE_RETRIES) {
+        // Safety check: ensure demuxer is initialized
+        if (!impl_->fmt_ctx) {
+            LOGE("MppSource::read: Demuxer not initialized. Call open() first.");
             return false;
         }
 
-        // Skip non-video packets
-        if (impl_->pkt->stream_index != impl_->video_stream_idx) {
-            av_packet_unref(impl_->pkt);
-            continue;
+        // Read packet from demuxer
+        while (true) {
+            int ret = av_read_frame(impl_->fmt_ctx, impl_->pkt);
+            if (ret < 0) {
+                if (ret == AVERROR_EOF) {
+                    // EOF reached - enter flush mode
+                    if (impl_->eof_reached) {
+                        // Already flushed, truly done
+                        return false;
+                    }
+                    impl_->eof_reached = true;
+                    LOGI("End of stream - flushing decoder");
+
+                    // Send null packet to flush MPP decoder
+                    av_packet_unref(impl_->pkt);
+                    // Continue to MPP decode loop to drain buffered frames
+                    break;
+                } else {
+                    // Other error
+                    return false;
+                }
+            }
+
+            // Skip non-video packets
+            if (impl_->pkt->stream_index != impl_->video_stream_idx) {
+                av_packet_unref(impl_->pkt);
+                continue;
+            }
+            break;
         }
+
+        // Create MPP packet
+        MppPacket mpp_pkt = nullptr;
+        mpp_packet_init(&mpp_pkt, impl_->pkt->data, impl_->pkt->size);
+
+        // Set PTS if available
+        if (impl_->pkt->pts != AV_NOPTS_VALUE) {
+            mpp_packet_set_pts(mpp_pkt, impl_->pkt->pts);
+        }
+
+        // Send packet to decoder
+        MPP_RET mpp_ret = impl_->mpi->decode_put_packet(impl_->mpp_ctx, mpp_pkt);
+        mpp_packet_deinit(&mpp_pkt);
+        av_packet_unref(impl_->pkt);
+
+        if (mpp_ret != MPP_OK) {
+            LOGW("decode_put_packet failed: ", mpp_ret);
+            return false;
+        }
+
+        // Get decoded frame
+        mpp_frame = nullptr;
+        mpp_ret = impl_->mpi->decode_get_frame(impl_->mpp_ctx, &mpp_frame);
+
+        if (mpp_ret != MPP_OK || !mpp_frame) {
+            // Frame not ready yet, need more packets (B-frame reordering, etc.)
+            retry_count++;
+            continue;  // Loop back to read next packet
+        }
+
+        // Check for decode errors
+        if (mpp_frame_get_errinfo(mpp_frame)) {
+            LOGW("Decode error in frame, retry ", retry_count + 1, "/", MAX_DECODE_RETRIES);
+            mpp_frame_deinit(&mpp_frame);
+            mpp_frame = nullptr;
+            retry_count++;
+            continue;  // Loop back to read next packet
+        }
+
+        // Successfully got a valid frame, break out of retry loop
         break;
     }
 
-    // Create MPP packet
-    MppPacket mpp_pkt = nullptr;
-    mpp_packet_init(&mpp_pkt, impl_->pkt->data, impl_->pkt->size);
-
-    // Set PTS if available
-    if (impl_->pkt->pts != AV_NOPTS_VALUE) {
-        mpp_packet_set_pts(mpp_pkt, impl_->pkt->pts);
-    }
-
-    // Send packet to decoder
-    MPP_RET mpp_ret = impl_->mpi->decode_put_packet(impl_->mpp_ctx, mpp_pkt);
-    mpp_packet_deinit(&mpp_pkt);
-    av_packet_unref(impl_->pkt);
-
-    if (mpp_ret != MPP_OK) {
-        LOGW("decode_put_packet failed: ", mpp_ret);
+    // Check if we exhausted retries
+    if (retry_count >= MAX_DECODE_RETRIES || !mpp_frame) {
+        LOGW("Decode failed after ", retry_count, " retries");
+        if (mpp_frame) {
+            mpp_frame_deinit(&mpp_frame);
+        }
         return false;
-    }
-
-    // Get decoded frame
-    MppFrame mpp_frame = nullptr;
-    mpp_ret = impl_->mpi->decode_get_frame(impl_->mpp_ctx, &mpp_frame);
-
-    if (mpp_ret != MPP_OK || !mpp_frame) {
-        // Frame not ready yet, try again with next packet
-        return read(frame);  // Recursive call (decoder may need more data)
-    }
-
-    // Check for errors
-    if (mpp_frame_get_errinfo(mpp_frame)) {
-        LOGW("Decode error in frame");
-        mpp_frame_deinit(&mpp_frame);
-        return read(frame);
     }
 
     // Get frame info
@@ -525,8 +579,6 @@ struct MppSource::Impl {};
 bool MppSource::isMppAvailable() { return false; }
 MppSource::MppSource() : impl_(std::make_unique<Impl>()) {}
 MppSource::~MppSource() = default;
-MppSource::MppSource(MppSource&&) noexcept = default;
-MppSource& MppSource::operator=(MppSource&&) noexcept = default;
 
 bool MppSource::open(const std::string&) {
     std::cerr << "[ERROR] MppSource: MPP support not compiled in. Rebuild with -DENABLE_MPP=ON\n";

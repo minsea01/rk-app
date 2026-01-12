@@ -32,6 +32,23 @@ public:
 
   bool init(const std::string& model_path, int img_size = 640) override;
   std::vector<Detection> infer(const cv::Mat& image) override;
+
+  /**
+   * @brief Inference on already-preprocessed (letterboxed) input
+   *
+   * Use this when the caller has already applied letterbox preprocessing.
+   * Avoids redundant letterbox in the engine.
+   *
+   * @param preprocessed_image Letterboxed image (size: input_size_ x input_size_)
+   * @param original_size Original image size before letterbox
+   * @param letterbox_info Letterbox parameters for coordinate reverse mapping
+   * @return Detection results with coordinates in original image space
+   */
+  std::vector<Detection> inferPreprocessed(
+      const cv::Mat& preprocessed_image,
+      const cv::Size& original_size,
+      const struct rkapp::preprocess::LetterboxInfo& letterbox_info);
+
   void warmup() override;
   void release() override;
 
@@ -46,11 +63,13 @@ public:
    * - NV12/NV21 (will use RGA for hardware color conversion)
    *
    * @param input DMA-BUF containing preprocessed image
+   * @param original_size Original image size before letterbox
    * @param letterbox_info Letterbox parameters for coordinate mapping
-   * @return Detection results
+   * @return Detection results with coordinates in original image space
    */
   std::vector<Detection> inferDmaBuf(
       rkapp::common::DmaBuf& input,
+      const cv::Size& original_size,
       const struct rkapp::preprocess::LetterboxInfo& letterbox_info);
 
   // 可选：设置NPU核心掩码（例如：1<<0, 1<<1, 1<<2）。若运行库不支持，将被忽略。
