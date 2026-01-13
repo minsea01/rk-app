@@ -1,0 +1,6 @@
+{
+  "head": "raw",
+  "num_classes": 80,
+  "has_objectness": 0,
+  "output_index": 0
+}

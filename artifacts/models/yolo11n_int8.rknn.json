@@ -1,0 +1,8 @@
+{
+  "head": "dfl",
+  "reg_max": 16,
+  "strides": [8, 16, 32],
+  "num_classes": 80,
+  "has_objectness": 0,
+  "output_index": 0
+}

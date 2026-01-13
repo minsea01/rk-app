@@ -317,8 +317,8 @@ endif()
 # Detection CLI application
 add_executable(detect_cli examples/detect_cli.cpp)
 target_link_libraries(detect_cli PRIVATE rkapp_core ${OpenCV_LIBS})
-if(YAML_CPP_FOUND)
-    target_link_libraries(detect_cli PRIVATE ${YAML_CPP_LIBRARIES})
+if(HAVE_YAML_CPP)
+    target_link_libraries(detect_cli PRIVATE ${YAML_CPP_TARGET})
 endif()
 
 if (ENABLE_ONNX)
