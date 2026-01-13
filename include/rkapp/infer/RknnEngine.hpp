@@ -23,6 +23,9 @@ struct ModelMeta {
   int reg_max = -1;
   std::vector<int> strides;
   std::string head; // "dfl" / "raw" / ""
+  int output_index = -1;  // Optional override for multi-output models
+  int num_classes = -1;   // Optional: explicit class count
+  int has_objectness = -1;  // Optional: -1 unknown, 0 false, 1 true
 };
 
 class RknnEngine : public IInferEngine {
