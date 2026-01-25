@@ -199,6 +199,12 @@ def run_stream(args) -> None:
     if not cap.isOpened():
         raise SystemExit(f'Failed to open source: {args.source}')
 
+    # Debug: print video properties
+    logger.info(f"Video opened: {args.source}")
+    logger.info(f"  Size: {int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))}x{int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))}")
+    logger.info(f"  FPS: {cap.get(cv2.CAP_PROP_FPS)}")
+    logger.info(f"  Total frames: {int(cap.get(cv2.CAP_PROP_FRAME_COUNT))}")
+
     stop = Event()
     q_cap = Queue(maxsize=args.queue)
     q_pre = Queue(maxsize=args.queue)
@@ -220,13 +226,17 @@ def run_stream(args) -> None:
         nonlocal cap
         dropped_frames = 0
         retry_on_fail = _should_retry_capture(args.source, cap_src)
+        logger.info(f"Capture thread started (retry_on_fail={retry_on_fail})")
         reconnect_delay = 0.5
         reconnect_max = 5.0
         reconnect_attempts = 0
+        frame_num = 0
         while not stop.is_set():
             t0 = time.perf_counter()
             ok, frame = cap.read()
+            frame_num += 1
             if not ok:
+                logger.warning(f"Read failed at frame {frame_num}, retry_on_fail={retry_on_fail}")
                 if not retry_on_fail:
                     logger.warning("Video capture ended or failed")
                     break
@@ -294,7 +304,9 @@ def run_stream(args) -> None:
                     frame, img, r, d, *ts = q_pre.get(timeout=1.0)
                 except Empty:
                     continue
-                rknn.inference(inputs=[img])
+                # Add batch dimension for RKNN
+                img_batch = img[None, ...] if img.ndim == 3 else img
+                rknn.inference(inputs=[img_batch])
             logger.debug(f"Inference warmup complete ({args.warmup} frames)")
             # Main
             while not stop.is_set():
@@ -303,7 +315,9 @@ def run_stream(args) -> None:
                 except Empty:
                     continue
                 t4 = time.perf_counter()
-                outputs = rknn.inference(inputs=[img])
+                # Add batch dimension: (H, W, 3) → (1, H, W, 3)
+                img_batch = img[None, ...] if img.ndim == 3 else img
+                outputs = rknn.inference(inputs=[img_batch])
                 pred = outputs[0]
                 if pred.ndim == 2:
                     pred = pred[None, ...]
@@ -403,7 +417,11 @@ def run_stream(args) -> None:
                 break
         if writer:
             writer.release()
-        cv2.destroyAllWindows()
+        try:
+            cv2.destroyAllWindows()
+        except cv2.error:
+            # Ignore error in headless environment
+            pass
 
     def t_upload() -> None:
         """Upload thread: POST detection results to HTTP endpoint."""
@@ -454,8 +472,10 @@ def run_stream(args) -> None:
                 time.sleep(0.5)
         except KeyboardInterrupt:
             stop.set()
+        logger.info("Stopping threads...")
         for t in ths:
             t.join(timeout=1.0)
+        logger.info("All threads stopped")
     finally:
         if cap:
             cap.release()
@@ -491,6 +511,11 @@ def main():
     p.add_argument('--upload-http', type=str, default=None, help='POST detections JSON to this URL')
     p.add_argument('--upload-interval', type=float, default=0.0, help='seconds between uploads (throttle)')
     args = p.parse_args()
+    # Configure logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
     run_stream(args)
 
 

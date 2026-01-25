@@ -1,0 +1,99 @@
+@startuml 系统整体架构图
+!define LIGHTBLUE #E1F5FF
+!define LIGHTORANGE #FFF4E6
+!define LIGHTGREEN #E8F5E9
+!define LIGHTPURPLE #F3E5F5
+
+skinparam componentStyle rectangle
+skinparam defaultFontName Microsoft YaHei
+skinparam defaultFontSize 14
+
+title RK3588行人检测系统架构图
+
+package "硬件层" as Hardware LIGHTBLUE {
+    component "RK3588 SoC" as RK3588 {
+        component "NPU\n6 TOPS\n3核并行" as NPU #FFE4B5
+        component "CPU\n4×A76 + 4×A55" as CPU #B0E0E6
+        component "DDR\n16GB LPDDR4X" as DDR #98FB98
+    }
+
+    component "双千兆网卡" as NIC {
+        component "RGMII Port1\n相机输入" as NIC1 #FFB6C1
+        component "RGMII Port2\n数据上传" as NIC2 #FFB6C1
+    }
+
+    component "存储" as Storage {
+        component "eMMC 64GB" as EMMC #DDA0DD
+        component "SD卡扩展" as SD #DDA0DD
+    }
+}
+
+package "系统软件层" as System LIGHTORANGE {
+    component "Ubuntu 20.04" as Ubuntu
+    component "NPU驱动\nv0.8.2" as NPUDriver
+    component "RGMII驱动" as RGMIIDriver
+    component "GStreamer" as GST
+}
+
+package "运行时层" as Runtime LIGHTGREEN {
+    component "RKNN-Toolkit2-Lite" as RKNNLite
+    component "OpenCV 4.9" as OpenCV
+    component "Python 3.10" as Python
+}
+
+package "应用层" as Application LIGHTPURPLE {
+    component "YOLOv8n推理引擎" as YOLO {
+        component "预处理模块" as Preprocess
+        component "NPU推理" as Inference
+        component "后处理模块\nDFL+NMS" as Postprocess
+    }
+
+    component "视频流模块" as Stream {
+        component "相机采集" as Capture
+        component "帧解码" as Decode
+        component "结果可视化" as Visual
+    }
+
+    component "网络传输模块" as Network {
+        component "UDP发送" as UDP
+        component "HTTP上传" as HTTP
+    }
+}
+
+' 连接关系
+NPU --> RKNNLite : RKNN API
+CPU --> Python
+DDR --> NPU : DMA
+
+NIC1 --> Capture : 视频流
+NIC2 --> UDP : 检测结果
+
+Ubuntu --> NPUDriver
+Ubuntu --> RGMIIDriver
+NPUDriver --> NPU
+
+RKNNLite --> Inference
+OpenCV --> Preprocess
+OpenCV --> Postprocess
+
+Capture --> Decode
+Decode --> Preprocess
+Preprocess --> Inference
+Inference --> Postprocess
+Postprocess --> Visual
+Visual --> UDP
+
+note right of NPU
+  <b>性能指标</b>
+  • 推理延迟: 25ms
+  • 帧率: 40 FPS
+  • 模型: 4.3MB
+end note
+
+note right of NIC
+  <b>网络指标</b>
+  • 吞吐量: ≥900Mbps
+  • 协议: RGMII
+end note
+
+@enduml

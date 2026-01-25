@@ -1,0 +1,65 @@
+@startuml 模型转换流程图
+!define LIGHTBLUE #E1F5FF
+!define LIGHTORANGE #FFF4E6
+!define LIGHTGREEN #E8F5E9
+!define LIGHTPURPLE #F3E5F5
+
+skinparam activityBackgroundColor white
+skinparam defaultFontName Microsoft YaHei
+skinparam defaultFontSize 12
+
+title 模型转换流程 (PyTorch → ONNX → RKNN)
+
+|#E1F5FF|PyTorch阶段|
+start
+:YOLOv8n/YOLO11n\n预训练模型\n<b>yolo11n.pt</b>;
+
+:Ultralytics导出\n<i>export_yolov8_to_onnx.py</i>;
+
+|#FFF4E6|ONNX阶段|
+:ONNX模型\n<b>yolo11n.onnx</b>\nopset=12;
+
+:ONNX Runtime验证\nGPU推理测试;
+
+if (精度验证?) then (通过)
+else (失败)
+  :调整导出参数\nsimplify=True;
+  detach
+endif
+
+|#E8F5E9|量化阶段|
+:准备校准数据集\n<b>300张COCO person图像</b>;
+
+note right
+  <b>关键点</b>
+  必须使用绝对路径
+  find -exec realpath
+end note
+
+:生成校准列表\n<b>calib.txt</b>;
+
+:RKNN转换\n<i>convert_onnx_to_rknn.py</i>;
+
+fork
+  :FP16量化\n精度优先;
+fork again
+  :INT8量化\n性能优先;
+end fork
+
+|#F3E5F5|验证阶段|
+:RKNN模型\n<b>yolo11n.rknn</b>\n4.3MB;
+
+:PC模拟器验证\n<i>run_rknn_sim.py</i>;
+
+:ONNX vs RKNN对比\n<i>compare_onnx_rknn.py</i>;
+
+if (精度损失 < 5%?) then (是)
+  :模型转换完成;
+  #LightGreen:可部署到RK3588;
+  stop
+else (否)
+  :调整量化参数\nmean/std优化;
+  detach
+endif
+
+@enduml

@@ -1,0 +1,103 @@
+@startuml 数据流图
+!define LIGHTBLUE #E1F5FF
+!define LIGHTORANGE #FFF4E6
+!define LIGHTGREEN #E8F5E9
+!define LIGHTPURPLE #F3E5F5
+
+skinparam defaultFontName Microsoft YaHei
+skinparam defaultFontSize 12
+skinparam componentStyle rectangle
+
+title 行人检测系统数据流图
+
+' 外部实体
+actor "工业相机\nGigE Vision" as Camera #E1F5FF
+actor "监控中心\n上位机" as Server #E1F5FF
+database "本地存储\neMMC/SD" as Storage #E1F5FF
+
+' 处理过程
+rectangle "RK3588边缘节点" as Edge #FAFAFA {
+
+    ' 数据输入层
+    package "输入层" as InputLayer #E1F5FF {
+        component "GStreamer\n视频流采集" as GST
+        component "帧缓冲队列\nRingBuffer" as Buffer
+    }
+
+    ' 处理层
+    package "处理层" as ProcessLayer #FFF4E6 {
+        component "OpenCV\n图像预处理" as Preprocess {
+            component "色彩转换" as Color
+            component "尺寸缩放" as Resize
+            component "归一化" as Norm
+        }
+    }
+
+    ' 推理层
+    package "推理层" as InferLayer #E8F5E9 {
+        component "RKNN Runtime" as RKNN {
+            component "NPU Core 0" as NPU0
+            component "NPU Core 1" as NPU1
+            component "NPU Core 2" as NPU2
+        }
+    }
+
+    ' 后处理层
+    package "后处理层" as PostLayer #F3E5F5 {
+        component "DFL解码器" as DFL
+        component "NMS过滤" as NMS
+        component "坐标变换" as Transform
+    }
+
+    ' 输出层
+    package "输出层" as OutputLayer #E1F5FF {
+        component "结果序列化\nJSON/Protobuf" as Serialize
+        component "可视化渲染" as Render
+        component "网络发送\nUDP/HTTP" as Send
+    }
+}
+
+' 数据流连接
+Camera --> GST : 1080p@30fps\nH.264/MJPEG
+
+GST --> Buffer : 解码帧\nBGR888
+
+Buffer --> Preprocess : 原始帧\n(1920×1080×3)
+
+Color --> Resize : RGB888
+Resize --> Norm : 416×416
+Norm --> RKNN : NHWC uint8\n(1,416,416,3)
+
+NPU0 --> DFL
+NPU1 --> DFL
+NPU2 --> DFL
+
+DFL --> NMS : 候选框\n(N,84)
+NMS --> Transform : 过滤框\n(M,6)
+Transform --> Serialize : 检测结果\n[x,y,w,h,conf,cls]
+
+Serialize --> Send : JSON数据
+Serialize --> Render : 绘图数据
+Render --> Storage : 标注图像\nJPEG
+
+Send --> Server : UDP包\n检测结果
+
+note bottom of RKNN
+  <b>NPU并行推理</b>
+  core_mask = 0b111
+  3核并行加速
+end note
+
+note right of Buffer
+  <b>帧缓冲</b>
+  容量: 3帧
+  防止丢帧
+end note
+
+note bottom of Send
+  <b>输出协议</b>
+  UDP: 低延迟
+  HTTP: 高可靠
+end note
+
+@enduml

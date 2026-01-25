@@ -1,0 +1,96 @@
+@startuml 网络拓扑图
+!define LIGHTBLUE #E1F5FF
+!define LIGHTORANGE #FFF4E6
+!define LIGHTGREEN #E8F5E9
+!define LIGHTPURPLE #F3E5F5
+
+skinparam defaultFontName Microsoft YaHei
+skinparam defaultFontSize 12
+skinparam componentStyle rectangle
+
+title 双千兆网卡网络拓扑图
+
+' 外部设备
+node "工业相机" as Camera #E1F5FF {
+    component "GigE Vision\n1080p@30fps" as CamModule
+}
+
+node "监控服务器" as Server #F3E5F5 {
+    component "数据接收服务" as Receiver
+    component "存储系统" as DB
+    component "Web界面" as Web
+}
+
+node "交换机" as Switch #FAFAFA {
+    component "千兆交换机\n8口" as SW
+}
+
+' RK3588主节点
+node "RK3588边缘节点" as RK3588 #E8F5E9 {
+
+    package "网络接口" as NIC {
+        component "eth0 (RGMII)\n<b>相机网口</b>\n192.168.1.100" as ETH0 #FFB6C1
+        component "eth1 (RGMII)\n<b>上传网口</b>\n192.168.2.100" as ETH1 #87CEEB
+    }
+
+    package "协议栈" as Protocol {
+        component "GStreamer\nGigE Vision" as GST
+        component "UDP Socket\n低延迟传输" as UDP
+        component "HTTP Client\n可靠传输" as HTTP
+    }
+
+    package "核心处理" as Core {
+        component "YOLOv8n\nNPU推理" as YOLO #FFE4B5
+    }
+}
+
+' 网络连接
+Camera ==> ETH0 : <b>视频输入</b>\nGigE Vision\n≥900 Mbps
+
+ETH0 --> GST : 原始视频流
+GST --> YOLO : 解码帧
+YOLO --> UDP : 检测结果
+YOLO --> HTTP : 检测结果
+
+UDP --> ETH1 : JSON数据
+HTTP --> ETH1 : JSON数据
+
+ETH1 ==> SW : <b>数据上传</b>\nUDP/HTTP\n≥900 Mbps
+
+SW --> Receiver
+Receiver --> DB : 持久化存储
+Receiver --> Web : 实时展示
+
+' 网络标注
+note top of Camera
+  <b>输入网络</b>
+  协议: GigE Vision
+  带宽: 912 Mbps (测试)
+  延迟: <5ms
+end note
+
+note top of Server
+  <b>输出网络</b>
+  协议: UDP/HTTP
+  带宽: ≥900 Mbps
+  可靠性: 99.9%
+end note
+
+note bottom of RK3588
+  <b>双网卡隔离设计</b>
+  • eth0: 专用相机输入, 避免干扰
+  • eth1: 专用数据上传, 带宽保障
+  • RGMII接口: 千兆全双工
+end note
+
+' 网络参数
+legend right
+  |= 参数 |= 指标 |
+  | 输入带宽 | ≥900 Mbps |
+  | 输出带宽 | ≥900 Mbps |
+  | 端到端延迟 | <50ms |
+  | 丢包率 | <0.1% |
+  | MTU | 1500 bytes |
+endlegend
+
+@enduml

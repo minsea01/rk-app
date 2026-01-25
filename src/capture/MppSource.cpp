@@ -23,6 +23,8 @@ extern "C" {
 #include <chrono>
 #include <cstring>
 #include <mutex>
+#include <unistd.h>
+#include <cerrno>
 
 // Logging
 #if __has_include("log.hpp")
@@ -105,8 +107,12 @@ struct MppSource::Impl {
             fmt_ctx = nullptr;
         }
 
+        if (current_dma_fd >= 0) {
+            close(current_dma_fd);
+            current_dma_fd = -1;
+        }
+
         video_stream_idx = -1;
-        current_dma_fd = -1;
     }
 };
 
@@ -432,15 +438,50 @@ bool MppSource::read(cv::Mat& frame) {
 
     // Store DMA-BUF fd if in DMA-BUF mode
     if (dma_buf_mode_) {
-        impl_->current_dma_fd = mpp_buffer_get_fd(frm_buf);
+        int frame_fd = mpp_buffer_get_fd(frm_buf);
+        int dup_fd = (frame_fd >= 0) ? dup(frame_fd) : -1;
+        if (dup_fd < 0 && frame_fd >= 0) {
+            LOGW("Failed to dup DMA-BUF fd: ", strerror(errno));
+        } else {
+            if (impl_->current_dma_fd >= 0) {
+                close(impl_->current_dma_fd);
+            }
+            impl_->current_dma_fd = dup_fd;
+        }
     }
 
     // Convert YUV to BGR
     // Most common format from MPP is NV12 (YUV420SP)
-    cv::Mat yuv_mat;
     if (frm_fmt == MPP_FMT_YUV420SP || frm_fmt == MPP_FMT_YUV420SP_10BIT) {
-        // NV12 format
-        yuv_mat = cv::Mat(frm_v_stride * 3 / 2, frm_h_stride, CV_8UC1, buf_ptr);
+#if RKNN_USE_RGA
+        // Use RGA with stride-aware conversion (avoids CPU memcpy)
+        // RGA can handle non-contiguous strides directly
+        rga_buffer_t src_buf = {};
+        src_buf.width = frm_width;
+        src_buf.height = frm_height;
+        src_buf.wstride = frm_h_stride;  // horizontal stride (may differ from width)
+        src_buf.hstride = frm_v_stride;  // vertical stride (may differ from height)
+        src_buf.format = RK_FORMAT_YCbCr_420_SP;
+        src_buf.vir_addr = buf_ptr;
+
+        frame.create(frm_height, frm_width, CV_8UC3);
+        rga_buffer_t dst_buf = wrapbuffer_virtualaddr(
+            frame.data, frm_width, frm_height,
+            RK_FORMAT_BGR_888);
+
+        IM_STATUS rga_ret = imcvtcolor(src_buf, dst_buf,
+                                       RK_FORMAT_YCbCr_420_SP,
+                                       RK_FORMAT_BGR_888,
+                                       IM_YUV_TO_RGB_BT601_LIMIT);
+        if (rga_ret != IM_STATUS_SUCCESS) {
+            // Fallback to CPU path with stride fixup
+            LOGW("RGA stride-aware cvtcolor failed (", imStrError(rga_ret), "), using CPU fallback");
+            goto cpu_stride_fallback;
+        }
+#else
+        // CPU fallback path
+        cpu_stride_fallback:
+        cv::Mat yuv_mat(frm_v_stride * 3 / 2, frm_h_stride, CV_8UC1, buf_ptr);
 
         // Crop to actual dimensions if stride differs
         cv::Mat yuv_cropped;
@@ -476,26 +517,6 @@ bool MppSource::read(cv::Mat& frame) {
             yuv_cropped = yuv_mat(cv::Rect(0, 0, frm_width, frm_height * 3 / 2));
         }
 
-#if RKNN_USE_RGA
-        // Use RGA for YUV->BGR conversion (faster)
-        rga_buffer_t src_buf = wrapbuffer_virtualaddr(
-            yuv_cropped.data, frm_width, frm_height,
-            RK_FORMAT_YCbCr_420_SP);
-
-        frame.create(frm_height, frm_width, CV_8UC3);
-        rga_buffer_t dst_buf = wrapbuffer_virtualaddr(
-            frame.data, frm_width, frm_height,
-            RK_FORMAT_BGR_888);
-
-        IM_STATUS rga_ret = imcvtcolor(src_buf, dst_buf,
-                                       RK_FORMAT_YCbCr_420_SP,
-                                       RK_FORMAT_BGR_888,
-                                       IM_YUV_TO_RGB_BT601_LIMIT);
-        if (rga_ret != IM_STATUS_SUCCESS) {
-            // Fallback to OpenCV
-            cv::cvtColor(yuv_cropped, frame, cv::COLOR_YUV2BGR_NV12);
-        }
-#else
         cv::cvtColor(yuv_cropped, frame, cv::COLOR_YUV2BGR_NV12);
 #endif
     } else {
@@ -564,7 +585,13 @@ void MppSource::setDmaBufMode(bool enable) {
 }
 
 int MppSource::getDmaBufFd() const {
-    return impl_->current_dma_fd;
+    if (!impl_ || impl_->current_dma_fd < 0) return -1;
+    int dup_fd = dup(impl_->current_dma_fd);
+    if (dup_fd < 0) {
+        LOGW("Failed to dup current DMA-BUF fd: ", strerror(errno));
+        return -1;
+    }
+    return dup_fd;
 }
 
 } // namespace rkapp::capture

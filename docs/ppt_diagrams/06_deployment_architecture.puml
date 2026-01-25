@@ -1,0 +1,118 @@
+@startuml 部署架构图
+!define LIGHTBLUE #E1F5FF
+!define LIGHTORANGE #FFF4E6
+!define LIGHTGREEN #E8F5E9
+!define LIGHTPURPLE #F3E5F5
+
+skinparam defaultFontName Microsoft YaHei
+skinparam defaultFontSize 12
+skinparam componentStyle rectangle
+
+title 开发部署架构图
+
+' 开发环境
+node "开发环境\nWSL2 Ubuntu 22.04" as DevEnv #E1F5FF {
+
+    package "模型开发" as ModelDev {
+        component "PyTorch\nYOLOv8训练" as PyTorch
+        component "ONNX导出\nopset=12" as ONNX
+        component "RKNN转换\nINT8量化" as RKNNConv
+    }
+
+    package "交叉编译" as CrossBuild {
+        component "CMake\narm64-release" as CMake
+        component "GCC Toolchain\naarch64-linux-gnu" as GCC
+        component "Sysroot\nRK3588 SDK" as Sysroot
+    }
+
+    package "PC验证" as PCTest {
+        component "ONNX Runtime\nGPU推理" as ORT
+        component "RKNN Simulator\nPC模拟器" as Sim
+        component "精度对比\ncompare_onnx_rknn.py" as Compare
+    }
+}
+
+' 部署产物
+artifact "部署包" as Package #FFF4E6 {
+    file "yolo11n_int8.rknn\n4.3MB" as Model
+    file "detect_cli\nARM64二进制" as Binary
+    file "rk3588_run.sh\n一键启动脚本" as Script
+    file "config/detect.yaml\n配置文件" as Config
+}
+
+' 目标平台
+node "目标平台\nRK3588开发板" as Target #E8F5E9 {
+
+    package "运行环境" as Runtime {
+        component "Ubuntu 20.04" as Ubuntu
+        component "NPU驱动 v0.8.2" as Driver
+        component "RKNN-Toolkit2-Lite" as Lite
+    }
+
+    package "部署模式" as DeployMode {
+        component "Python Runner\nyolov8_rknn_infer.py" as PythonMode #98FB98
+        component "C++ CLI\ndetect_cli" as CppMode #98FB98
+    }
+
+    package "输出" as Output {
+        component "检测结果\nJSON/可视化" as Result
+        component "性能指标\n40 FPS @ 416" as Perf
+    }
+}
+
+' 部署流程
+DevEnv --> Package : 构建
+
+Package --> Target : SSH部署\ndeploy_to_board.sh
+
+PyTorch --> ONNX : export
+ONNX --> RKNNConv : convert
+RKNNConv --> Model : INT8
+
+CMake --> GCC : 配置
+GCC --> Sysroot : 链接
+Sysroot --> Binary : 编译
+
+ORT --> Compare : ONNX结果
+Sim --> Compare : RKNN结果
+Compare --> Package : 验证通过
+
+Ubuntu --> Driver : 加载
+Driver --> Lite : 初始化
+
+Model --> PythonMode
+Model --> CppMode
+Binary --> CppMode
+Script --> PythonMode
+Script --> CppMode
+Config --> PythonMode
+Config --> CppMode
+
+PythonMode --> Result
+CppMode --> Result
+Result --> Perf
+
+' 部署命令
+note bottom of Target
+  <b>一键部署命令</b>
+  <code>
+  # SSH部署
+  scripts/deploy/deploy_to_board.sh \\
+    --host 192.168.137.226 --run
+
+  # 板端启动
+  ./rk3588_run.sh --model yolo11n_int8.rknn
+  </code>
+end note
+
+' 版本信息
+legend right
+  |= 组件 |= 版本 |
+  | Python | 3.10.12 |
+  | PyTorch | 2.0.1 |
+  | RKNN-Toolkit2 | 2.3.2 |
+  | OpenCV | 4.9.0 |
+  | GCC | 11.4.0 |
+endlegend
+
+@enduml

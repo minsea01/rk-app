@@ -136,21 +136,35 @@ cv::Mat Preprocess::letterboxRga(const cv::Mat& src, cv::Size target_size, Lette
         return letterboxCpu(src, target_size, info);
     }
 
-    // Step 2: Copy resized image to center of padded destination
+    // Step 2: RGA blit resized image to center of padded destination
     int top = static_cast<int>(std::round(dy - 0.1f));
     int left = static_cast<int>(std::round(dx - 0.1f));
     top = std::max(top, 0);
     left = std::max(left, 0);
 
-    cv::Rect roi(left, top, new_w, new_h);
-    if (roi.x >= 0 && roi.y >= 0 &&
-        roi.x + roi.width <= dst.cols &&
-        roi.y + roi.height <= dst.rows) {
-        // Direct memory copy is fast enough for this small region
-        resized.copyTo(dst(roi));
-    } else {
+    if (left + new_w > dst_w || top + new_h > dst_h) {
         info = {0.f, 0.f, 0.f, 0, 0};
         return {};
+    }
+
+    // Create RGA buffer for destination with offset rect
+    rga_buffer_t dst_buf = wrapbuffer_virtualaddr(
+        (void*)dst.data,
+        dst_w, dst_h,
+        RK_FORMAT_BGR_888
+    );
+
+    // Define destination rect for the blit
+    im_rect dst_rect = {left, top, new_w, new_h};
+    im_rect src_rect = {0, 0, new_w, new_h};
+
+    // RGA blit (copy with offset) - avoids CPU memcpy
+    ret = improcess(resize_buf, dst_buf, {}, src_rect, dst_rect, {}, IM_SYNC);
+    if (ret != IM_STATUS_SUCCESS) {
+        // Fallback to CPU copy if RGA blit fails
+        LOGW("RGA improcess blit failed (", imStrError(ret), "), using CPU copy");
+        cv::Rect roi(left, top, new_w, new_h);
+        resized.copyTo(dst(roi));
     }
 
     return dst;

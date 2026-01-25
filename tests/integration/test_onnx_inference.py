@@ -197,7 +197,7 @@ class TestOnnxModelInference:
 
         try:
             # Preprocess
-            input_size = 416
+            input_size = 640
             input_tensor = preprocess_onnx(img_path, target_size=input_size)
 
             # Run inference

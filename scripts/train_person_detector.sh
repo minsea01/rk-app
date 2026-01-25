@@ -18,7 +18,8 @@ echo ""
 
 # 激活环境
 source ~/yolo_env/bin/activate
-cd /home/minsea/rk-app
+PROJECT_ROOT=$(cd "$(dirname "$0")/.." && pwd)
+cd "$PROJECT_ROOT"
 
 # 第一步: 准备数据集
 echo "第一步: 准备 COCO 行人子集..."

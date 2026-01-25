@@ -107,7 +107,7 @@ public:
      *
      * Only valid when DMA-BUF mode is enabled and after read() returns true.
      *
-     * @return DMA-BUF fd, or -1 if not available
+     * @return Duplicated DMA-BUF fd, or -1 if not available (caller must close)
      */
     int getDmaBufFd() const;
 

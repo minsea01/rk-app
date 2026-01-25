@@ -1,0 +1,74 @@
+@startuml 推理流程图
+!define LIGHTBLUE #E1F5FF
+!define LIGHTORANGE #FFF4E6
+!define LIGHTGREEN #E8F5E9
+!define LIGHTPURPLE #F3E5F5
+
+skinparam defaultFontName Microsoft YaHei
+skinparam defaultFontSize 12
+skinparam sequenceMessageAlign center
+
+title YOLOv8n行人检测推理流程
+
+participant "图像输入" as Input #E1F5FF
+participant "预处理" as Preprocess #FFF4E6
+participant "NPU推理" as NPU #E8F5E9
+participant "后处理" as Post #F3E5F5
+participant "结果输出" as Output #E1F5FF
+
+== 图像采集 ==
+Input -> Preprocess : BGR图像\n(1080p原图)
+
+== 预处理阶段 (2-3ms) ==
+note over Preprocess
+  <b>Letterbox缩放</b>
+  保持宽高比
+  416×416 / 640×640
+end note
+
+Preprocess -> Preprocess : BGR → RGB
+Preprocess -> Preprocess : Resize (保持比例)
+Preprocess -> Preprocess : Pad (灰色填充)
+Preprocess -> NPU : NHWC uint8\n(1,416,416,3)
+
+== NPU推理阶段 (20-25ms) ==
+note over NPU
+  <b>RK3588 NPU</b>
+  3核并行 (core_mask=7)
+  INT8量化推理
+end note
+
+NPU -> NPU : 特征提取\n(Backbone)
+NPU -> NPU : 特征融合\n(Neck)
+NPU -> NPU : 检测头\n(Head)
+NPU -> Post : 原始输出\n(1,84,3549)
+
+== 后处理阶段 (3-5ms) ==
+note over Post
+  <b>YOLOv8后处理</b>
+  DFL解码 + NMS
+end note
+
+Post -> Post : DFL解码\n(分布式焦点损失)
+Post -> Post : 置信度过滤\nconf > 0.5
+Post -> Post : NMS去重\niou_thres=0.45
+Post -> Post : 坐标还原\n(Letterbox逆变换)
+Post -> Output : 检测结果
+
+== 输出阶段 ==
+note over Output
+  <b>检测框格式</b>
+  [x1,y1,x2,y2,conf,cls]
+end note
+
+Output -> Output : 绘制检测框
+Output -> Output : 添加标签
+Output -> Output : UDP发送/保存
+
+note right of Output
+  <b>端到端延迟</b>
+  总计: <35ms
+  帧率: >30 FPS
+end note
+
+@enduml
