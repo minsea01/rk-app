@@ -1,0 +1,64 @@
+New https://pypi.org/project/ultralytics/8.3.248 available 😃 Update with 'pip install -U ultralytics'
+Ultralytics 8.3.205 🚀 Python-3.10.12 torch-2.0.1+cu117 CUDA:0 (NVIDIA GeForce RTX 3060 Laptop GPU, 6144MiB)
+[34m[1mengine/trainer: [0magnostic_nms=False, amp=True, augment=False, auto_augment=randaugment, batch=4, bgr=0.0, box=7.5, cache=False, cfg=None, classes=None, close_mosaic=10, cls=0.5, compile=False, conf=None, copy_paste=0.0, copy_paste_mode=flip, cos_lr=False, cutmix=0.0, data=test_citypersons/citypersons_test.yaml, degrees=0.0, deterministic=True, device=0, dfl=1.5, dnn=False, dropout=0.0, dynamic=False, embed=None, epochs=1, erasing=0.4, exist_ok=True, fliplr=0.5, flipud=0.0, format=torchscript, fraction=1.0, freeze=None, half=False, hsv_h=0.015, hsv_s=0.7, hsv_v=0.4, imgsz=640, int8=False, iou=0.7, keras=False, kobj=1.0, line_width=None, lr0=0.01, lrf=0.01, mask_ratio=4, max_det=300, mixup=0.0, mode=train, model=yolov8n.pt, momentum=0.937, mosaic=1.0, multi_scale=False, name=bg_test, nbs=64, nms=False, opset=None, optimize=False, optimizer=auto, overlap_mask=True, patience=100, perspective=0.0, plots=True, pose=12.0, pretrained=True, profile=False, project=test_citypersons, rect=False, resume=False, retina_masks=False, save=True, save_conf=False, save_crop=False, save_dir=/home/minsea/rk-app/cloud_training/test_citypersons/bg_test, save_frames=False, save_json=False, save_period=-1, save_txt=False, scale=0.5, seed=0, shear=0.0, show=False, show_boxes=True, show_conf=True, show_labels=True, simplify=True, single_cls=False, source=None, split=val, stream_buffer=False, task=detect, time=None, tracker=botsort.yaml, translate=0.1, val=True, verbose=False, vid_stride=1, visualize=False, warmup_bias_lr=0.1, warmup_epochs=3.0, warmup_momentum=0.8, weight_decay=0.0005, workers=2, workspace=None
+Overriding model.yaml nc=80 with nc=1
+
+                   from  n    params  module                                       arguments                     
+  0                  -1  1       464  ultralytics.nn.modules.conv.Conv             [3, 16, 3, 2]                 
+  1                  -1  1      4672  ultralytics.nn.modules.conv.Conv             [16, 32, 3, 2]                
+  2                  -1  1      7360  ultralytics.nn.modules.block.C2f             [32, 32, 1, True]             
+  3                  -1  1     18560  ultralytics.nn.modules.conv.Conv             [32, 64, 3, 2]                
+  4                  -1  2     49664  ultralytics.nn.modules.block.C2f             [64, 64, 2, True]             
+  5                  -1  1     73984  ultralytics.nn.modules.conv.Conv             [64, 128, 3, 2]               
+  6                  -1  2    197632  ultralytics.nn.modules.block.C2f             [128, 128, 2, True]           
+  7                  -1  1    295424  ultralytics.nn.modules.conv.Conv             [128, 256, 3, 2]              
+  8                  -1  1    460288  ultralytics.nn.modules.block.C2f             [256, 256, 1, True]           
+  9                  -1  1    164608  ultralytics.nn.modules.block.SPPF            [256, 256, 5]                 
+ 10                  -1  1         0  torch.nn.modules.upsampling.Upsample         [None, 2, 'nearest']          
+ 11             [-1, 6]  1         0  ultralytics.nn.modules.conv.Concat           [1]                           
+ 12                  -1  1    148224  ultralytics.nn.modules.block.C2f             [384, 128, 1]                 
+ 13                  -1  1         0  torch.nn.modules.upsampling.Upsample         [None, 2, 'nearest']          
+ 14             [-1, 4]  1         0  ultralytics.nn.modules.conv.Concat           [1]                           
+ 15                  -1  1     37248  ultralytics.nn.modules.block.C2f             [192, 64, 1]                  
+ 16                  -1  1     36992  ultralytics.nn.modules.conv.Conv             [64, 64, 3, 2]                
+ 17            [-1, 12]  1         0  ultralytics.nn.modules.conv.Concat           [1]                           
+ 18                  -1  1    123648  ultralytics.nn.modules.block.C2f             [192, 128, 1]                 
+ 19                  -1  1    147712  ultralytics.nn.modules.conv.Conv             [128, 128, 3, 2]              
+ 20             [-1, 9]  1         0  ultralytics.nn.modules.conv.Concat           [1]                           
+ 21                  -1  1    493056  ultralytics.nn.modules.block.C2f             [384, 256, 1]                 
+ 22        [15, 18, 21]  1    751507  ultralytics.nn.modules.head.Detect           [1, [64, 128, 256]]           
+Model summary: 129 layers, 3,011,043 parameters, 3,011,027 gradients, 8.2 GFLOPs
+
+Transferred 319/355 items from pretrained weights
+Freezing layer 'model.22.dfl.conv.weight'
+[34m[1mAMP: [0mrunning Automatic Mixed Precision (AMP) checks...
+[34m[1mAMP: [0mchecks passed ✅
+[34m[1mtrain: [0mFast image access ✅ (ping: 0.0±0.0 ms, read: 718.9±59.7 MB/s, size: 6088.8 KB)
+[K[34m[1mtrain: [0mScanning /home/minsea/rk-app/cloud_training/test_citypersons/labels/train.cache... 20 images, 0 backgrounds, 0 corrupt: 100% ━━━━━━━━━━━━ 20/20 3.6Mit/s 0.0s[K[34m[1mtrain: [0mScanning /home/minsea/rk-app/cloud_training/test_citypersons/labels/train.cache... 20 images, 0 backgrounds, 0 corrupt: 100% ━━━━━━━━━━━━ 20/20 202.1Kit/s 0.0s
+[34m[1mval: [0mFast image access ✅ (ping: 0.1±0.0 ms, read: 178.9±124.0 MB/s, size: 6088.1 KB)
+[K[34m[1mval: [0mScanning /home/minsea/rk-app/cloud_training/test_citypersons/labels/val.cache... 10 images, 0 backgrounds, 0 corrupt: 100% ━━━━━━━━━━━━ 10/10 162.6Kit/s 0.0s[K[34m[1mval: [0mScanning /home/minsea/rk-app/cloud_training/test_citypersons/labels/val.cache... 10 images, 0 backgrounds, 0 corrupt: 100% ━━━━━━━━━━━━ 10/10 55.8Kit/s 0.0s
+Plotting labels to /home/minsea/rk-app/cloud_training/test_citypersons/bg_test/labels.jpg... 
+[34m[1moptimizer:[0m 'optimizer=auto' found, ignoring 'lr0=0.01' and 'momentum=0.937' and determining best 'optimizer', 'lr0' and 'momentum' automatically... 
+[34m[1moptimizer:[0m AdamW(lr=0.002, momentum=0.9) with parameter groups 57 weight(decay=0.0), 64 weight(decay=0.0005), 63 bias(decay=0.0)
+Image sizes 640 train, 640 val
+Using 2 dataloader workers
+Logging results to [1m/home/minsea/rk-app/cloud_training/test_citypersons/bg_test[0m
+Starting training for 1 epochs...
+
+      Epoch    GPU_mem   box_loss   cls_loss   dfl_loss  Instances       Size
+[K        1/1     0.602G      3.023        4.6      1.479         26        640: 0% ──────────── 0/5  2.9s[K        1/1     0.602G      2.888       4.35      1.712         29        640: 20% ━━────────── 1/5 0.1it/s 7.5s<1:01[K        1/1     0.602G      2.994      4.216      1.767         87        640: 40% ━━━━╸─────── 2/5 0.0it/s 2:26<1:03[K        1/1     0.602G      2.994      4.216      1.767         87        640: 60% ━━━━━━━───── 3/5 1.6it/s 2:26<1.2s[K        1/1     0.602G      2.949      4.155      1.826         53        640: 60% ━━━━━━━───── 3/5 1.1it/s 11:39<1.8s[K        1/1     0.602G      2.966      4.078      1.867         46        640: 80% ━━━━━━━━━╸── 4/5 1.3it/s 11:39<0.8s[K        1/1     0.602G      2.966      4.078      1.867         46        640: 100% ━━━━━━━━━━━━ 5/5 0.0it/s 11:39[K        1/1     0.602G      2.966      4.078      1.867         46        640: 100% ━━━━━━━━━━━━ 5/5 0.0it/s 11:39
+[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 50% ━━━━━━────── 1/2 0.4it/s 0.7s<2.4s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 100% ━━━━━━━━━━━━ 2/2 1.0it/s 2.0s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 100% ━━━━━━━━━━━━ 2/2 1.0it/s 2.0s
+                   all         10         37      0.001     0.0811   0.000587    0.00021
+
+1 epochs completed in 0.196 hours.
+Optimizer stripped from /home/minsea/rk-app/cloud_training/test_citypersons/bg_test/weights/last.pt, 6.2MB
+Optimizer stripped from /home/minsea/rk-app/cloud_training/test_citypersons/bg_test/weights/best.pt, 6.2MB
+
+Validating /home/minsea/rk-app/cloud_training/test_citypersons/bg_test/weights/best.pt...
+Ultralytics 8.3.205 🚀 Python-3.10.12 torch-2.0.1+cu117 CUDA:0 (NVIDIA GeForce RTX 3060 Laptop GPU, 6144MiB)
+Model summary (fused): 72 layers, 3,005,843 parameters, 0 gradients, 8.1 GFLOPs
+[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 100% ━━━━━━━━━━━━ 2/2 4.0it/s 0.5s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 100% ━━━━━━━━━━━━ 2/2 4.0it/s 0.5s
+                   all         10         37      0.001     0.0811   0.000588    0.00021
+Speed: 0.4ms preprocess, 20.7ms inference, 0.0ms loss, 2.4ms postprocess per image
+Results saved to [1m/home/minsea/rk-app/cloud_training/test_citypersons/bg_test[0m
+DONE

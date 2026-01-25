@@ -3,9 +3,12 @@
 #include "rkapp/capture/FolderSource.hpp"
 #include "rkapp/capture/MppSource.hpp"
 #include "rkapp/infer/RknnEngine.hpp"
+#include "rkapp/infer/OnnxEngine.hpp"
 #include "rkapp/post/Postprocess.hpp"
 #include "log.hpp"
 
+#include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <condition_variable>
 #include <mutex>
@@ -15,7 +18,8 @@
 
 namespace rkapp::pipeline {
 
-using Clock = std::chrono::high_resolution_clock;
+// Use steady_clock for stable latency/jitter measurements (not affected by wall-clock changes).
+using Clock = std::chrono::steady_clock;
 using TimePoint = Clock::time_point;
 
 namespace {
@@ -37,6 +41,7 @@ struct DetectionPipeline::Impl {
     // Pipeline components
     capture::SourcePtr source;
     std::unique_ptr<infer::IInferEngine> engine;
+    infer::RknnEngine* rknn_engine = nullptr;
     std::unique_ptr<common::DmaBufPool> buffer_pool;
 
     // State
@@ -100,6 +105,7 @@ DetectionPipeline::~DetectionPipeline() {
 
 bool DetectionPipeline::init(const PipelineConfig& config) {
     impl_->config = config;
+    impl_->rknn_engine = nullptr;
 
     // Create source
     impl_->source = createSource(config);
@@ -127,6 +133,8 @@ bool DetectionPipeline::init(const PipelineConfig& config) {
         return false;
     }
 
+    impl_->rknn_engine = dynamic_cast<infer::RknnEngine*>(impl_->engine.get());
+
     // Set decode parameters
     infer::DecodeParams decode_params;
     decode_params.conf_thres = config.conf_threshold;
@@ -139,15 +147,21 @@ bool DetectionPipeline::init(const PipelineConfig& config) {
     impl_->stats.zero_copy_enabled = false;
 
     // Create DMA buffer pool for zero-copy (if enabled and supported)
-    if (config.use_zero_copy && common::DmaBuf::isSupported()) {
+    if (config.use_zero_copy && impl_->rknn_engine && common::DmaBuf::isSupported()) {
         impl_->buffer_pool = std::make_unique<common::DmaBufPool>(
             config.buffer_pool_size,
             config.input_size,
             config.input_size,
             common::DmaBuf::PixelFormat::RGB888);
-        impl_->stats.zero_copy_enabled = true;
-        LOGI("DetectionPipeline: DMA-BUF zero-copy enabled with ",
-             config.buffer_pool_size, " buffers");
+        if (impl_->buffer_pool->available() > 0) {
+            impl_->stats.zero_copy_enabled = true;
+            LOGI("DetectionPipeline: DMA-BUF zero-copy enabled with ",
+                 impl_->buffer_pool->available(), " buffers");
+        } else {
+            LOGW("DetectionPipeline: DMA-BUF pool empty; zero-copy disabled");
+            impl_->buffer_pool.reset();
+            impl_->stats.zero_copy_enabled = false;
+        }
     }
 
     // Warmup
@@ -208,6 +222,16 @@ PipelineResult DetectionPipeline::process(const cv::Mat& image) {
         return result;
     }
 
+    if (!impl_->rknn_engine) {
+        auto inference_start = Clock::now();
+        result.detections = impl_->engine->infer(image);
+        if (impl_->config.enable_profiling) {
+            result.timing.inference_us = microsecondsSince(inference_start);
+        }
+        result.timing.total_us = microsecondsSince(total_start);
+        return result;
+    }
+
     // Preprocess
     auto preprocess_start = Clock::now();
     preprocess::LetterboxInfo letterbox_info;
@@ -230,46 +254,26 @@ PipelineResult DetectionPipeline::process(const cv::Mat& image) {
         common::DmaBuf* dma_buf = impl_->buffer_pool->acquire();
         if (dma_buf) {
             // Convert to RGB and copy to DMA buffer
-            cv::Mat rgb;
-            cv::cvtColor(preprocessed, rgb, cv::COLOR_BGR2RGB);
+            cv::Mat rgb = preprocess::Preprocess::convertColor(
+                preprocessed, cv::COLOR_BGR2RGB, backend);
             if (dma_buf->copyFrom(rgb)) {
-                // Cast to RknnEngine for inferDmaBuf
-                auto* rknn_engine = dynamic_cast<infer::RknnEngine*>(impl_->engine.get());
-                if (rknn_engine) {
-                    result.detections = rknn_engine->inferDmaBuf(*dma_buf, image.size(), letterbox_info);
-                } else {
-                    // Non-RKNN engines do their own preprocessing
-                    result.detections = impl_->engine->infer(image);
-                }
+                result.detections = impl_->rknn_engine->inferDmaBuf(
+                    *dma_buf, image.size(), letterbox_info);
             } else {
-                // Fallback on copy failure: use preprocessed path for RKNN, otherwise original image
-                auto* rknn_engine = dynamic_cast<infer::RknnEngine*>(impl_->engine.get());
-                if (rknn_engine) {
-                    result.detections = rknn_engine->inferPreprocessed(preprocessed, image.size(), letterbox_info);
-                } else {
-                    result.detections = impl_->engine->infer(image);
-                }
+                result.detections = impl_->rknn_engine->inferPreprocessed(
+                    preprocessed, image.size(), letterbox_info);
             }
             impl_->buffer_pool->release(dma_buf);
         } else {
             // No buffer available, use regular path
-            auto* rknn_engine = dynamic_cast<infer::RknnEngine*>(impl_->engine.get());
-            if (rknn_engine) {
-                result.detections = rknn_engine->inferPreprocessed(preprocessed, image.size(), letterbox_info);
-            } else {
-                result.detections = impl_->engine->infer(image);
-            }
+            result.detections = impl_->rknn_engine->inferPreprocessed(
+                preprocessed, image.size(), letterbox_info);
         }
     } else {
         // Standard inference path: pass preprocessed image to avoid double letterbox
         // Cast to RknnEngine to use inferPreprocessed
-        auto* rknn_engine = dynamic_cast<infer::RknnEngine*>(impl_->engine.get());
-        if (rknn_engine) {
-            result.detections = rknn_engine->inferPreprocessed(preprocessed, image.size(), letterbox_info);
-        } else {
-            // Fallback: use original image (engine will do its own preprocessing)
-            result.detections = impl_->engine->infer(image);
-        }
+        result.detections = impl_->rknn_engine->inferPreprocessed(
+            preprocessed, image.size(), letterbox_info);
     }
 
     if (impl_->config.enable_profiling) {
@@ -416,8 +420,15 @@ capture::SourcePtr createSource(const PipelineConfig& config) {
 }
 
 std::unique_ptr<infer::IInferEngine> createEngine(const PipelineConfig& config) {
+    auto to_lower = [](std::string value) {
+        std::transform(value.begin(), value.end(), value.begin(),
+                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        return value;
+    };
+    const std::string model_path_lower = to_lower(config.model_path);
+
     // Always use RKNN engine for .rknn models
-    if (config.model_path.find(".rknn") != std::string::npos) {
+    if (model_path_lower.find(".rknn") != std::string::npos) {
 #if RKNN_PLATFORM || RKAPP_WITH_RKNN
         auto engine = std::make_unique<infer::RknnEngine>();
         if (config.use_npu_multicore) {
@@ -430,8 +441,16 @@ std::unique_ptr<infer::IInferEngine> createEngine(const PipelineConfig& config) 
 #endif
     }
 
-    // For ONNX models, could use OnnxEngine (not shown here)
-    LOGE("DetectionPipeline: Only RKNN models are supported in this pipeline");
+    if (model_path_lower.find(".onnx") != std::string::npos) {
+#if RKAPP_WITH_ONNX
+        return std::make_unique<infer::OnnxEngine>();
+#else
+        LOGE("DetectionPipeline: ONNX model specified but ONNX not enabled at build time");
+        return nullptr;
+#endif
+    }
+
+    LOGE("DetectionPipeline: Unsupported model type (expected .rknn or .onnx): ", config.model_path);
     return nullptr;
 }
 

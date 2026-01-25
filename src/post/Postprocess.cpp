@@ -110,8 +110,11 @@ std::vector<rkapp::infer::Detection> Postprocess::nms(
     constexpr float kEps = 1e-6f;
 
     // ========== Stage 1: Filter and pre-compute ==========
-    std::vector<BoxInfo> boxes;
-    boxes.reserve(detections.size());
+    thread_local std::vector<BoxInfo> boxes;
+    boxes.clear();
+    if (boxes.capacity() < detections.size()) {
+        boxes.reserve(detections.size());
+    }
 
     for (size_t idx = 0; idx < detections.size(); ++idx) {
         const auto& det = detections[idx];
@@ -163,6 +166,11 @@ std::vector<rkapp::infer::Detection> Postprocess::nms(
     }
 
     const size_t n = boxes.size();
+    if (config.max_det > 0) {
+        result.reserve(std::min(n, static_cast<size_t>(config.max_det)));
+    } else {
+        result.reserve(n);
+    }
     // Use atomic<bool> for thread-safe parallel NMS
     std::vector<std::atomic<bool>> suppressed(n);
     for (size_t i = 0; i < n; ++i) {
@@ -175,7 +183,23 @@ std::vector<rkapp::infer::Detection> Postprocess::nms(
 
 #if RKAPP_HAS_NEON
     // Pre-extract coordinates into contiguous arrays for NEON
-    std::vector<float> all_x1(n), all_y1(n), all_x2(n), all_y2(n), all_area(n);
+    thread_local std::vector<float> all_x1;
+    thread_local std::vector<float> all_y1;
+    thread_local std::vector<float> all_x2;
+    thread_local std::vector<float> all_y2;
+    thread_local std::vector<float> all_area;
+    if (all_x1.capacity() < n) {
+        all_x1.reserve(n);
+        all_y1.reserve(n);
+        all_x2.reserve(n);
+        all_y2.reserve(n);
+        all_area.reserve(n);
+    }
+    all_x1.resize(n);
+    all_y1.resize(n);
+    all_x2.resize(n);
+    all_y2.resize(n);
+    all_area.resize(n);
     for (size_t i = 0; i < n; ++i) {
         all_x1[i] = boxes[i].x1;
         all_y1[i] = boxes[i].y1;

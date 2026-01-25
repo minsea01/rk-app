@@ -69,7 +69,7 @@ public:
     /**
      * @brief Import an existing DMA-BUF fd (e.g., from MPP decoder)
      *
-     * @param fd DMA-BUF file descriptor (ownership transferred)
+     * @param fd DMA-BUF file descriptor (duplicated internally; caller retains ownership)
      * @param width Width in pixels
      * @param height Height in pixels
      * @param format Pixel format
@@ -109,12 +109,32 @@ public:
     uint64_t getRgaHandle() const;
 
     /**
-     * @brief Sync for CPU access (call before reading DMA buffer on CPU)
+     * @brief Sync for CPU read access (call before reading DMA buffer on CPU)
+     */
+    void syncForCpuReadStart();
+
+    /**
+     * @brief Sync end for CPU read access (call after CPU read completes)
+     */
+    void syncForCpuReadEnd();
+
+    /**
+     * @brief Sync for CPU write access (call before writing DMA buffer on CPU)
+     */
+    void syncForCpuWriteStart();
+
+    /**
+     * @brief Sync end for CPU write access (call after CPU write completes)
+     */
+    void syncForCpuWriteEnd();
+
+    /**
+     * @brief Legacy: Sync for CPU read access start
      */
     void syncForCpu();
 
     /**
-     * @brief Sync for device access (call after writing DMA buffer from CPU)
+     * @brief Legacy: Sync end for CPU write access
      */
     void syncForDevice();
 
@@ -162,6 +182,7 @@ public:
 
 private:
     void release();
+    bool sync(uint64_t flags);
 
     int fd_ = -1;              // DMA-BUF file descriptor
     void* virt_addr_ = nullptr; // Mapped virtual address
@@ -182,6 +203,10 @@ private:
 
     // Track ownership
     bool owns_fd_ = false;
+
+    // DMA-BUF sync capability
+    bool sync_supported_ = true;
+    bool sync_warned_ = false;
 };
 
 /**

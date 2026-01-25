@@ -182,7 +182,8 @@ def main():
 
         # Run inference
         # RKNN preproc set to BGR->RGB and /255 in conversion; feed BGR uint8
-        input_data = img
+        # Add batch dimension: (H, W, 3) -> (1, H, W, 3)
+        input_data = np.expand_dims(img, axis=0)
         t0 = time.time()
         try:
             outputs = rknn.inference(inputs=[input_data])
@@ -254,8 +255,10 @@ def main():
                 continue
             try:
                 img, r, d = letterbox(img0, args.imgsz)
+                # Add batch dimension: (H, W, 3) -> (1, H, W, 3) to match image path
+                input_data = np.expand_dims(img, axis=0)
                 t0 = time.time()
-                outputs = rknn.inference(inputs=[img])
+                outputs = rknn.inference(inputs=[input_data])
                 pred = outputs[0]
             except (cv2.error, RuntimeError, ValueError) as e:
                 logger.warning('Inference error (skipping frame): %s', e)

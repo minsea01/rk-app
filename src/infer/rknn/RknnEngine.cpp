@@ -1,5 +1,6 @@
 #include "rkapp/infer/RknnEngine.hpp"
 #include "rkapp/infer/RknnDecodeUtils.hpp"
+#include "rkapp/infer/RknnDecodeOptimized.hpp"
 #include "rkapp/preprocess/Preprocess.hpp"
 #include "rkapp/post/Postprocess.hpp"
 #include "rkapp/common/DmaBuf.hpp"
@@ -458,31 +459,8 @@ std::vector<Detection> decode_and_postprocess(
 
       const AnchorLayout& layout = *dfl_layout;
       std::array<float, MAX_REG_MAX> probs_buf{};
-      auto dfl_softmax_project = [&](int base_c, int i) -> std::array<float, 4> {
-        std::array<float, 4> out{};
-        for (int side = 0; side < 4; ++side) {
-          int ch0 = base_c + side * reg_max; // channel start for this side
-          float maxv = -1e30f;
-          for (int k = 0; k < reg_max; ++k) {
-            maxv = std::max(maxv, logits[(ch0 + k) * N + i]);
-          }
-          float denom = 0.f;
-          for (int k = 0; k < reg_max; ++k) {
-            float v = std::exp(logits[(ch0 + k) * N + i] - maxv);
-            probs_buf[k] = v;
-            denom += v;
-          }
-          float proj = 0.f;
-          for (int k = 0; k < reg_max; ++k) {
-            proj += probs_buf[k] * static_cast<float>(k);
-          }
-          out[side] = (denom > 0.f) ? (proj / denom) : 0.f;
-        }
-        return out; // in grid units
-      };
-
       for (int i = 0; i < N; ++i) {
-        auto dfl = dfl_softmax_project(0, i);
+        auto dfl = dfl_decode_4sides_optimized(logits, i, N, reg_max, probs_buf.data());
         float s = layout.stride_map[i];
         float l = dfl[0] * s, t = dfl[1] * s, r = dfl[2] * s, b = dfl[3] * s;
         float x1 = layout.anchor_cx[i] - l;
@@ -1073,6 +1051,14 @@ std::vector<Detection> RknnEngine::inferDmaBuf(
     return inferPreprocessed(bgr, original_size, letterbox_info);
   };
 
+#if !defined(RKAPP_RKNN_DMA_FD_INPUT)
+  static std::once_flag warn_once;
+  std::call_once(warn_once, []() {
+    LOGW("RknnEngine::inferDmaBuf: DMA-FD input disabled; enable ENABLE_RKNN_DMA_FD to use it");
+  });
+  return fallback_to_copy();
+#endif
+
   // Validate input dimensions
   if (input.width() != input_size_ || input.height() != input_size_) {
     LOGE("RknnEngine::inferDmaBuf: Input size mismatch. Expected ", input_size_, "x",
@@ -1094,6 +1080,31 @@ std::vector<Detection> RknnEngine::inferDmaBuf(
 
   std::unique_lock<std::mutex> lock(impl_->infer_mutex);
 
+  int ret = RKNN_SUCC;
+#if defined(RKAPP_RKNN_IO_MEM)
+  rknn_tensor_mem* input_mem = nullptr;
+  rknn_mem_info mem_info{};
+  mem_info.fd = dma_fd;
+  mem_info.offset = 0;
+  mem_info.size = input.size();
+  input_mem = rknn_create_mem_from_fd(impl_->ctx, &mem_info);
+  if (!input_mem) {
+    close(dma_fd);
+    LOGW("RknnEngine::inferDmaBuf: rknn_create_mem_from_fd failed, falling back to copy path");
+    lock.unlock();
+    return fallback_to_copy();
+  }
+
+  ret = rknn_set_io_mem(impl_->ctx, input_mem, &impl_->in_attr);
+  if (ret != RKNN_SUCC) {
+    rknn_destroy_mem(impl_->ctx, input_mem);
+    close(dma_fd);
+    LOGW("RknnEngine::inferDmaBuf: rknn_set_io_mem failed (code ", ret,
+         "), falling back to copy path");
+    lock.unlock();
+    return fallback_to_copy();
+  }
+#else
   // Set up RKNN input with DMA-BUF fd
   // RKNN SDK 1.5.0+ supports rknn_inputs_set with fd parameter
   rknn_input in{};
@@ -1107,7 +1118,7 @@ std::vector<Detection> RknnEngine::inferDmaBuf(
   in.pass_through = 1;  // Enable direct buffer access
   in.buf = reinterpret_cast<void*>(static_cast<intptr_t>(dma_fd));
 
-  int ret = rknn_inputs_set(impl_->ctx, 1, &in);
+  ret = rknn_inputs_set(impl_->ctx, 1, &in);
 
   if (ret != RKNN_SUCC) {
     // Close fd on failure before fallback
@@ -1117,10 +1128,16 @@ std::vector<Detection> RknnEngine::inferDmaBuf(
     lock.unlock();
     return fallback_to_copy();
   }
+#endif
 
   // Run inference (fd must remain valid during this call)
   ret = rknn_run(impl_->ctx, nullptr);
   if (ret != RKNN_SUCC) {
+#if defined(RKAPP_RKNN_IO_MEM)
+    if (input_mem) {
+      rknn_destroy_mem(impl_->ctx, input_mem);
+    }
+#endif
     // Close fd on failure
     close(dma_fd);
     LOGE("RknnEngine::inferDmaBuf: rknn_run failed: ", ret);
@@ -1139,6 +1156,12 @@ std::vector<Detection> RknnEngine::inferDmaBuf(
   out.size = logits_local.size() * sizeof(float);
   out.index = impl_->out_attr.index;  // Use the selected best output index
   ret = rknn_outputs_get(impl_->ctx, 1, &out, nullptr);
+
+#if defined(RKAPP_RKNN_IO_MEM)
+  if (input_mem) {
+    rknn_destroy_mem(impl_->ctx, input_mem);
+  }
+#endif
 
   // NOW safe to close the fd after inference and output retrieval complete
   close(dma_fd);

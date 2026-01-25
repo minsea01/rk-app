@@ -2,6 +2,7 @@
 #include "log.hpp"
 
 #include <cstring>
+#include <cerrno>
 #include <mutex>
 #include <queue>
 #include <fcntl.h>
@@ -199,6 +200,8 @@ void DmaBuf::release() {
     size_ = 0;
     phys_addr_ = 0;
     owns_fd_ = false;
+    sync_supported_ = true;
+    sync_warned_ = false;
 }
 
 bool DmaBuf::allocate(int width, int height, PixelFormat format, MemType mem_type) {
@@ -213,6 +216,8 @@ bool DmaBuf::allocate(int width, int height, PixelFormat format, MemType mem_typ
     height_ = height;
     format_ = format;
     mem_type_ = mem_type;
+    sync_supported_ = true;
+    sync_warned_ = false;
 
     // Calculate stride (align to 16 bytes for RGA/NPU efficiency)
     int bpp = bytesPerPixel(format);
@@ -291,11 +296,19 @@ bool DmaBuf::importFd(int fd, int width, int height, PixelFormat format, int str
         return false;
     }
 
-    fd_ = fd;
-    owns_fd_ = true;  // Take ownership
+    int dup_fd = dup(fd);
+    if (dup_fd < 0) {
+        LOGE("DmaBuf::importFd: dup failed: ", strerror(errno));
+        return false;
+    }
+
+    fd_ = dup_fd;
+    owns_fd_ = true;  // Own the duplicated fd
     width_ = width;
     height_ = height;
     format_ = format;
+    sync_supported_ = true;
+    sync_warned_ = false;
 
     int bpp = bytesPerPixel(format);
     stride_ = (stride > 0) ? stride : (width * bpp);
@@ -371,20 +384,50 @@ uint64_t DmaBuf::getRgaHandle() const {
 #endif
 }
 
-void DmaBuf::syncForCpu() {
-    if (fd_ < 0) return;
+bool DmaBuf::sync(uint64_t flags) {
+    if (fd_ < 0) return false;
+    if (!sync_supported_) return false;
 
     struct dma_buf_sync sync = {};
-    sync.flags = DMA_BUF_SYNC_START | DMA_BUF_SYNC_READ;
-    ioctl(fd_, DMA_BUF_IOCTL_SYNC, &sync);
+    sync.flags = flags;
+    if (ioctl(fd_, DMA_BUF_IOCTL_SYNC, &sync) < 0) {
+        if (errno == ENOTTY || errno == EINVAL || errno == EOPNOTSUPP) {
+            if (!sync_warned_) {
+                LOGW("DmaBuf: DMA_BUF_IOCTL_SYNC not supported on fd=", fd_);
+            }
+            sync_supported_ = false;
+        } else if (!sync_warned_) {
+            LOGW("DmaBuf: DMA_BUF_IOCTL_SYNC failed: ", strerror(errno));
+        }
+        sync_warned_ = true;
+        return false;
+    }
+
+    return true;
+}
+
+void DmaBuf::syncForCpuReadStart() {
+    sync(DMA_BUF_SYNC_START | DMA_BUF_SYNC_READ);
+}
+
+void DmaBuf::syncForCpuReadEnd() {
+    sync(DMA_BUF_SYNC_END | DMA_BUF_SYNC_READ);
+}
+
+void DmaBuf::syncForCpuWriteStart() {
+    sync(DMA_BUF_SYNC_START | DMA_BUF_SYNC_WRITE);
+}
+
+void DmaBuf::syncForCpuWriteEnd() {
+    sync(DMA_BUF_SYNC_END | DMA_BUF_SYNC_WRITE);
+}
+
+void DmaBuf::syncForCpu() {
+    syncForCpuReadStart();
 }
 
 void DmaBuf::syncForDevice() {
-    if (fd_ < 0) return;
-
-    struct dma_buf_sync sync = {};
-    sync.flags = DMA_BUF_SYNC_END | DMA_BUF_SYNC_WRITE;
-    ioctl(fd_, DMA_BUF_IOCTL_SYNC, &sync);
+    syncForCpuWriteEnd();
 }
 
 cv::Mat DmaBuf::asMat() {
@@ -424,6 +467,8 @@ bool DmaBuf::copyFrom(const cv::Mat& src) {
     void* ptr = getVirtAddr();
     if (!ptr) return false;
 
+    syncForCpuWriteStart();
+
     // Copy row by row (handles stride differences)
     int row_bytes = width_ * bytesPerPixel(format_);
     const uint8_t* src_ptr = src.data;
@@ -435,7 +480,7 @@ bool DmaBuf::copyFrom(const cv::Mat& src) {
         dst_ptr += stride_;
     }
 
-    syncForDevice();
+    syncForCpuWriteEnd();
     return true;
 }
 
@@ -459,7 +504,7 @@ bool DmaBuf::copyTo(cv::Mat& dst) const {
 
     dst.create(height_, width_, cv_type);
 
-    const_cast<DmaBuf*>(this)->syncForCpu();
+    const_cast<DmaBuf*>(this)->syncForCpuReadStart();
 
     int row_bytes = width_ * bytesPerPixel(format_);
     const uint8_t* src_ptr = static_cast<const uint8_t*>(ptr);
@@ -471,11 +516,12 @@ bool DmaBuf::copyTo(cv::Mat& dst) const {
         dst_ptr += dst.step;
     }
 
+    const_cast<DmaBuf*>(this)->syncForCpuReadEnd();
     return true;
 }
 
 bool DmaBuf::isSupported() {
-#if defined(__aarch64__) || defined(__arm__)
+#if defined(RKAPP_WITH_DRM) && (defined(__aarch64__) || defined(__arm__))
     // Try to open DRM device
     int fd = openDrmDevice();
     if (fd >= 0) {
@@ -483,8 +529,7 @@ bool DmaBuf::isSupported() {
         return true;
     }
 #endif
-    // memfd fallback is always available on Linux 3.17+
-    return true;
+    return false;
 }
 
 int DmaBuf::bytesPerPixel(PixelFormat fmt) {

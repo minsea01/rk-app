@@ -36,6 +36,8 @@ option(ENABLE_ONNX "Enable ONNXRuntime engine" ON)
 option(ENABLE_RKNN "Enable RKNN engine" OFF)
 option(ENABLE_RGA "Enable RGA acceleration (if available)" ON)
 option(ENABLE_MPP "Enable MPP hardware video decoding (RK3588)" OFF)
+option(ENABLE_RKNN_DMA_FD "Enable RKNN DMA-BUF fd input (requires supported RKNN SDK)" OFF)
+option(ENABLE_RKNN_IO_MEM "Enable RKNN IO memory for DMA-BUF zero-copy (RKNN >= 1.5.0)" OFF)
 set(RKNN_HOME "/opt/rknpu2" CACHE PATH "RKNN SDK root")
 set(MPP_HOME "/usr/include/rockchip" CACHE PATH "MPP SDK headers")
 
@@ -130,6 +132,9 @@ endif()
 if(NOT HAVE_YAML_CPP)
   message(FATAL_ERROR "yaml-cpp not found. Install libyaml-cpp-dev or provide pkg-config.")
 endif()
+if(HAVE_YAML_CPP)
+  add_compile_definitions(RKAPP_HAVE_YAMLCPP=1)
+endif()
 option(ENABLE_GIGE "Enable GigE Vision (Aravis) source" OFF)
 if (ENABLE_GIGE)
   # Aravis（可选，用于未来直接使用Aravis API）；当前GigeSource仅依赖GStreamer
@@ -221,7 +226,11 @@ if (ENABLE_MPP)
 endif()
 
 # Shared decode utilities used by RKNN path and tests
-add_library(rkapp_decode_utils src/infer/rknn/RknnDecodeUtils.cpp)
+set(RKAPP_DECODE_UTILS_SOURCES
+  src/infer/rknn/RknnDecodeUtils.cpp
+  src/infer/rknn/RknnDecodeOptimized.cpp
+)
+add_library(rkapp_decode_utils ${RKAPP_DECODE_UTILS_SOURCES})
 target_include_directories(rkapp_decode_utils PUBLIC include)
 
 if(RKAPP_ENABLE_CPP_TESTS)
@@ -286,6 +295,12 @@ if (ENABLE_RKNN)
     target_link_directories(rkapp_infer_rknn PRIVATE ${RKNN_HOME}/lib)
     target_link_libraries(rkapp_infer_rknn PRIVATE rknn_api)
     target_compile_definitions(rkapp_infer_rknn PRIVATE RKNN_PLATFORM=1)
+    if (ENABLE_RKNN_DMA_FD)
+      target_compile_definitions(rkapp_infer_rknn PRIVATE RKAPP_RKNN_DMA_FD_INPUT=1)
+    endif()
+    if (ENABLE_RKNN_IO_MEM)
+      target_compile_definitions(rkapp_infer_rknn PRIVATE RKAPP_RKNN_IO_MEM=1)
+    endif()
 
     if (ENABLE_RGA)
       find_library(RGA_LIB rga)

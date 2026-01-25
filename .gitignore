@@ -60,6 +60,11 @@ htmlcov/
 *.so
 out/
 build/
+bench_dfl_opt
+test_bugfix_arm64
+
+# Video files (too large)
+assets/*.mp4
 
 # Temporary
 =*
@@ -101,3 +106,4 @@ artifacts/onnx_optimized/
 # Exclude large ONNX models (>10MB)
 *.onnx
 .mcp.json
+cloud_training/test_citypersons/images/

@@ -19,6 +19,12 @@ bool VideoSource::open(const std::string& video_path) {
     return false;
   }
 
+  // Reduce capture buffering for streaming sources to minimize latency/jitter.
+  // Note: not all backends honor this setting (FFmpeg/GStreamer may ignore it).
+  if (isStreamSource()) {
+    (void)cap_.set(cv::CAP_PROP_BUFFERSIZE, 1);
+  }
+
   // Get video properties
   fps_ = cap_.get(cv::CAP_PROP_FPS);
   total_frames_ = static_cast<int>(cap_.get(cv::CAP_PROP_FRAME_COUNT));
@@ -83,6 +89,9 @@ bool VideoSource::tryReconnect() {
 
   bool success = cap_.open(video_path_);
   if (success) {
+    if (isStreamSource()) {
+      (void)cap_.set(cv::CAP_PROP_BUFFERSIZE, 1);
+    }
     std::cout << "VideoSource: reconnected successfully to " << video_path_ << std::endl;
     reconnect_attempts_ = 0;
   }

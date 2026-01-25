@@ -1,0 +1,72 @@
+{
+  "test_date": "2026-01-11",
+  "platform": {
+    "board": "RK3588 Talowe",
+    "ip": "192.168.137.226",
+    "npu_driver": "v0.8.2",
+    "rknn_runtime": "v2.3.2",
+    "os": "Ubuntu 20.04.6 LTS"
+  },
+  "models": {
+    "yolo11n_416": {
+      "size_mb": 4.3,
+      "input_size": 416,
+      "quantization": "INT8"
+    },
+    "yolov8n_person_80map_int8": {
+      "size_mb": 4.8,
+      "input_size": 640,
+      "quantization": "INT8",
+      "map": 0.80
+    }
+  },
+  "cpp_performance": {
+    "video_infer_rga": {
+      "avg_latency_ms": 17.17,
+      "preprocess_ms": 2.16,
+      "inference_ms": 15.01,
+      "fps": 58.24,
+      "hardware_acceleration": "RGA + NPU 3-core"
+    },
+    "video_infer_simple": {
+      "avg_latency_ms": 23.92,
+      "fps": 41.81,
+      "hardware_acceleration": "NPU 3-core"
+    }
+  },
+  "python_performance": {
+    "conf_0.25": {
+      "total_ms": 53.86,
+      "inference_ms": 24.17,
+      "postprocess_ms": 27.86,
+      "fps": 18.6,
+      "detections": 25
+    },
+    "conf_0.50": {
+      "total_ms": 57.60,
+      "inference_ms": 24.45,
+      "postprocess_ms": 31.39,
+      "fps": 17.4,
+      "detections": 25
+    },
+    "conf_0.70": {
+      "total_ms": 52.37,
+      "inference_ms": 25.24,
+      "postprocess_ms": 25.36,
+      "fps": 19.1,
+      "detections": 0
+    }
+  },
+  "pc_baseline": {
+    "best_onnx_640": {"latency_ms": 252.8, "fps": 4.0, "provider": "CPU"},
+    "yolov8n_person_80map_640": {"latency_ms": 93.3, "fps": 10.7, "provider": "CPU"},
+    "yolo11n_416": {"latency_ms": 33.7, "fps": 29.7, "provider": "CPU"}
+  },
+  "requirements_check": {
+    "model_size": {"required": "<5MB", "actual": "4.3MB", "status": "PASS"},
+    "fps": {"required": ">30", "actual": 58.2, "status": "PASS"},
+    "latency_1080p": {"required": "<=45ms", "actual": "17.17ms", "status": "PASS"},
+    "npu_utilization": {"required": "multi-core", "actual": "3-core", "status": "PASS"},
+    "map": {"required": ">=90%", "actual": "80%", "status": "PENDING"}
+  }
+}

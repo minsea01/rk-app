@@ -60,6 +60,8 @@ public:
    *
    * This method avoids CPU memory copies by directly importing
    * the DMA-BUF fd into RKNN for NPU access.
+   * Requires ENABLE_RKNN_DMA_FD to be enabled at build time.
+   * Optional: ENABLE_RKNN_IO_MEM enables rknn_set_io_mem (RKNN SDK >= 1.5.0).
    *
    * Supported input formats:
    * - RGB888 (3-channel, already letterboxed to input_size_)
