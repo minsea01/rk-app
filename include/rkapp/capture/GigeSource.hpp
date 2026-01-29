@@ -29,6 +29,7 @@ public:
 
   bool open(const std::string& uri) override;
   bool read(cv::Mat& frame) override;
+  bool readFrame(CaptureFrame& frame) override;
   void release() override;
   bool isOpened() const override;
 

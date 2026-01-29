@@ -2,16 +2,18 @@
  * SIMD-optimized DFL decoding for ARM NEON (RK3588)
  *
  * Performance improvements:
- * - NEON vectorization for softmax (exp, max, sum)
- * - Vectorized dot product
- * - Loop unrolling to reduce branches
+ * - NEON vectorization for max/sum and projection
+ * - Scalar exp() for accuracy (can be a bottleneck)
  *
- * Expected speedup: 3-5x over scalar implementation
+ * Notes:
+ * - reg_max is guarded (<= 32).
+ * - If you need more speed, consider a vector exp approximation behind a build flag.
  */
 
 #include "rkapp/infer/RknnDecodeOptimized.hpp"
 #if defined(__ARM_NEON) || defined(__ARM_NEON__)
 #include <arm_neon.h>
+#define RKAPP_HAS_NEON 1
 #endif
 #include <array>
 #include <cmath>
@@ -22,7 +24,8 @@ namespace rkapp::infer {
 /**
  * NEON-optimized DFL softmax + projection
  *
- * Computes: argmax_k( softmax(logits[ch:ch+reg_max]) * [0, 1, ..., reg_max-1] )
+ * Computes expected value of the distribution:
+ * sum_k( softmax(logits[ch:ch+reg_max]) * k )
  *
  * @param logits Pointer to start of distribution (reg_max elements)
  * @param reg_max Distribution size (typically 16)
@@ -33,7 +36,7 @@ float dfl_decode_neon_single(const float* logits, int reg_max, float* probs_buf)
     // Find max for numerical stability
     float max_val = -1e30f;
 
-#if defined(__ARM_NEON)
+#if RKAPP_HAS_NEON
     if (reg_max == 16) {
         // Optimized path for reg_max=16 (YOLOv8 default)
         float32x4_t vmax = vdupq_n_f32(-1e30f);
@@ -64,17 +67,14 @@ float dfl_decode_neon_single(const float* logits, int reg_max, float* probs_buf)
         v2 = vsubq_f32(v2, vmax_dup);
         v3 = vsubq_f32(v3, vmax_dup);
 
-        // Fast exp approximation (faster than calling expf 16 times)
-        // For x in [-10, 0]: exp(x) ≈ accurate enough for softmax
-        // Fall back to scalar exp for simplicity and correctness
-        alignas(16) float temp[16];
-        vst1q_f32(temp + 0, v0);
-        vst1q_f32(temp + 4, v1);
-        vst1q_f32(temp + 8, v2);
-        vst1q_f32(temp + 12, v3);
+        // Scalar exp for accuracy (16 values)
+        vst1q_f32(probs_buf + 0, v0);
+        vst1q_f32(probs_buf + 4, v1);
+        vst1q_f32(probs_buf + 8, v2);
+        vst1q_f32(probs_buf + 12, v3);
 
         for (int k = 0; k < 16; ++k) {
-            probs_buf[k] = std::exp(temp[k]);
+            probs_buf[k] = std::exp(probs_buf[k]);
         }
 
         // Load exp results back for sum
@@ -101,10 +101,10 @@ float dfl_decode_neon_single(const float* logits, int reg_max, float* probs_buf)
         v3 = vmulq_f32(v3, vsum_inv);
 
         // Dot product with index weights [0,1,2,3, 4,5,6,7, 8,9,10,11, 12,13,14,15]
-        const float weights0[4] = {0.0f, 1.0f, 2.0f, 3.0f};
-        const float weights1[4] = {4.0f, 5.0f, 6.0f, 7.0f};
-        const float weights2[4] = {8.0f, 9.0f, 10.0f, 11.0f};
-        const float weights3[4] = {12.0f, 13.0f, 14.0f, 15.0f};
+        alignas(16) static const float weights0[4] = {0.0f, 1.0f, 2.0f, 3.0f};
+        alignas(16) static const float weights1[4] = {4.0f, 5.0f, 6.0f, 7.0f};
+        alignas(16) static const float weights2[4] = {8.0f, 9.0f, 10.0f, 11.0f};
+        alignas(16) static const float weights3[4] = {12.0f, 13.0f, 14.0f, 15.0f};
 
         float32x4_t w0 = vld1q_f32(weights0);
         float32x4_t w1 = vld1q_f32(weights1);
@@ -164,6 +164,10 @@ std::array<float, 4> dfl_decode_4sides_optimized(
     float* probs_buf
 ) {
     std::array<float, 4> out{};
+    constexpr int kMaxRegMax = 32;
+    if (reg_max <= 0 || reg_max > kMaxRegMax) {
+        return out;
+    }
 
     for (int side = 0; side < 4; ++side) {
         int ch_base = side * reg_max;

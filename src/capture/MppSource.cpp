@@ -453,6 +453,7 @@ bool MppSource::read(cv::Mat& frame) {
     // Convert YUV to BGR
     // Most common format from MPP is NV12 (YUV420SP)
     if (frm_fmt == MPP_FMT_YUV420SP || frm_fmt == MPP_FMT_YUV420SP_10BIT) {
+        bool converted = false;
 #if RKNN_USE_RGA
         // Use RGA with stride-aware conversion (avoids CPU memcpy)
         // RGA can handle non-contiguous strides directly
@@ -473,52 +474,53 @@ bool MppSource::read(cv::Mat& frame) {
                                        RK_FORMAT_YCbCr_420_SP,
                                        RK_FORMAT_BGR_888,
                                        IM_YUV_TO_RGB_BT601_LIMIT);
-        if (rga_ret != IM_STATUS_SUCCESS) {
-            // Fallback to CPU path with stride fixup
-            LOGW("RGA stride-aware cvtcolor failed (", imStrError(rga_ret), "), using CPU fallback");
-            goto cpu_stride_fallback;
-        }
-#else
-        // CPU fallback path
-        cpu_stride_fallback:
-        cv::Mat yuv_mat(frm_v_stride * 3 / 2, frm_h_stride, CV_8UC1, buf_ptr);
-
-        // Crop to actual dimensions if stride differs
-        cv::Mat yuv_cropped;
-        if (frm_h_stride != frm_width || frm_v_stride != frm_height) {
-            // Need to handle stride - create proper NV12 layout
-            cv::Mat y_plane(frm_height, frm_width, CV_8UC1);
-            cv::Mat uv_plane(frm_height / 2, frm_width / 2, CV_8UC2);
-
-            // Copy Y plane row by row
-            for (int i = 0; i < frm_height; i++) {
-                memcpy(y_plane.ptr(i),
-                       (uint8_t*)buf_ptr + i * frm_h_stride,
-                       frm_width);
-            }
-
-            // Copy UV plane row by row
-            uint8_t* uv_src = (uint8_t*)buf_ptr + frm_h_stride * frm_v_stride;
-            for (int i = 0; i < frm_height / 2; i++) {
-                memcpy(uv_plane.ptr(i),
-                       uv_src + i * frm_h_stride,
-                       frm_width);
-            }
-
-            // Combine for OpenCV cvtColor
-            yuv_cropped = cv::Mat(frm_height * 3 / 2, frm_width, CV_8UC1);
-            y_plane.copyTo(yuv_cropped(cv::Rect(0, 0, frm_width, frm_height)));
-
-            // Reshape UV for copying
-            cv::Mat uv_reshaped(frm_height / 2, frm_width, CV_8UC1,
-                               uv_plane.data);
-            uv_reshaped.copyTo(yuv_cropped(cv::Rect(0, frm_height, frm_width, frm_height / 2)));
+        if (rga_ret == IM_STATUS_SUCCESS) {
+            converted = true;
         } else {
-            yuv_cropped = yuv_mat(cv::Rect(0, 0, frm_width, frm_height * 3 / 2));
+            LOGW("RGA stride-aware cvtcolor failed (", imStrError(rga_ret), "), using CPU fallback");
         }
-
-        cv::cvtColor(yuv_cropped, frame, cv::COLOR_YUV2BGR_NV12);
 #endif
+        if (!converted) {
+            // CPU fallback path
+            cv::Mat yuv_mat(frm_v_stride * 3 / 2, frm_h_stride, CV_8UC1, buf_ptr);
+
+            // Crop to actual dimensions if stride differs
+            cv::Mat yuv_cropped;
+            if (frm_h_stride != frm_width || frm_v_stride != frm_height) {
+                // Need to handle stride - create proper NV12 layout
+                cv::Mat y_plane(frm_height, frm_width, CV_8UC1);
+                cv::Mat uv_plane(frm_height / 2, frm_width / 2, CV_8UC2);
+
+                // Copy Y plane row by row
+                for (int i = 0; i < frm_height; i++) {
+                    memcpy(y_plane.ptr(i),
+                           (uint8_t*)buf_ptr + i * frm_h_stride,
+                           frm_width);
+                }
+
+                // Copy UV plane row by row
+                uint8_t* uv_src = (uint8_t*)buf_ptr + frm_h_stride * frm_v_stride;
+                for (int i = 0; i < frm_height / 2; i++) {
+                    memcpy(uv_plane.ptr(i),
+                           uv_src + i * frm_h_stride,
+                           frm_width);
+                }
+
+                // Combine for OpenCV cvtColor
+                yuv_cropped = cv::Mat(frm_height * 3 / 2, frm_width, CV_8UC1);
+                y_plane.copyTo(yuv_cropped(cv::Rect(0, 0, frm_width, frm_height)));
+
+                // Reshape UV for copying
+                cv::Mat uv_reshaped(frm_height / 2, frm_width, CV_8UC1,
+                                   uv_plane.data);
+                uv_reshaped.copyTo(
+                    yuv_cropped(cv::Rect(0, frm_height, frm_width, frm_height / 2)));
+            } else {
+                yuv_cropped = yuv_mat(cv::Rect(0, 0, frm_width, frm_height * 3 / 2));
+            }
+
+            cv::cvtColor(yuv_cropped, frame, cv::COLOR_YUV2BGR_NV12);
+        }
     } else {
         LOGW("Unsupported frame format: ", frm_fmt);
         mpp_frame_deinit(&mpp_frame);

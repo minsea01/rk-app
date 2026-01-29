@@ -192,18 +192,18 @@ std::optional<PipelineResult> DetectionPipeline::next() {
         return std::nullopt;
     }
 
-    cv::Mat frame;
+    capture::CaptureFrame frame;
     auto capture_start = Clock::now();
 
-    if (!impl_->source->read(frame)) {
+    if (!impl_->source->readFrame(frame)) {
         return std::nullopt;
     }
 
-    if (frame.empty()) {
+    if (frame.mat.empty()) {
         return std::nullopt;
     }
 
-    auto result = process(frame);
+    auto result = process(frame.mat);
     result.timing.capture_us = microsecondsSince(capture_start) - result.timing.total_us;
     result.timing.total_us += result.timing.capture_us;
     result.frame_id = impl_->frame_counter++;
@@ -429,7 +429,7 @@ std::unique_ptr<infer::IInferEngine> createEngine(const PipelineConfig& config) 
 
     // Always use RKNN engine for .rknn models
     if (model_path_lower.find(".rknn") != std::string::npos) {
-#if RKNN_PLATFORM || RKAPP_WITH_RKNN
+#if RKAPP_WITH_RKNN
         auto engine = std::make_unique<infer::RknnEngine>();
         if (config.use_npu_multicore) {
             engine->setCoreMask(0x7);  // All 3 NPU cores (6 TOPS)

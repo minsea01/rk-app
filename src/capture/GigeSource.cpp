@@ -67,6 +67,24 @@ bool parseBool(const std::string& input) {
          lowered == "bgr" || lowered == "rgb";
 }
 
+#ifdef RKAPP_WITH_GIGE
+struct GstSampleHolder {
+  GstSample* sample = nullptr;
+  GstBuffer* buffer = nullptr;
+  GstMapInfo map{};
+  bool mapped = false;
+
+  ~GstSampleHolder() {
+    if (mapped && buffer) {
+      gst_buffer_unmap(buffer, &map);
+    }
+    if (sample) {
+      gst_sample_unref(sample);
+    }
+  }
+};
+#endif
+
 }  // namespace
 
 GigeSource::~GigeSource() {
@@ -119,6 +137,23 @@ bool GigeSource::open(const std::string& uri) {
 
 bool GigeSource::read(cv::Mat& frame) {
 #ifdef RKAPP_WITH_GIGE
+  CaptureFrame capture;
+  if (!readFrame(capture)) {
+    return false;
+  }
+  capture.mat.copyTo(frame);
+  return true;
+#else
+  (void)frame;
+  return false;
+#endif
+}
+
+bool GigeSource::readFrame(CaptureFrame& frame) {
+#ifdef RKAPP_WITH_GIGE
+  frame.owner.reset();
+  frame.mat.release();
+
   std::unique_lock<std::mutex> lock(mtx_);
   if (!opened_) return false;
   if (!ensurePipelineLocked()) {
@@ -196,16 +231,30 @@ bool GigeSource::read(cv::Mat& frame) {
     return false;
   }
 
-  if (fmt && g_strcmp0(fmt, "GRAY8") == 0) {
-    cv::Mat img(height, width, CV_8UC1, static_cast<void*>(map.data));
-    img.copyTo(frame);
-  } else {
-    cv::Mat img(height, width, CV_8UC3, static_cast<void*>(map.data));
-    img.copyTo(frame);
+  const bool is_gray = (fmt && g_strcmp0(fmt, "GRAY8") == 0);
+  const int channels = is_gray ? 1 : 3;
+  const int type = is_gray ? CV_8UC1 : CV_8UC3;
+  const size_t row_stride = static_cast<size_t>(map.size) / static_cast<size_t>(height);
+  const size_t expected_stride = static_cast<size_t>(width) * static_cast<size_t>(channels);
+  if (row_stride < expected_stride) {
+    gst_buffer_unmap(buffer, &map);
+    gst_sample_unref(sample);
+    gst_object_unref(sink_copy);
+    LOGW("GigeSource: buffer stride smaller than expected");
+    lock.lock();
+    handleReadFailureLocked();
+    return false;
   }
 
-  gst_buffer_unmap(buffer, &map);
-  gst_sample_unref(sample);
+  auto holder = std::make_shared<GstSampleHolder>();
+  holder->sample = sample;
+  holder->buffer = buffer;
+  holder->map = map;
+  holder->mapped = true;
+
+  frame.mat = cv::Mat(height, width, type, static_cast<void*>(map.data), row_stride);
+  frame.owner = holder;
+
   gst_object_unref(sink_copy);
 
   lock.lock();
