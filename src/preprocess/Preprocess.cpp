@@ -108,8 +108,8 @@ cv::Mat Preprocess::letterboxRga(const cv::Mat& src, cv::Size target_size, Lette
     info.new_width = new_w;
     info.new_height = new_h;
 
-    // Create destination with gray padding (YOLO: 114, 114, 114)
-    cv::Mat dst(dst_h, dst_w, CV_8UC3, cv::Scalar(114, 114, 114));
+    // Create destination buffer (padding filled after blit)
+    cv::Mat dst(dst_h, dst_w, CV_8UC3);
 
     // Ensure source is contiguous
     cv::Mat src_cont = src.isContinuous() ? src : src.clone();
@@ -165,6 +165,22 @@ cv::Mat Preprocess::letterboxRga(const cv::Mat& src, cv::Size target_size, Lette
         LOGW("RGA improcess blit failed (", imStrError(ret), "), using CPU copy");
         cv::Rect roi(left, top, new_w, new_h);
         resized.copyTo(dst(roi));
+    }
+
+    const cv::Scalar pad_color(114, 114, 114);
+    if (top > 0) {
+        dst(cv::Rect(0, 0, dst_w, top)).setTo(pad_color);
+    }
+    const int bottom = top + new_h;
+    if (bottom < dst_h) {
+        dst(cv::Rect(0, bottom, dst_w, dst_h - bottom)).setTo(pad_color);
+    }
+    if (left > 0) {
+        dst(cv::Rect(0, top, left, new_h)).setTo(pad_color);
+    }
+    const int right = left + new_w;
+    if (right < dst_w) {
+        dst(cv::Rect(right, top, dst_w - right, new_h)).setTo(pad_color);
     }
 
     return dst;

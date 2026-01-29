@@ -14,12 +14,24 @@ enum class SourceType {
     MPP     // Hardware-accelerated video via RK3588 MPP
 };
 
+struct CaptureFrame {
+    cv::Mat mat;
+    std::shared_ptr<void> owner;
+};
+
 class ISource {
 public:
     virtual ~ISource() = default;
     
     virtual bool open(const std::string& uri) = 0;
     virtual bool read(cv::Mat& frame) = 0;
+    virtual bool readFrame(CaptureFrame& frame) {
+        cv::Mat tmp;
+        if (!read(tmp)) return false;
+        frame.mat = tmp;
+        frame.owner.reset();
+        return true;
+    }
     virtual void release() = 0;
     virtual bool isOpened() const = 0;
     

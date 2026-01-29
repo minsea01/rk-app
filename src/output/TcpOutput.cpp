@@ -69,6 +69,8 @@ bool TcpOutput::open(const std::string& config) {
             std::lock_guard<std::mutex> lock(backlog_mtx_);
             backlog_.clear();
         }
+        dropped_frames_.store(0, std::memory_order_relaxed);
+        total_sent_.store(0, std::memory_order_relaxed);
         file_path_.clear();
         bind_interface_.clear();
         bind_ip_.clear();
@@ -226,7 +228,8 @@ bool TcpOutput::send(const FrameResult& result) {
             std::lock_guard<std::mutex> lock(backlog_mtx_);
             backlog_.push_back(QueuedPayload{payload, 0});
             if (backlog_.size() > max_backlog_) {
-                LOGW("TcpOutput: backlog full (max=", max_backlog_, "), dropping oldest frame");
+                const uint64_t dropped = dropped_frames_.fetch_add(1, std::memory_order_relaxed) + 1;
+                LOGW("TcpOutput: backlog full (max=", max_backlog_, "), dropping oldest frame (total dropped: ", dropped, ")");
                 backlog_.pop_front();
             }
         }
@@ -429,6 +432,7 @@ bool TcpOutput::flushBacklog() {
                     if (sent) {
                         backlog_.pop_front();
                         delivered_any = true;
+                        total_sent_.fetch_add(1, std::memory_order_relaxed);
                     } else {
                         backlog_.front().offset = current.offset;
                     }

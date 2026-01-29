@@ -65,6 +65,29 @@ private:
   std::deque<QueuedPayload> backlog_;
   size_t max_backlog_ = 64;
   mutable std::mutex backlog_mtx_;
+
+  // Statistics for monitoring
+  std::atomic<uint64_t> dropped_frames_{0};
+  std::atomic<uint64_t> total_sent_{0};
+
+public:
+  /**
+   * @brief Get number of frames dropped due to backlog overflow
+   */
+  uint64_t droppedFrames() const { return dropped_frames_.load(std::memory_order_relaxed); }
+
+  /**
+   * @brief Get total number of frames successfully sent
+   */
+  uint64_t totalSent() const { return total_sent_.load(std::memory_order_relaxed); }
+
+  /**
+   * @brief Reset statistics counters
+   */
+  void resetStats() {
+    dropped_frames_.store(0, std::memory_order_relaxed);
+    total_sent_.store(0, std::memory_order_relaxed);
+  }
 };
 
 } // namespace rkapp::output
