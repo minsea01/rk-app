@@ -2,9 +2,9 @@ name: CI/CD Pipeline
 
 on:
   push:
-    branches: [ main, develop, claude/** ]
+    branches: [ main, master, develop, claude/** ]
   pull_request:
-    branches: [ main, develop ]
+    branches: [ main, master, develop ]
 
 env:
   PYTHON_VERSION: '3.10'
@@ -54,9 +54,10 @@ jobs:
           python -m pip install --upgrade pip
           pip install numpy opencv-python-headless pillow pytest pytest-cov
 
-      - name: Run tests
+      - name: Run tests (skip hardware-dependent)
         run: |
-          pytest tests/unit/ -v
+          export PYTHONPATH=$PWD
+          pytest tests/unit/ -v -m "not requires_hardware"
 
   # File validation
   file-validation:

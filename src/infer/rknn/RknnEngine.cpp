@@ -441,6 +441,38 @@ std::vector<Detection> decode_and_postprocess(
   return rkapp::post::Postprocess::nms(dets, nms_cfg);
 }
 
+/**
+ * @brief Transpose RKNN output from [1, N, C] to [C, N] layout if needed.
+ *
+ * RKNN may output logits in [1, N, C] format (n_dims=3, dims[1]=N, dims[2]=C),
+ * but decode expects [C, N]. This helper transposes in-place using thread_local buffer.
+ *
+ * @param logits_data Original logits data pointer
+ * @param out_n Number of anchors (N dimension)
+ * @param out_c Number of channels (C dimension)
+ * @param n_dims Number of output dimensions
+ * @param dim1 dims[1] from output attribute
+ * @param dim2 dims[2] from output attribute
+ * @param transpose_buf Thread-local buffer for transposed data (resized if needed)
+ * @return Pointer to logits (original or transposed)
+ */
+inline const float* maybe_transpose_output(const float* logits_data, int out_n, int out_c,
+                                           int n_dims, int dim1, int dim2,
+                                           std::vector<float>& transpose_buf) {
+  // Check if transpose is needed: [1, N, C] layout needs to become [C, N]
+  if (n_dims >= 3 && dim1 == out_n && dim2 == out_c) {
+    size_t total_elems = static_cast<size_t>(out_n) * out_c;
+    transpose_buf.resize(total_elems);
+    for (int n = 0; n < out_n; n++) {
+      for (int c = 0; c < out_c; c++) {
+        transpose_buf[c * out_n + n] = logits_data[n * out_c + c];
+      }
+    }
+    return transpose_buf.data();
+  }
+  return logits_data;
+}
+
 } // namespace
 
 RknnEngine::RknnEngine() = default;
@@ -830,19 +862,11 @@ std::vector<Detection> RknnEngine::inferPreprocessed(
   rknn_outputs_release(impl_->ctx, 1, &out);
   lock.unlock();
 
-  const float* logits = logits_local.data();
   thread_local std::vector<float> transpose_local;
-  if (impl_->out_attr.n_dims >= 3 &&
-      impl_->out_attr.dims[1] == impl_->out_n &&
-      impl_->out_attr.dims[2] == impl_->out_c) {
-    transpose_local.resize(logits_elems);
-    for (int n = 0; n < impl_->out_n; n++) {
-      for (int c = 0; c < impl_->out_c; c++) {
-        transpose_local[c * impl_->out_n + n] = logits[n * impl_->out_c + c];
-      }
-    }
-    logits = transpose_local.data();
-  }
+  const float* logits = maybe_transpose_output(
+      logits_local.data(), impl_->out_n, impl_->out_c,
+      impl_->out_attr.n_dims, impl_->out_attr.dims[1], impl_->out_attr.dims[2],
+      transpose_local);
 
   auto nms_result = decode_and_postprocess(
       logits, impl_->out_n, impl_->out_c, impl_->out_elems, num_classes, model_meta_,
@@ -1041,19 +1065,11 @@ std::vector<Detection> RknnEngine::inferDmaBuf(
   rknn_outputs_release(impl_->ctx, 1, &out);
   lock.unlock();
 
-  const float* logits = logits_local.data();
   thread_local std::vector<float> transpose_local;
-  if (impl_->out_attr.n_dims >= 3 &&
-      impl_->out_attr.dims[1] == impl_->out_n &&
-      impl_->out_attr.dims[2] == impl_->out_c) {
-    transpose_local.resize(logits_elems);
-    for (int n = 0; n < impl_->out_n; n++) {
-      for (int c = 0; c < impl_->out_c; c++) {
-        transpose_local[c * impl_->out_n + n] = logits[n * impl_->out_c + c];
-      }
-    }
-    logits = transpose_local.data();
-  }
+  const float* logits = maybe_transpose_output(
+      logits_local.data(), impl_->out_n, impl_->out_c,
+      impl_->out_attr.n_dims, impl_->out_attr.dims[1], impl_->out_attr.dims[2],
+      transpose_local);
 
   auto nms_result = decode_and_postprocess(
       logits, impl_->out_n, impl_->out_c, impl_->out_elems, num_classes, model_meta_,

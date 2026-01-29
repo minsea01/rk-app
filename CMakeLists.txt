@@ -287,13 +287,29 @@ endif()
 
 # RKNN inference engine (optional)
 if (ENABLE_RKNN)
+    # Validate RKNN SDK installation
+    if (NOT EXISTS "${RKNN_HOME}")
+      message(FATAL_ERROR "RKNN_HOME='${RKNN_HOME}' does not exist.\n"
+                          "Please set -DRKNN_HOME=/path/to/rknpu2 or install RKNN SDK to /opt/rknpu2")
+    endif()
+    if (NOT EXISTS "${RKNN_HOME}/include/rknn_api.h")
+      message(FATAL_ERROR "RKNN SDK headers not found at ${RKNN_HOME}/include/rknn_api.h\n"
+                          "Check RKNN_HOME path or SDK installation.")
+    endif()
+    find_library(RKNN_API_LIB rknn_api PATHS "${RKNN_HOME}/lib" NO_DEFAULT_PATH)
+    if (NOT RKNN_API_LIB)
+      message(FATAL_ERROR "rknn_api library not found in ${RKNN_HOME}/lib\n"
+                          "Check RKNN SDK installation or RKNN_HOME path.")
+    endif()
+    message(STATUS "Found RKNN SDK: ${RKNN_HOME}")
+    message(STATUS "  rknn_api: ${RKNN_API_LIB}")
+
     add_library(rkapp_infer_rknn src/infer/rknn/RknnEngine.cpp)
     target_include_directories(rkapp_infer_rknn PUBLIC include)
     target_link_libraries(rkapp_infer_rknn PUBLIC ${OpenCV_LIBS} rkapp_decode_utils)
     # RKNN SDK
     target_include_directories(rkapp_infer_rknn PRIVATE ${RKNN_HOME}/include)
-    target_link_directories(rkapp_infer_rknn PRIVATE ${RKNN_HOME}/lib)
-    target_link_libraries(rkapp_infer_rknn PRIVATE rknn_api)
+    target_link_libraries(rkapp_infer_rknn PRIVATE ${RKNN_API_LIB})
     target_compile_definitions(rkapp_infer_rknn PRIVATE RKNN_PLATFORM=1)
     if (ENABLE_RKNN_DMA_FD)
       target_compile_definitions(rkapp_infer_rknn PRIVATE RKAPP_RKNN_DMA_FD_INPUT=1)
