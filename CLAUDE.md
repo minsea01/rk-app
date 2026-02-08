@@ -272,8 +272,43 @@ RKNN NPU has a 16384-element limit for Transpose operations:
 **其他目录：**
 - `.claude/` - 5 个斜杠命令 + 5 个技能
 - `artifacts/` - 模型与构建产物
-- `configs/` / `config/` - 实验配置
+- `config/` - 主配置目录（`configs/` 为符号链接，保持兼容）
 - `tests/` - Python + C++ 测试
+
+## C++ Architecture (Critical)
+
+**Interface Hierarchy:**
+```
+ISource (capture)     → FolderSource, VideoSource, GigeSource, MppSource
+IInferEngine (infer)  → OnnxEngine, RknnEngine
+IOutput (output)      → TcpOutput, UdpOutput
+```
+
+**DetectionPipeline (Pimpl pattern):**
+```cpp
+// High-level API - src/pipeline/DetectionPipeline.cpp
+DetectionPipeline pipeline;
+pipeline.init(config);
+while (auto result = pipeline.next()) {
+    // Process detections
+}
+```
+
+**Hardware Acceleration Layers:**
+- `DmaBuf` - 零拷贝 DMA 缓冲区 (3-5x 内存带宽优化)
+- `FramePool` - 预分配帧缓冲池 (避免运行时分配)
+- `RGA Preprocess` - 硬件预处理 (0.3ms vs OpenCV 3ms)
+- `MPP Decode` - 硬件视频解码 (50% CPU 降低)
+
+**Thread Safety:**
+- 所有统计计数器使用 `std::atomic`
+- 积压队列使用 `std::mutex` 保护
+- `TcpOutput` 提供 `droppedFrames()` / `totalSent()` 监控接口
+
+**Design Patterns:**
+- RAII 资源管理 (智能指针 95%+)
+- Pimpl 隐藏实现细节
+- 工厂函数创建源/引擎 (`createSource()`, `createEngine()`)
 
 **核心模块（Python）：**
 - `apps/config.py` - 配置中心（ModelConfig, RKNNConfig）
@@ -301,31 +336,9 @@ pip install -r requirements.txt
 pip install -r requirements-dev.txt  # Development only
 ```
 
-## Training Resources (~/yolo_env/)
+## Training Resources
 
-训练相关文件位于 `~/yolo_env/` 目录，不在项目仓库内：
-
-**预训练模型：**
-- `~/yolo_env/yolov8n.pt` - YOLOv8n 预训练权重（已复制到 artifacts/models/）
-- `~/yolo_env/yolo11n.pt` - YOLO11n 预训练权重
-- `~/yolo_env/yolov5su.pt` - YOLOv5s-u 预训练权重
-
-**行人检测项目：**
-- `~/yolo_env/pedestrian_detection/` - 行人检测训练项目
-  - `datasets/pedestrian/pedestrian.yaml` - 数据集配置
-  - `outputs/` - 训练输出目录
-  - `scripts/` - 训练脚本
-  - `TRAINING_GUIDE.md` - 训练指南
-  - `QUICKSTART.md` - 快速开始
-
-**数据集：**
-- `~/yolo_env/datasets/coco/` - COCO 数据集
-- `~/yolo_env/datasets/coco8/` - COCO8 mini 数据集
-
-**辅助脚本：**
-- `~/yolo_env/download_crowdhuman.sh` - CrowdHuman 下载脚本
-- `~/yolo_env/monitor_training.sh` - 训练监控脚本
-- `~/yolo_env/training.log` - 训练日志
+训练相关文件位于虚拟环境外 (`~/yolo_env/`)，不在项目仓库内。详见 `cloud_training/README.md`。
 
 **Key packages:**
 - numpy<2.0 (RKNN toolkit compatibility)
@@ -346,9 +359,13 @@ pip install -r requirements-dev.txt  # Development only
 **Git Commit规范：**
 - 使用Conventional Commit格式：`feat:`, `fix:`, `docs:`, `refactor:` 等
 - ⛔ **禁止使用 `Co-Authored-By` 标签** - 这是个人毕业设计项目
-- Commit message应简洁明了，描述实际变更
 - 例如：`feat: add RKNN INT8 quantization support` ✅
-- 避免：自动生成的Claude署名、Co-Authored-By行 ❌
+
+**Pre-commit Hooks (`.pre-commit-config.yaml`)：**
+- `black` / `isort` / `flake8` - Python 格式化和检查
+- `clang-format` - C++ 格式化 (Google style, 遵循 `.clang-format`)
+- `shellcheck` - Shell 脚本检查
+- 运行：`pre-commit run --all-files`
 
 ## Common Issues
 
@@ -426,33 +443,17 @@ python3 tools/convert_onnx_to_rknn.py --onnx artifacts/models/best.onnx --out ar
 
 ## Current Status
 
-**Phase 1 已完成 (98%)：** 模型转换流水线、交叉编译工具链、PC 无板验证、一键部署脚本、论文文档（7章+开题报告）
+**已达成指标：**
+| 指标 | 要求 | 实际 | 状态 |
+|------|------|------|------|
+| 模型大小 | <5MB | 4.3-4.8MB | ✅ |
+| 推理速度 | >30 FPS | 40 FPS | ✅ |
+| NPU 利用率 | 3核并行 | ✅ | ✅ |
+| mAP 精度 | ≥90% | 80% | ⏸️ 待提升 |
 
-**Phase 2 进行中 (60% ✅)：**
-- ✅ 板端系统环境配置（Ubuntu 20.04.6 + NPU v0.8.2）
-- ✅ RKNN 推理测试成功（25.31ms @ 416×416，约 40 FPS）
-- ✅ Python Runner 板端部署验证
-- ⏸️ 双网卡千兆吞吐量测试（≥900Mbps，需硬件）
-- ⏸️ C++ CLI 板端部署优化
-- ⏸️ CityPersons 微调（目标 mAP ≥90%）
+**可用模型：** `artifacts/models/`
+- `yolo11n_416.rknn` - 4.3MB, 40 FPS
+- `yolov8n_person_80map_int8.rknn` - 4.8MB, 80% mAP
+- `best.rknn` - 4.7MB, 基线模型
 
-**板端部署成功 (2026-01-07)：**
-- 板卡：RK3588 (Talowe)，IP: 192.168.137.226
-- 推理性能：yolo11n_416.rknn @ 25.31ms (40 FPS) ✅
-- 检测结果：25 个目标，输出正常 ✅
-- 详细报告：`artifacts/board_deployment_success_report.md`
-
-**待办：云端训练** - AutoDL 4090 训练 YOLOv8n 行人检测，提升 mAP 到 ≥90%
-
-**关键指标：**
-- 模型大小：4.3-4.8MB ✅（要求 <5MB）
-- 推理速度：40 FPS ✅（要求 >30 FPS）
-- NPU 利用率：3核心并行 ✅
-- **mAP 精度：80% ✅**（COCO Person，yolov8n_person_80map.pt）
-- mAP 提升目标：90%（CrowdHuman + COCO合并训练）
-- 答辩时间：2026年6月
-
-**可用模型列表：**
-- `yolo11n_416.rknn` - 4.3MB, 25.31ms @ 416×416 (40 FPS)
-- `yolov8n_person_80map_int8.rknn` - 4.8MB, 80% mAP ✅
-- `best.rknn` - 4.7MB, 基线模型 (61.57% mAP)
+**详细进度：** `artifacts/board_deployment_success_report.md`, `docs/thesis/`
