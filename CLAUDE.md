@@ -257,6 +257,16 @@ RKNN NPU has a 16384-element limit for Transpose operations:
 - **RKNN PC Simulator:** NHWC (1, 640, 640, 3)
 - **Preprocessing:** BGR → RGB via `img[..., ::-1]`, resize, keep uint8 for RKNN
 
+### Decode Metadata Requirements
+
+- `head=auto` now uses a conservative policy for ambiguous output channels.
+- For deterministic decode, provide sidecar metadata:
+  - `<model>.json` or `<model>.meta` (preferred)
+  - fallback `artifacts/models/decode_meta.json`
+- Recommended fields:
+  - DFL heads: `head`, `reg_max`, `strides`, `num_classes`
+  - RAW heads: `head`, `num_classes`, `has_objectness`
+
 ## Project Structure
 
 **C++ 核心流水线：**

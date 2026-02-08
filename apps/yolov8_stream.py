@@ -11,12 +11,19 @@ from pathlib import Path
 from threading import Thread, Event
 from queue import Queue, Full, Empty
 import json
-from typing import Union, List, Dict, Any, Optional, Tuple
+from typing import Union, List, Dict, Any, Optional, Tuple, Mapping
 from urllib import request, error
 
 import cv2
 import numpy as np
 
+from apps.utils.decode_meta import (
+    load_decode_meta,
+    normalize_decode_meta,
+    resolve_dfl_layout,
+    resolve_head,
+    resolve_raw_layout,
+)
 from apps.utils.yolo_post import letterbox, nms, sigmoid
 from apps.utils.headless import safe_imshow, safe_waitKey
 
@@ -70,7 +77,8 @@ def decode_predictions(
     imgsz: int,
     conf_thres: float,
     iou_thres: float,
-    head: str = 'auto'
+    head: str = 'auto',
+    decode_meta: Optional[Mapping[str, Any]] = None,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Decode YOLO model predictions to bounding boxes.
     
@@ -80,6 +88,7 @@ def decode_predictions(
         conf_thres: Confidence threshold for filtering
         iou_thres: IOU threshold for NMS
         head: Decoding method ('auto', 'dfl', 'raw')
+        decode_meta: Optional decode metadata dict
         
     Returns:
         Tuple of (boxes, confidences, class_ids)
@@ -93,31 +102,81 @@ def decode_predictions(
     else:
         pred_nc = pred.transpose(0, 2, 1)
     C = pred_nc.shape[2]
-    if head == 'auto':
-        head = 'dfl' if C >= 64 else 'raw'
-    if head == 'dfl':
+    decode_meta = normalize_decode_meta(decode_meta)
+    resolved_head = resolve_head(head, C, decode_meta)
+    if resolved_head is None:
+        return (
+            np.empty((0, 4), dtype=np.float32),
+            np.array([], dtype=np.float32),
+            np.array([], dtype=np.int64),
+        )
+
+    if resolved_head == 'dfl':
         # Lazy import to avoid circular deps
         from apps.utils.yolo_post import postprocess_yolov8
+        dfl_layout = resolve_dfl_layout(C, decode_meta)
+        if dfl_layout is None:
+            return (
+                np.empty((0, 4), dtype=np.float32),
+                np.array([], dtype=np.float32),
+                np.array([], dtype=np.int64),
+            )
+        reg_max, strides = dfl_layout
         # Here we assume decode on resized image; caller will scale to original if needed
-        boxes, confs, cls_ids = postprocess_yolov8(pred_nc, imgsz, (imgsz, imgsz), (1.0, (0.0, 0.0)), conf_thres, iou_thres)
+        try:
+            boxes, confs, cls_ids = postprocess_yolov8(
+                pred_nc,
+                imgsz,
+                (imgsz, imgsz),
+                (1.0, (0.0, 0.0)),
+                conf_thres,
+                iou_thres,
+                reg_max=reg_max,
+                strides=tuple(strides),
+            )
+        except ValueError:
+            return (
+                np.empty((0, 4), dtype=np.float32),
+                np.array([], dtype=np.float32),
+                np.array([], dtype=np.int64),
+            )
         return boxes, confs, cls_ids
+
+    raw_layout = resolve_raw_layout(C, decode_meta)
+    if raw_layout is None:
+        return (
+            np.empty((0, 4), dtype=np.float32),
+            np.array([], dtype=np.float32),
+            np.array([], dtype=np.int64),
+        )
+    has_objness, num_classes = raw_layout
+
     # raw: [cx,cy,w,h,obj,cls...]
     p = pred_nc[0]
     if C < 5:
-        return np.empty((0, 4)), np.array([]), np.array([])
+        return (
+            np.empty((0, 4), dtype=np.float32),
+            np.array([], dtype=np.float32),
+            np.array([], dtype=np.int64),
+        )
     cx, cy, w, h = p[:, 0], p[:, 1], p[:, 2], p[:, 3]
-    obj = sigmoid(p[:, 4])
-    if C > 5:
-        cls_scores = sigmoid(p[:, 5:])
+    obj = sigmoid(p[:, 4]) if has_objness else np.ones_like(cx, dtype=np.float32)
+    cls_offset = 5 if has_objness else 4
+    if num_classes > 0:
+        cls_scores = sigmoid(p[:, cls_offset:cls_offset + num_classes])
         cls_ids = cls_scores.argmax(axis=1)
         cls_conf = cls_scores.max(axis=1)
     else:
-        cls_ids = np.zeros_like(obj, dtype=np.int64)
+        cls_ids = np.zeros(cx.shape[0], dtype=np.int64)
         cls_conf = np.ones_like(obj)
     conf = obj * cls_conf
     m = conf >= conf_thres
     if not np.any(m):
-        return np.empty((0, 4)), np.array([]), np.array([])
+        return (
+            np.empty((0, 4), dtype=np.float32),
+            np.array([], dtype=np.float32),
+            np.array([], dtype=np.int64),
+        )
     scale_needed = (np.percentile(w[m], 95) < 1.0) or (np.percentile(h[m], 95) < 1.0)
     s = float(imgsz) if scale_needed else 1.0
     cx *= s; cy *= s; w *= s; h *= s
@@ -293,6 +352,7 @@ def run_stream(args) -> None:
         raise SystemExit('load_rknn failed')
     if rknn.init_runtime(core_mask=args.core_mask) != 0:
         raise SystemExit('init_runtime failed')
+    decode_meta = load_decode_meta(args.model, logger=logger)
 
     def t_infer() -> None:
         """Inference thread: runs RKNN model on preprocessed frames."""
@@ -352,7 +412,7 @@ def run_stream(args) -> None:
             t6 = time.perf_counter()
             try:
                 boxes, confs, cls_ids = decode_predictions(
-                    pred, args.imgsz, args.conf, args.iou, head=args.head
+                    pred, args.imgsz, args.conf, args.iou, head=args.head, decode_meta=decode_meta
                 )
             except Exception as e:
                 logger.error(f"Postprocess error: {e}")

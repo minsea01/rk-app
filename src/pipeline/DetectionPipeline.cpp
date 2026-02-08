@@ -30,6 +30,22 @@ int64_t microsecondsSince(const TimePoint& start) {
         Clock::now() - start).count();
 }
 
+bool isMppDecodeEnabledInStats(const PipelineConfig& config) {
+#if RKAPP_WITH_MPP
+    if (config.source_type == capture::SourceType::MPP) {
+        return true;
+    }
+    if ((config.source_type == capture::SourceType::VIDEO ||
+         config.source_type == capture::SourceType::RTSP) &&
+        config.use_mpp_decode) {
+        return true;
+    }
+#else
+    (void)config;
+#endif
+    return false;
+}
+
 } // namespace
 
 // ============================================================================
@@ -174,9 +190,7 @@ bool DetectionPipeline::init(const PipelineConfig& config) {
 
     // Initialize stats
     impl_->stats.rga_enabled = config.use_rga_preprocess;
-    impl_->stats.mpp_enabled = (config.source_type == capture::SourceType::MPP ||
-                                config.source_type == capture::SourceType::VIDEO) &&
-                               config.use_mpp_decode;
+    impl_->stats.mpp_enabled = isMppDecodeEnabledInStats(config);
     impl_->start_time = Clock::now();
     impl_->last_fps_update = impl_->start_time;
 
@@ -384,7 +398,7 @@ void DetectionPipeline::resetStatistics() {
     std::lock_guard<std::mutex> lock(impl_->stats_mutex);
     impl_->stats = Statistics{};
     impl_->stats.rga_enabled = impl_->config.use_rga_preprocess;
-    impl_->stats.mpp_enabled = impl_->config.use_mpp_decode;
+    impl_->stats.mpp_enabled = isMppDecodeEnabledInStats(impl_->config);
     impl_->stats.zero_copy_enabled = (impl_->buffer_pool != nullptr);
     impl_->total_latency_us = 0;
     impl_->start_time = Clock::now();

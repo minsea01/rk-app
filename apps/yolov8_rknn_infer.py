@@ -7,13 +7,29 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from apps.utils.decode_meta import (
+    load_decode_meta,
+    normalize_decode_meta,
+    resolve_dfl_layout,
+    resolve_head,
+    resolve_raw_layout,
+)
 from apps.utils.yolo_post import letterbox, postprocess_yolov8
 from apps.utils.headless import safe_imshow, safe_waitKey
 from apps.exceptions import RKNNError, PreprocessError, InferenceError, ModelLoadError
 from apps.logger import setup_logger
 
 
-def decode_predictions(pred, imgsz, conf_thres, iou_thres, head='auto', ratio_pad=(1.0, (0.0, 0.0)), orig_shape=None):
+def decode_predictions(
+    pred,
+    imgsz,
+    conf_thres,
+    iou_thres,
+    head='auto',
+    ratio_pad=(1.0, (0.0, 0.0)),
+    orig_shape=None,
+    decode_meta=None,
+):
     # pred: (1, N, C) or (1, C, N) or (N, C)
     from apps.utils.yolo_post import sigmoid, nms
     # unify to (1, N, C)
@@ -25,32 +41,63 @@ def decode_predictions(pred, imgsz, conf_thres, iou_thres, head='auto', ratio_pa
     else:
         pred_nc = pred.transpose(0, 2, 1)
     C = pred_nc.shape[2]
-    if head == 'auto':
-        head = 'dfl' if C >= 64 else 'raw'
 
-    if head == 'dfl':
-        boxes, confs, cls_ids = postprocess_yolov8(
-            pred_nc, imgsz, orig_shape or (imgsz, imgsz), ratio_pad, conf_thres, iou_thres
-        )
+    decode_meta = normalize_decode_meta(decode_meta)
+    resolved_head = resolve_head(head, C, decode_meta)
+    if resolved_head is None:
+        return np.empty((0, 4), dtype=np.float32), np.array([], dtype=np.float32), np.array([], dtype=np.int64)
+
+    if resolved_head == 'dfl':
+        dfl_layout = resolve_dfl_layout(C, decode_meta)
+        if dfl_layout is None:
+            return (
+                np.empty((0, 4), dtype=np.float32),
+                np.array([], dtype=np.float32),
+                np.array([], dtype=np.int64),
+            )
+        reg_max, strides = dfl_layout
+        try:
+            boxes, confs, cls_ids = postprocess_yolov8(
+                pred_nc,
+                imgsz,
+                orig_shape or (imgsz, imgsz),
+                ratio_pad,
+                conf_thres,
+                iou_thres,
+                reg_max=reg_max,
+                strides=tuple(strides),
+            )
+        except ValueError:
+            return (
+                np.empty((0, 4), dtype=np.float32),
+                np.array([], dtype=np.float32),
+                np.array([], dtype=np.int64),
+            )
         return boxes, confs, cls_ids
+
+    raw_layout = resolve_raw_layout(C, decode_meta)
+    if raw_layout is None:
+        return np.empty((0, 4), dtype=np.float32), np.array([], dtype=np.float32), np.array([], dtype=np.int64)
+    has_objness, num_classes = raw_layout
 
     # raw path as heuristic decode: [cx,cy,w,h,obj,cls...]
     p = pred_nc[0]
     if C < 5:
-        return np.empty((0, 4)), np.array([]), np.array([])
+        return np.empty((0, 4), dtype=np.float32), np.array([], dtype=np.float32), np.array([], dtype=np.int64)
     cx, cy, w, h = p[:, 0], p[:, 1], p[:, 2], p[:, 3]
-    obj = sigmoid(p[:, 4])
-    if C > 5:
-        cls_scores = sigmoid(p[:, 5:])
+    obj = sigmoid(p[:, 4]) if has_objness else np.ones_like(cx, dtype=np.float32)
+    cls_offset = 5 if has_objness else 4
+    if num_classes > 0:
+        cls_scores = sigmoid(p[:, cls_offset:cls_offset + num_classes])
         cls_ids = cls_scores.argmax(axis=1)
         cls_conf = cls_scores.max(axis=1)
     else:
-        cls_ids = np.zeros_like(obj, dtype=np.int64)
+        cls_ids = np.zeros(cx.shape[0], dtype=np.int64)
         cls_conf = np.ones_like(obj)
     conf = obj * cls_conf
     m = conf >= conf_thres
     if not np.any(m):
-        return np.empty((0, 4)), np.array([]), np.array([])
+        return np.empty((0, 4), dtype=np.float32), np.array([], dtype=np.float32), np.array([], dtype=np.int64)
     scale_needed = (np.percentile(w[m], 95) < 1.0) or (np.percentile(h[m], 95) < 1.0)
     s = float(imgsz) if scale_needed else 1.0
     cx *= s; cy *= s; w *= s; h *= s
@@ -106,7 +153,8 @@ def main():
     )
     ap.add_argument('--iou', type=float, default=0.45)
     ap.add_argument('--names', type=Path, default=None, help='names.txt (one class per line)')
-    ap.add_argument('--head', type=str, choices=['auto', 'dfl', 'raw'], default='auto', help='head decode type')
+    ap.add_argument('--head', type=str, choices=['auto', 'dfl', 'raw'], default='auto',
+                    help='head decode type (auto uses decode metadata when available)')
     # 默认三核全开，满足“轻量化+多核并行”要求
     ap.add_argument('--core-mask', type=lambda x: int(x, 0), default=0x7, help='NPU core mask (e.g., 0x7 for 3 cores)')
     ap.add_argument('--save', type=Path, default=None, help='save annotated result image')
@@ -167,6 +215,7 @@ def main():
         raise RKNNError(f'RKNN runtime initialization error: {e}') from e
 
     class_names = load_labels(args.names)
+    decode_meta = load_decode_meta(args.model, logger=logger)
 
     if args.source is not None:
         # Load and preprocess image
@@ -194,7 +243,16 @@ def main():
         pred = outputs[0]
         if pred.ndim == 2:
             pred = pred[None, ...]
-        boxes, confs, cls_ids = decode_predictions(pred, args.imgsz, args.conf, args.iou, args.head, (r, d), img0.shape[:2])
+        boxes, confs, cls_ids = decode_predictions(
+            pred,
+            args.imgsz,
+            args.conf,
+            args.iou,
+            args.head,
+            (r, d),
+            img0.shape[:2],
+            decode_meta=decode_meta,
+        )
         logger.info('Detections: %d', len(boxes))
         vis = draw_boxes(img0.copy(), boxes, confs, cls_ids, class_names)
         if args.save:
@@ -265,7 +323,16 @@ def main():
                 continue
             if pred.ndim == 2:
                 pred = pred[None, ...]
-            boxes, confs, cls_ids = decode_predictions(pred, args.imgsz, args.conf, args.iou, args.head, (r, d), img0.shape[:2])
+            boxes, confs, cls_ids = decode_predictions(
+                pred,
+                args.imgsz,
+                args.conf,
+                args.iou,
+                args.head,
+                (r, d),
+                img0.shape[:2],
+                decode_meta=decode_meta,
+            )
             t1 = time.time()
             fps = 1.0 / max(1e-6, (t1 - t0))
             fps_hist.append(fps)
