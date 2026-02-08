@@ -92,3 +92,48 @@ if(ENABLE_COVERAGE)
     target_compile_options(test_rknn_infer_consistency PRIVATE --coverage)
     target_link_options(test_rknn_infer_consistency PRIVATE --coverage)
 endif()
+
+# Test executable for DMA-BUF helpers
+add_executable(test_dmabuf test_dmabuf.cpp)
+
+target_link_libraries(test_dmabuf
+    PRIVATE
+        GTest::gtest
+        GTest::gtest_main
+        rkapp_core
+        ${OpenCV_LIBS}
+)
+
+add_test(NAME DmaBufTests COMMAND test_dmabuf)
+
+set_tests_properties(DmaBufTests PROPERTIES
+    TIMEOUT 30
+    LABELS "unit"
+)
+
+if(ENABLE_COVERAGE)
+    target_compile_options(test_dmabuf PRIVATE --coverage)
+    target_link_options(test_dmabuf PRIVATE --coverage)
+endif()
+
+# Test executable for detection pipeline factory helpers
+add_executable(test_pipeline_factory test_pipeline_factory.cpp)
+
+target_link_libraries(test_pipeline_factory
+    PRIVATE
+        GTest::gtest
+        GTest::gtest_main
+        rkapp_pipeline
+)
+
+add_test(NAME DetectionPipelineFactoryTests COMMAND test_pipeline_factory)
+
+set_tests_properties(DetectionPipelineFactoryTests PROPERTIES
+    TIMEOUT 30
+    LABELS "unit"
+)
+
+if(ENABLE_COVERAGE)
+    target_compile_options(test_pipeline_factory PRIVATE --coverage)
+    target_link_options(test_pipeline_factory PRIVATE --coverage)
+endif()

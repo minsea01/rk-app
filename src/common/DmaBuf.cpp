@@ -435,6 +435,8 @@ cv::Mat DmaBuf::asMat() {
     if (!ptr) return cv::Mat();
 
     int cv_type;
+    int rows = height_;
+    int cols = width_;
     switch (format_) {
         case PixelFormat::BGR888:
         case PixelFormat::RGB888:
@@ -446,42 +448,72 @@ cv::Mat DmaBuf::asMat() {
             break;
         case PixelFormat::NV12:
         case PixelFormat::NV21:
-            // Return Y plane only; UV needs separate handling
+            // Return full YUV420SP buffer view (Y + interleaved UV).
             cv_type = CV_8UC1;
+            rows = height_ + height_ / 2;
             break;
         default:
             cv_type = CV_8UC3;
     }
 
     // Create Mat with external data (no ownership transfer)
-    return cv::Mat(height_, width_, cv_type, ptr, stride_);
+    return cv::Mat(rows, cols, cv_type, ptr, stride_);
 }
 
 bool DmaBuf::copyFrom(const cv::Mat& src) {
     if (src.empty()) return false;
-    if (src.cols != width_ || src.rows != height_) {
-        LOGE("DmaBuf::copyFrom: Dimension mismatch");
-        return false;
-    }
-
     void* ptr = getVirtAddr();
     if (!ptr) return false;
 
     syncForCpuWriteStart();
+    bool ok = true;
 
-    // Copy row by row (handles stride differences)
-    int row_bytes = width_ * bytesPerPixel(format_);
-    const uint8_t* src_ptr = src.data;
-    uint8_t* dst_ptr = static_cast<uint8_t*>(ptr);
+    if (format_ == PixelFormat::NV12 || format_ == PixelFormat::NV21) {
+        const int expected_rows = height_ + height_ / 2;
+        if (src.type() != CV_8UC1 || src.cols != width_ || src.rows != expected_rows) {
+            LOGE("DmaBuf::copyFrom: NV12/NV21 expects CV_8UC1 (", expected_rows, "x",
+                 width_, "), got type=", src.type(), " shape=", src.rows, "x", src.cols);
+            ok = false;
+        } else {
+            const size_t row_bytes = static_cast<size_t>(width_);
+            const int uv_rows = height_ / 2;
+            const uint8_t* src_ptr = src.ptr<uint8_t>(0);
+            uint8_t* dst_ptr = static_cast<uint8_t*>(ptr);
 
-    for (int y = 0; y < height_; ++y) {
-        std::memcpy(dst_ptr, src_ptr, row_bytes);
-        src_ptr += src.step;
-        dst_ptr += stride_;
+            // Y plane
+            for (int y = 0; y < height_; ++y) {
+                std::memcpy(dst_ptr + static_cast<size_t>(y) * stride_,
+                            src_ptr + static_cast<size_t>(y) * src.step, row_bytes);
+            }
+
+            // UV plane (interleaved)
+            const uint8_t* src_uv = src_ptr + static_cast<size_t>(height_) * src.step;
+            uint8_t* dst_uv = dst_ptr + static_cast<size_t>(height_) * stride_;
+            for (int y = 0; y < uv_rows; ++y) {
+                std::memcpy(dst_uv + static_cast<size_t>(y) * stride_,
+                            src_uv + static_cast<size_t>(y) * src.step, row_bytes);
+            }
+        }
+    } else {
+        if (src.cols != width_ || src.rows != height_) {
+            LOGE("DmaBuf::copyFrom: Dimension mismatch");
+            ok = false;
+        } else {
+            // Copy row by row (handles stride differences)
+            const size_t row_bytes = static_cast<size_t>(width_) * bytesPerPixel(format_);
+            const uint8_t* src_ptr = src.data;
+            uint8_t* dst_ptr = static_cast<uint8_t*>(ptr);
+
+            for (int y = 0; y < height_; ++y) {
+                std::memcpy(dst_ptr, src_ptr, row_bytes);
+                src_ptr += src.step;
+                dst_ptr += stride_;
+            }
+        }
     }
 
     syncForCpuWriteEnd();
-    return true;
+    return ok;
 }
 
 bool DmaBuf::copyTo(cv::Mat& dst) const {
@@ -489,6 +521,8 @@ bool DmaBuf::copyTo(cv::Mat& dst) const {
     if (!ptr) return false;
 
     int cv_type;
+    int rows = height_;
+    int cols = width_;
     switch (format_) {
         case PixelFormat::BGR888:
         case PixelFormat::RGB888:
@@ -498,22 +532,47 @@ bool DmaBuf::copyTo(cv::Mat& dst) const {
         case PixelFormat::BGRA8888:
             cv_type = CV_8UC4;
             break;
+        case PixelFormat::NV12:
+        case PixelFormat::NV21:
+            cv_type = CV_8UC1;
+            rows = height_ + height_ / 2;
+            break;
         default:
             cv_type = CV_8UC3;
     }
 
-    dst.create(height_, width_, cv_type);
+    dst.create(rows, cols, cv_type);
 
     const_cast<DmaBuf*>(this)->syncForCpuReadStart();
+    if (format_ == PixelFormat::NV12 || format_ == PixelFormat::NV21) {
+        const size_t row_bytes = static_cast<size_t>(width_);
+        const int uv_rows = height_ / 2;
+        const uint8_t* src_ptr = static_cast<const uint8_t*>(ptr);
+        uint8_t* dst_ptr = dst.ptr<uint8_t>(0);
 
-    int row_bytes = width_ * bytesPerPixel(format_);
-    const uint8_t* src_ptr = static_cast<const uint8_t*>(ptr);
-    uint8_t* dst_ptr = dst.data;
+        // Y plane
+        for (int y = 0; y < height_; ++y) {
+            std::memcpy(dst_ptr + static_cast<size_t>(y) * dst.step,
+                        src_ptr + static_cast<size_t>(y) * stride_, row_bytes);
+        }
 
-    for (int y = 0; y < height_; ++y) {
-        std::memcpy(dst_ptr, src_ptr, row_bytes);
-        src_ptr += stride_;
-        dst_ptr += dst.step;
+        // UV plane (interleaved)
+        const uint8_t* src_uv = src_ptr + static_cast<size_t>(height_) * stride_;
+        uint8_t* dst_uv = dst_ptr + static_cast<size_t>(height_) * dst.step;
+        for (int y = 0; y < uv_rows; ++y) {
+            std::memcpy(dst_uv + static_cast<size_t>(y) * dst.step,
+                        src_uv + static_cast<size_t>(y) * stride_, row_bytes);
+        }
+    } else {
+        const size_t row_bytes = static_cast<size_t>(width_) * bytesPerPixel(format_);
+        const uint8_t* src_ptr = static_cast<const uint8_t*>(ptr);
+        uint8_t* dst_ptr = dst.data;
+
+        for (int y = 0; y < height_; ++y) {
+            std::memcpy(dst_ptr, src_ptr, row_bytes);
+            src_ptr += stride_;
+            dst_ptr += dst.step;
+        }
     }
 
     const_cast<DmaBuf*>(this)->syncForCpuReadEnd();

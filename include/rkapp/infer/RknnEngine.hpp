@@ -64,8 +64,8 @@ public:
    * Optional: ENABLE_RKNN_IO_MEM enables rknn_set_io_mem (RKNN SDK >= 1.5.0).
    *
    * Supported input formats:
-   * - RGB888 (3-channel, already letterboxed to input_size_)
-   * - NV12/NV21 (will use RGA for hardware color conversion)
+   * - RGB888 (3-channel, already letterboxed to input_size_) for direct DMA-FD path
+   * - BGR888/NV12/NV21/RGBA/BGRA via fallback copy + color conversion path
    *
    * @param input DMA-BUF containing preprocessed image
    * @param original_size Original image size before letterbox

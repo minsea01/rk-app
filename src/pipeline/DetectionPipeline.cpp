@@ -2,6 +2,7 @@
 #include "rkapp/capture/VideoSource.hpp"
 #include "rkapp/capture/FolderSource.hpp"
 #include "rkapp/capture/MppSource.hpp"
+#include "rkapp/capture/GigeSource.hpp"
 #include "rkapp/infer/RknnEngine.hpp"
 #include "rkapp/infer/OnnxEngine.hpp"
 #include "rkapp/post/Postprocess.hpp"
@@ -133,7 +134,11 @@ bool DetectionPipeline::init(const PipelineConfig& config) {
         return false;
     }
 
+#if RKAPP_WITH_RKNN
     impl_->rknn_engine = dynamic_cast<infer::RknnEngine*>(impl_->engine.get());
+#else
+    impl_->rknn_engine = nullptr;
+#endif
 
     // Set decode parameters
     infer::DecodeParams decode_params;
@@ -222,67 +227,68 @@ PipelineResult DetectionPipeline::process(const cv::Mat& image) {
         return result;
     }
 
-    if (!impl_->rknn_engine) {
-        auto inference_start = Clock::now();
-        result.detections = impl_->engine->infer(image);
+#if RKAPP_WITH_RKNN
+    if (impl_->rknn_engine) {
+        // Preprocess
+        auto preprocess_start = Clock::now();
+        preprocess::LetterboxInfo letterbox_info;
+        preprocess::AccelBackend backend = impl_->config.use_rga_preprocess
+            ? preprocess::AccelBackend::AUTO
+            : preprocess::AccelBackend::OPENCV;
+
+        cv::Mat preprocessed = preprocess::Preprocess::letterbox(
+            image, impl_->config.input_size, letterbox_info, backend);
+
         if (impl_->config.enable_profiling) {
-            result.timing.inference_us = microsecondsSince(inference_start);
+            result.timing.preprocess_us = microsecondsSince(preprocess_start);
         }
-        result.timing.total_us = microsecondsSince(total_start);
-        return result;
-    }
 
-    // Preprocess
-    auto preprocess_start = Clock::now();
-    preprocess::LetterboxInfo letterbox_info;
-    preprocess::AccelBackend backend = impl_->config.use_rga_preprocess
-        ? preprocess::AccelBackend::AUTO
-        : preprocess::AccelBackend::OPENCV;
+        // Inference
+        auto inference_start = Clock::now();
 
-    cv::Mat preprocessed = preprocess::Preprocess::letterbox(
-        image, impl_->config.input_size, letterbox_info, backend);
-
-    if (impl_->config.enable_profiling) {
-        result.timing.preprocess_us = microsecondsSince(preprocess_start);
-    }
-
-    // Inference
-    auto inference_start = Clock::now();
-
-    // Try zero-copy path if enabled and buffer pool available
-    if (impl_->buffer_pool && impl_->stats.zero_copy_enabled) {
-        common::DmaBuf* dma_buf = impl_->buffer_pool->acquire();
-        if (dma_buf) {
-            // Convert to RGB and copy to DMA buffer
-            cv::Mat rgb = preprocess::Preprocess::convertColor(
-                preprocessed, cv::COLOR_BGR2RGB, backend);
-            if (dma_buf->copyFrom(rgb)) {
-                result.detections = impl_->rknn_engine->inferDmaBuf(
-                    *dma_buf, image.size(), letterbox_info);
+        // Try zero-copy path if enabled and buffer pool available
+        if (impl_->buffer_pool && impl_->stats.zero_copy_enabled) {
+            common::DmaBuf* dma_buf = impl_->buffer_pool->acquire();
+            if (dma_buf) {
+                // Convert to RGB and copy to DMA buffer
+                cv::Mat rgb = preprocess::Preprocess::convertColor(
+                    preprocessed, cv::COLOR_BGR2RGB, backend);
+                if (dma_buf->copyFrom(rgb)) {
+                    result.detections = impl_->rknn_engine->inferDmaBuf(
+                        *dma_buf, image.size(), letterbox_info);
+                } else {
+                    result.detections = impl_->rknn_engine->inferPreprocessed(
+                        preprocessed, image.size(), letterbox_info);
+                }
+                impl_->buffer_pool->release(dma_buf);
             } else {
+                // No buffer available, use regular path
                 result.detections = impl_->rknn_engine->inferPreprocessed(
                     preprocessed, image.size(), letterbox_info);
             }
-            impl_->buffer_pool->release(dma_buf);
         } else {
-            // No buffer available, use regular path
+            // Standard inference path: pass preprocessed image to avoid double letterbox
+            // Cast to RknnEngine to use inferPreprocessed
             result.detections = impl_->rknn_engine->inferPreprocessed(
                 preprocessed, image.size(), letterbox_info);
         }
-    } else {
-        // Standard inference path: pass preprocessed image to avoid double letterbox
-        // Cast to RknnEngine to use inferPreprocessed
-        result.detections = impl_->rknn_engine->inferPreprocessed(
-            preprocessed, image.size(), letterbox_info);
-    }
 
+        if (impl_->config.enable_profiling) {
+            result.timing.inference_us = microsecondsSince(inference_start);
+        }
+
+        // Total timing
+        result.timing.total_us = microsecondsSince(total_start);
+        return result;
+    }
+#endif
+
+    auto inference_start = Clock::now();
+    result.detections = impl_->engine->infer(image);
     if (impl_->config.enable_profiling) {
         result.timing.inference_us = microsecondsSince(inference_start);
     }
-
-    // Total timing
     result.timing.total_us = microsecondsSince(total_start);
-
     return result;
 }
 
@@ -404,6 +410,14 @@ capture::SourcePtr createSource(const PipelineConfig& config) {
             }
 #endif
             return std::make_unique<capture::VideoSource>();
+
+        case capture::SourceType::GIGE:
+#if RKAPP_WITH_GIGE
+            return std::make_unique<capture::GigeSource>();
+#else
+            LOGW("DetectionPipeline: GIGE not available, falling back to VideoSource");
+            return std::make_unique<capture::VideoSource>();
+#endif
 
         case capture::SourceType::MPP:
 #if RKAPP_WITH_MPP
