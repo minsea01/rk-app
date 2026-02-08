@@ -19,7 +19,6 @@ namespace rkapp::capture {
  * Supported inputs:
  * - Video files (MP4, MKV, AVI with H.264/H.265)
  * - RTSP streams (rtsp://...)
- * - V4L2 devices (/dev/video*)
  *
  * @note Requires librockchip_mpp.so and appropriate kernel drivers
  *
@@ -51,7 +50,7 @@ public:
     /**
      * @brief Open video source with MPP hardware decoding
      *
-     * @param uri Video file path, RTSP URL, or V4L2 device
+     * @param uri Video file path or RTSP URL
      * @return true if successfully opened
      *
      * @note For RTSP streams, uses FFmpeg for demuxing + MPP for decoding

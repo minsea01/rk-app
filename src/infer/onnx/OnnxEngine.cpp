@@ -31,7 +31,21 @@ struct OnnxEngine::Impl {
     bool has_zero_point = false;
   };
 
+  struct DecodeMeta {
+    int reg_max = -1;
+    std::vector<int> strides;
+    std::string head;  // "dfl" / "raw" / ""
+    int num_classes = -1;
+    int has_objectness = -1;  // -1 unknown, 0 false, 1 true
+
+    bool hasAny() const {
+      return reg_max > 0 || !strides.empty() || !head.empty() ||
+             num_classes > 0 || has_objectness >= 0;
+    }
+  };
+
   QuantParams output_quant;
+  DecodeMeta decode_meta;
 
   static std::string strip_comments(const std::string& content) {
     std::string out;
@@ -176,6 +190,41 @@ struct OnnxEngine::Impl {
     }
   }
 
+  static bool parse_bool_value(const std::string& value, int& out) {
+    std::string lowered = trim(value);
+    std::transform(lowered.begin(), lowered.end(), lowered.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    if (lowered == "1" || lowered == "true") {
+      out = 1;
+      return true;
+    }
+    if (lowered == "0" || lowered == "false") {
+      out = 0;
+      return true;
+    }
+    return false;
+  }
+
+  static bool parse_int_list_value(const std::string& value, std::vector<int>& out) {
+    std::string normalized = value;
+    for (char& c : normalized) {
+      if (c == '[' || c == ']' || c == ',' || c == ';') {
+        c = ' ';
+      }
+    }
+    std::stringstream ss(normalized);
+    std::string token;
+    bool any = false;
+    while (ss >> token) {
+      int32_t parsed = 0;
+      if (parse_int_value(token, parsed)) {
+        out.push_back(static_cast<int>(parsed));
+        any = true;
+      }
+    }
+    return any;
+  }
+
   static bool parse_float_field(const std::string& content, const std::string& key, float& out) {
     try {
       const std::string escaped = escape_regex(key);
@@ -185,6 +234,53 @@ struct OnnxEngine::Impl {
       std::smatch m;
       if (std::regex_search(content, m, re) && m.size() > 2) {
         return parse_float_value(m[2].str(), out);
+      }
+    } catch (const std::regex_error&) {
+    }
+    return false;
+  }
+
+  static bool parse_bool_field(const std::string& content, const std::string& key, int& out) {
+    try {
+      const std::string escaped = escape_regex(key);
+      std::regex re("(^|[^A-Za-z0-9_])\\\"?" + escaped +
+                        "\\\"?\\s*[:=]\\s*(true|false|0|1)",
+                    std::regex::icase);
+      std::smatch m;
+      if (std::regex_search(content, m, re) && m.size() > 2) {
+        return parse_bool_value(m[2].str(), out);
+      }
+    } catch (const std::regex_error&) {
+    }
+    return false;
+  }
+
+  static bool parse_string_field(const std::string& content, const std::string& key, std::string& out) {
+    try {
+      const std::string escaped = escape_regex(key);
+      std::regex re("(^|[^A-Za-z0-9_])\\\"?" + escaped +
+                        "\\\"?\\s*[:=]\\s*\\\"?([A-Za-z_]+)\\\"?",
+                    std::regex::icase);
+      std::smatch m;
+      if (std::regex_search(content, m, re) && m.size() > 2) {
+        out = m[2].str();
+        std::transform(out.begin(), out.end(), out.begin(),
+                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        return true;
+      }
+    } catch (const std::regex_error&) {
+    }
+    return false;
+  }
+
+  static bool parse_int_list_field(const std::string& content, const std::string& key, std::vector<int>& out) {
+    try {
+      const std::string escaped = escape_regex(key);
+      std::regex re("(^|[^A-Za-z0-9_])\\\"?" + escaped + "\\\"?\\s*[:=]\\s*\\[([^\\]]+)\\]",
+                    std::regex::icase);
+      std::smatch m;
+      if (std::regex_search(content, m, re) && m.size() > 2) {
+        return parse_int_list_value(m[2].str(), out);
       }
     } catch (const std::regex_error&) {
     }
@@ -348,6 +444,88 @@ struct OnnxEngine::Impl {
     return params;
   }
 
+  static DecodeMeta parse_decode_meta_from_text(const std::string& content) {
+    DecodeMeta meta;
+
+    int32_t iv = 0;
+    int bv = -1;
+    std::string sv;
+
+    if (parse_string_field(content, "head", sv) && (sv == "dfl" || sv == "raw")) {
+      meta.head = sv;
+    }
+    if (parse_int_field(content, "reg_max", iv) && iv > 0) {
+      meta.reg_max = static_cast<int>(iv);
+    }
+
+    if (parse_int_field(content, "num_classes", iv) && iv > 0) {
+      meta.num_classes = static_cast<int>(iv);
+    } else if (parse_int_field(content, "classes", iv) && iv > 0) {
+      meta.num_classes = static_cast<int>(iv);
+    } else if (parse_int_field(content, "nc", iv) && iv > 0) {
+      meta.num_classes = static_cast<int>(iv);
+    }
+
+    if (parse_bool_field(content, "has_objectness", bv)) {
+      meta.has_objectness = bv;
+    } else if (parse_bool_field(content, "objectness", bv)) {
+      meta.has_objectness = bv;
+    } else if (parse_bool_field(content, "has_obj", bv)) {
+      meta.has_objectness = bv;
+    }
+
+    std::vector<int> strides;
+    if (parse_int_list_field(content, "strides", strides) && !strides.empty()) {
+      meta.strides = std::move(strides);
+    }
+
+    return meta;
+  }
+
+  static void merge_decode_meta_missing_fields(DecodeMeta& dst, const DecodeMeta& src) {
+    if (dst.reg_max <= 0 && src.reg_max > 0) {
+      dst.reg_max = src.reg_max;
+    }
+    if (dst.strides.empty() && !src.strides.empty()) {
+      dst.strides = src.strides;
+    }
+    if (dst.head.empty() && !src.head.empty()) {
+      dst.head = src.head;
+    }
+    if (dst.num_classes <= 0 && src.num_classes > 0) {
+      dst.num_classes = src.num_classes;
+    }
+    if (dst.has_objectness < 0 && src.has_objectness >= 0) {
+      dst.has_objectness = src.has_objectness;
+    }
+  }
+
+  static DecodeMeta parse_decode_meta_from_sidecar(const std::string& model_path) {
+    const std::vector<std::string> candidates = {
+        model_path + ".json",
+        model_path + ".meta",
+        "artifacts/models/decode_meta.json"};
+
+    DecodeMeta meta;
+    for (const auto& path : candidates) {
+      std::ifstream f(path);
+      if (!f.is_open()) {
+        continue;
+      }
+      std::string content((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+      if (content.empty()) {
+        continue;
+      }
+      DecodeMeta parsed = parse_decode_meta_from_text(strip_comments(content));
+      if (parsed.hasAny()) {
+        merge_decode_meta_missing_fields(meta, parsed);
+        // First file with decode fields wins (same policy as RKNN path).
+        break;
+      }
+    }
+    return meta;
+  }
+
   static bool resolve_layout(const std::vector<int64_t>& shape, int& N, int& C) {
     if (shape.size() == 3) {
       const int64_t d1 = shape[1];
@@ -371,6 +549,7 @@ struct OnnxEngine::Impl {
                                             cv::Size original_size,
                                             int input_size,
                                             const DecodeParams& params,
+                                            const DecodeMeta& decode_meta,
                                             const QuantParams& quant_params,
                                             bool& unsupported_model) {
     std::vector<Detection> detections;
@@ -470,117 +649,231 @@ struct OnnxEngine::Impl {
       return z / (1.0f + z);
     };
 
-    // Try DFL decode first if channel layout matches YOLOv8/YOLO11 (4*reg_max + classes)
-    constexpr int kRegMax = 16;
-    const int cls_ch = C - 4 * kRegMax;
-    const bool maybe_dfl = cls_ch > 0 && C >= 4 * kRegMax;
+    enum class DecodeHead { kUnknown, kDfl, kRaw };
+    DecodeHead decode_head = DecodeHead::kUnknown;
+    if (decode_meta.head == "dfl") {
+      decode_head = DecodeHead::kDfl;
+    } else if (decode_meta.head == "raw") {
+      decode_head = DecodeHead::kRaw;
+    } else {
+      bool dfl_candidate = false;
+      bool raw_candidate = false;
 
-    if (maybe_dfl) {
-      std::vector<int> strides;
-      if (!resolve_stride_set(input_size, N, strides)) {
-        LOGW("OnnxEngine: DFL-like output detected but failed to resolve strides (anchors=", N,
-             ", input=", input_size, "), falling back to raw decode");
-      } else {
-        AnchorLayout layout = build_anchor_layout(input_size, N, strides);
-        if (!layout.valid) {
-          LOGW("OnnxEngine: DFL layout invalid for provided strides; falling back to raw decode");
-        } else {
-          auto dfl_softmax_project = [&](int base_c, int i) -> std::array<float, 4> {
-            std::array<float, 4> out{};
-            for (int side = 0; side < 4; ++side) {
-              const int ch0 = base_c + side * kRegMax;
-              float maxv = -1e30f;
-              for (int k = 0; k < kRegMax; ++k) maxv = std::max(maxv, at(ch0 + k, i));
-              float denom = 0.f;
-              std::array<float, kRegMax> probs{};
-              for (int k = 0; k < kRegMax; ++k) {
-                probs[k] = std::exp(at(ch0 + k, i) - maxv);
-                denom += probs[k];
-              }
-              float proj = 0.f;
-              for (int k = 0; k < kRegMax; ++k) proj += probs[k] * static_cast<float>(k);
-              out[side] = (denom > 0.f) ? (proj / denom) : 0.f;
-            }
-            return out;
-          };
-
-          for (int i = 0; i < N; ++i) {
-            auto dfl = dfl_softmax_project(0, i);
-            const float stride = layout.stride_map[i];
-            const float l = dfl[0] * stride;
-            const float t = dfl[1] * stride;
-            const float r = dfl[2] * stride;
-            const float b = dfl[3] * stride;
-            const float x1 = layout.anchor_cx[i] - l;
-            const float y1 = layout.anchor_cy[i] - t;
-            const float x2 = layout.anchor_cx[i] + r;
-            const float y2 = layout.anchor_cy[i] + b;
-
-            float best_conf = 0.f;
-            int best_cls = 0;
-            for (int c = 0; c < cls_ch; ++c) {
-              float conf = sigmoid(at(4 * kRegMax + c, i));
-              if (conf > best_conf) { best_conf = conf; best_cls = c; }
-            }
-            if (best_conf < params.conf_thres) continue;
-
-            Detection det;
-            const float scale = letterbox_info.scale;
-            const float dx = letterbox_info.dx;
-            const float dy = letterbox_info.dy;
-            det.x = (x1 - dx) / scale;
-            det.y = (y1 - dy) / scale;
-            det.w = (x2 - x1) / scale;
-            det.h = (y2 - y1) / scale;
-            det.x = std::max(0.0f, std::min(det.x, static_cast<float>(original_size.width)));
-            det.y = std::max(0.0f, std::min(det.y, static_cast<float>(original_size.height)));
-            det.w = std::max(0.0f, std::min(det.w, static_cast<float>(original_size.width) - det.x));
-            det.h = std::max(0.0f, std::min(det.h, static_cast<float>(original_size.height) - det.y));
-            det.confidence = best_conf;
-            det.class_id = best_cls;
-            det.class_name = "class_" + std::to_string(best_cls);
-            detections.push_back(det);
-            if (params.max_boxes > 0 &&
-                static_cast<int>(detections.size()) >= params.max_boxes) {
-              break;
-            }
-          }
+      if (decode_meta.reg_max > 0) {
+        const int cls_ch = C - 4 * decode_meta.reg_max;
+        dfl_candidate = cls_ch > 0;
+        if (dfl_candidate && decode_meta.num_classes > 0 && cls_ch != decode_meta.num_classes) {
+          dfl_candidate = false;
         }
       }
+
+      if (decode_meta.has_objectness >= 0) {
+        const int cls_offset = decode_meta.has_objectness == 1 ? 5 : 4;
+        const int cls_ch = C - cls_offset;
+        raw_candidate = cls_ch >= 0;
+        if (raw_candidate && decode_meta.num_classes > 0 && cls_ch != decode_meta.num_classes) {
+          raw_candidate = false;
+        }
+      } else if (decode_meta.num_classes > 0) {
+        raw_candidate = (C == (4 + decode_meta.num_classes) || C == (5 + decode_meta.num_classes));
+      } else {
+        // Conservative fallback: only auto-raw for small-channel heads.
+        raw_candidate = (C >= 5 && C < 64);
+      }
+
+      if (dfl_candidate == raw_candidate) {
+        LOGE("OnnxEngine: decode head ambiguous/unknown (C=", C, ", N=", N,
+             "). Provide decode metadata (head/reg_max/num_classes/has_objectness).");
+        unsupported_model = true;
+        return detections;
+      }
+      decode_head = dfl_candidate ? DecodeHead::kDfl : DecodeHead::kRaw;
     }
 
-    // Raw decode fallback: [cx, cy, w, h, (obj), cls...]
-    if (detections.empty()) {
-      const bool has_objness = (C - 5) >= 1;
+    if (decode_head == DecodeHead::kDfl) {
+      int reg_max = decode_meta.reg_max;
+      if (reg_max <= 0 && decode_meta.num_classes > 0) {
+        const int remain = C - decode_meta.num_classes;
+        if (remain > 0 && remain % 4 == 0) {
+          reg_max = remain / 4;
+        }
+      }
+      if (reg_max <= 0) {
+        LOGE("OnnxEngine: DFL decode requires reg_max metadata");
+        unsupported_model = true;
+        return detections;
+      }
+      constexpr int kMaxRegMax = 32;
+      if (reg_max > kMaxRegMax) {
+        LOGE("OnnxEngine: reg_max=", reg_max, " exceeds max supported=", kMaxRegMax);
+        unsupported_model = true;
+        return detections;
+      }
+
+      const int cls_ch = C - 4 * reg_max;
+      if (cls_ch <= 0) {
+        LOGE("OnnxEngine: invalid DFL channel layout (C=", C, ", reg_max=", reg_max, ")");
+        unsupported_model = true;
+        return detections;
+      }
+      if (decode_meta.num_classes > 0 && cls_ch != decode_meta.num_classes) {
+        LOGE("OnnxEngine: DFL class channels mismatch (tensor=", cls_ch,
+             ", meta=", decode_meta.num_classes, ")");
+        unsupported_model = true;
+        return detections;
+      }
+
+      std::vector<int> strides = decode_meta.strides;
+      if (strides.empty() && !resolve_stride_set(input_size, N, strides)) {
+        LOGE("OnnxEngine: DFL decode cannot resolve strides (N=", N, ", input=", input_size, ")");
+        unsupported_model = true;
+        return detections;
+      }
+      AnchorLayout layout = build_anchor_layout(input_size, N, strides);
+      if (!layout.valid) {
+        LOGE("OnnxEngine: DFL layout invalid for anchors=", N);
+        unsupported_model = true;
+        return detections;
+      }
+
+      std::vector<float> probs(static_cast<size_t>(reg_max), 0.0f);
+      auto dfl_softmax_project = [&](int i) -> std::array<float, 4> {
+        std::array<float, 4> out{};
+        for (int side = 0; side < 4; ++side) {
+          const int ch0 = side * reg_max;
+          float maxv = -1e30f;
+          for (int k = 0; k < reg_max; ++k) {
+            maxv = std::max(maxv, at(ch0 + k, i));
+          }
+          float denom = 0.f;
+          for (int k = 0; k < reg_max; ++k) {
+            probs[k] = std::exp(at(ch0 + k, i) - maxv);
+            denom += probs[k];
+          }
+          float proj = 0.f;
+          if (denom > 0.f) {
+            for (int k = 0; k < reg_max; ++k) {
+              proj += probs[k] * static_cast<float>(k);
+            }
+            proj /= denom;
+          }
+          out[side] = proj;
+        }
+        return out;
+      };
+
+      int limit = N;
+      if (params.max_boxes > 0) {
+        limit = std::min(limit, params.max_boxes);
+      }
+
+      for (int i = 0; i < limit; ++i) {
+        auto dfl = dfl_softmax_project(i);
+        const float stride = layout.stride_map[i];
+        const float l = dfl[0] * stride;
+        const float t = dfl[1] * stride;
+        const float r = dfl[2] * stride;
+        const float b = dfl[3] * stride;
+        const float x1 = layout.anchor_cx[i] - l;
+        const float y1 = layout.anchor_cy[i] - t;
+        const float x2 = layout.anchor_cx[i] + r;
+        const float y2 = layout.anchor_cy[i] + b;
+
+        float best_conf = 0.f;
+        int best_cls = 0;
+        for (int c = 0; c < cls_ch; ++c) {
+          float conf = sigmoid(at(4 * reg_max + c, i));
+          if (conf > best_conf) {
+            best_conf = conf;
+            best_cls = c;
+          }
+        }
+        if (best_conf < params.conf_thres) {
+          continue;
+        }
+
+        Detection det;
+        const float scale = letterbox_info.scale;
+        const float dx = letterbox_info.dx;
+        const float dy = letterbox_info.dy;
+        det.x = (x1 - dx) / scale;
+        det.y = (y1 - dy) / scale;
+        det.w = (x2 - x1) / scale;
+        det.h = (y2 - y1) / scale;
+        det.x = std::max(0.0f, std::min(det.x, static_cast<float>(original_size.width)));
+        det.y = std::max(0.0f, std::min(det.y, static_cast<float>(original_size.height)));
+        det.w = std::max(0.0f, std::min(det.w, static_cast<float>(original_size.width) - det.x));
+        det.h = std::max(0.0f, std::min(det.h, static_cast<float>(original_size.height) - det.y));
+        det.confidence = best_conf;
+        det.class_id = best_cls;
+        det.class_name = "class_" + std::to_string(best_cls);
+        detections.push_back(det);
+      }
+    } else {
+      bool has_objness = false;
+      if (decode_meta.has_objectness >= 0) {
+        has_objness = decode_meta.has_objectness == 1;
+      } else if (decode_meta.num_classes > 0) {
+        if (C == 5 + decode_meta.num_classes) {
+          has_objness = true;
+        } else if (C == 4 + decode_meta.num_classes) {
+          has_objness = false;
+        } else {
+          LOGE("OnnxEngine: RAW channel layout mismatch with num_classes metadata");
+          unsupported_model = true;
+          return detections;
+        }
+      } else {
+        // Legacy fallback for compact raw heads when metadata is absent.
+        has_objness = (C - 5) >= 0;
+      }
+
       const int cls_offset = has_objness ? 5 : 4;
-      const int num_classes = std::max(0, C - cls_offset);
-      if (num_classes <= 0) {
-        LOGW("OnnxEngine: invalid class channel count (C=", C, ")");
+      int num_classes = decode_meta.num_classes > 0 ? decode_meta.num_classes : (C - cls_offset);
+      if (num_classes < 0 || cls_offset + num_classes != C) {
+        LOGE("OnnxEngine: invalid RAW class channel layout (C=", C, ")");
+        unsupported_model = true;
+        return detections;
+      }
+      if (num_classes == 0 && !has_objness) {
+        LOGE("OnnxEngine: invalid RAW output without classes/objectness (C=", C, ")");
         unsupported_model = true;
         return detections;
       }
 
       int limit = N;
-      if (params.max_boxes > 0) limit = std::min(limit, params.max_boxes);
+      if (params.max_boxes > 0) {
+        limit = std::min(limit, params.max_boxes);
+      }
 
-      for (int i = 0; i < limit; i++) {
+      for (int i = 0; i < limit; ++i) {
         const float cx = at(0, i);
         const float cy = at(1, i);
-        const float w  = at(2, i);
-        const float h  = at(3, i);
+        const float w = at(2, i);
+        const float h = at(3, i);
 
         float obj = 1.0f;
-        if (has_objness) obj = sigmoid(at(4, i));
+        if (has_objness) {
+          obj = sigmoid(at(4, i));
+        }
 
-        float best_conf = 0.0f;
+        float best_conf = 1.0f;
         int best_cls = 0;
-        for (int c = 0; c < num_classes; ++c) {
-          float conf = sigmoid(at(cls_offset + c, i));
-          if (conf > best_conf) { best_conf = conf; best_cls = c; }
+        if (num_classes > 0) {
+          best_conf = 0.0f;
+          for (int c = 0; c < num_classes; ++c) {
+            float conf = sigmoid(at(cls_offset + c, i));
+            if (conf > best_conf) {
+              best_conf = conf;
+              best_cls = c;
+            }
+          }
         }
 
         const float combined = obj * best_conf;
-        if (combined < params.conf_thres) continue;
+        if (combined < params.conf_thres) {
+          continue;
+        }
 
         Detection det;
         const float scale = letterbox_info.scale;
@@ -679,6 +972,18 @@ bool OnnxEngine::init(const std::string& model_path, int img_size) {
       }
     }
 
+    impl_->decode_meta = Impl::parse_decode_meta_from_sidecar(model_path_);
+    if (impl_->decode_meta.hasAny()) {
+      LOGI("OnnxEngine: Loaded decode metadata (head=", impl_->decode_meta.head.empty() ? "auto" : impl_->decode_meta.head,
+           ", reg_max=", impl_->decode_meta.reg_max,
+           ", num_classes=", impl_->decode_meta.num_classes,
+           ", has_objectness=", impl_->decode_meta.has_objectness, ")");
+    } else {
+      LOGW("OnnxEngine: No decode metadata found; using conservative auto decode");
+    }
+
+    unsupported_model_ = false;
+
     is_initialized_ = true;
     LOGI("OnnxEngine: Initialized successfully");
     return true;
@@ -690,6 +995,10 @@ bool OnnxEngine::init(const std::string& model_path, int img_size) {
 
 std::vector<Detection> OnnxEngine::infer(const cv::Mat& image) {
   if (!is_initialized_) { LOGE("OnnxEngine: Not initialized!"); return {}; }
+  if (unsupported_model_) {
+    LOGE("OnnxEngine: Model output layout previously marked unsupported; reinitialize with valid metadata");
+    return {};
+  }
   try {
     rkapp::preprocess::LetterboxInfo letterbox_info;
     cv::Mat processed = rkapp::preprocess::Preprocess::letterbox(image, input_size_, letterbox_info);
@@ -722,7 +1031,7 @@ std::vector<Detection> OnnxEngine::infer(const cv::Mat& image) {
     }
     bool unsupported = false;
     auto dets = Impl::parseOutput(outputs[0], letterbox_info, image.size(), input_size_,
-                                  decode_params_, impl_->output_quant, unsupported);
+                                  decode_params_, impl_->decode_meta, impl_->output_quant, unsupported);
     if (unsupported) {
       unsupported_model_ = true;
       LOGE("OnnxEngine: Unsupported output layout; stopping further inference attempts");

@@ -108,7 +108,7 @@ try:
     bps = data['end']['sum_received']['bits_per_second']
     mbps = bps / 1_000_000
     print(f'{mbps:.2f}')
-except:
+except (json.JSONDecodeError, KeyError, TypeError, ValueError):
     print('0')
 " 2>/dev/null || echo "0")
 
