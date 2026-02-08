@@ -939,7 +939,38 @@ std::vector<Detection> RknnEngine::inferDmaBuf(
       return {};
     }
     cv::Mat bgr;
-    cv::cvtColor(mat, bgr, cv::COLOR_RGB2BGR);
+    try {
+      switch (input.format()) {
+        case rkapp::common::DmaBuf::PixelFormat::RGB888:
+          cv::cvtColor(mat, bgr, cv::COLOR_RGB2BGR);
+          break;
+        case rkapp::common::DmaBuf::PixelFormat::BGR888:
+          bgr = mat;
+          break;
+        case rkapp::common::DmaBuf::PixelFormat::RGBA8888:
+          cv::cvtColor(mat, bgr, cv::COLOR_RGBA2BGR);
+          break;
+        case rkapp::common::DmaBuf::PixelFormat::BGRA8888:
+          cv::cvtColor(mat, bgr, cv::COLOR_BGRA2BGR);
+          break;
+        case rkapp::common::DmaBuf::PixelFormat::NV12:
+          cv::cvtColor(mat, bgr, cv::COLOR_YUV2BGR_NV12);
+          break;
+        case rkapp::common::DmaBuf::PixelFormat::NV21:
+          cv::cvtColor(mat, bgr, cv::COLOR_YUV2BGR_NV21);
+          break;
+        default:
+          LOGE("RknnEngine::inferDmaBuf: Unsupported DMA-BUF format for fallback conversion");
+          return {};
+      }
+    } catch (const cv::Exception& e) {
+      LOGE("RknnEngine::inferDmaBuf: Fallback color conversion failed: ", e.what());
+      return {};
+    }
+    if (bgr.empty()) {
+      LOGE("RknnEngine::inferDmaBuf: Fallback conversion produced empty image");
+      return {};
+    }
     return inferPreprocessed(bgr, original_size, letterbox_info);
   };
 
@@ -960,6 +991,10 @@ std::vector<Detection> RknnEngine::inferDmaBuf(
 
   if (impl_->input_fmt != RKNN_TENSOR_NHWC || impl_->input_type != RKNN_TENSOR_UINT8) {
     LOGW("RknnEngine::inferDmaBuf: Zero-copy requires NHWC UINT8, falling back to copy");
+    return fallback_to_copy();
+  }
+  if (input.format() != rkapp::common::DmaBuf::PixelFormat::RGB888) {
+    LOGW("RknnEngine::inferDmaBuf: Direct DMA-FD path expects RGB888 input, falling back to copy");
     return fallback_to_copy();
   }
 

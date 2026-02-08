@@ -149,7 +149,9 @@ public:
     /**
      * @brief Copy from cv::Mat to DMA buffer
      *
-     * @param src Source Mat (must match dimensions)
+     * @param src Source Mat.
+     * For RGB/BGR/RGBA/BGRA: shape must be (height, width, channels).
+     * For NV12/NV21: shape must be (height * 3 / 2, width), type CV_8UC1.
      * @return true on success
      */
     bool copyFrom(const cv::Mat& src);
@@ -157,7 +159,8 @@ public:
     /**
      * @brief Copy to cv::Mat from DMA buffer
      *
-     * @param dst Destination Mat
+     * @param dst Destination Mat.
+     * For NV12/NV21 output shape is (height * 3 / 2, width), CV_8UC1.
      * @return true on success
      */
     bool copyTo(cv::Mat& dst) const;
