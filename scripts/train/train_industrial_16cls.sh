@@ -11,6 +11,11 @@ RUN_NAME=${RUN_NAME:-industrial_16cls_coco}
 
 CLASSES="0,1,2,3,5,7,9,11,15,24,26,39,63,67,73,76"
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+source "$REPO_ROOT/scripts/lib/deprecation.sh"
+warn_deprecated "scripts/train/train_industrial_16cls.sh" "scripts/train.sh"
+
 ROOT=~/dev/yolo-projects/coco4cls-vscode
 mkdir -p "$ROOT" && cd "$ROOT"
 
@@ -109,15 +114,18 @@ fi
 source "$HOME/yolo-train/bin/activate"
 python -m pip install -U pip ultralytics
 
-yolo detect train \
-  data="$DS_YAML" \
-  model=yolo11s.pt \
-  epochs="$EPOCHS" \
-  imgsz="$IMG" \
-  batch="$BATCH" \
-  device="$DEVICE" \
-  classes="$CLASSES" \
-  name="$RUN_NAME"
+bash "$REPO_ROOT/scripts/train.sh" \
+  --profile none \
+  --data "$DS_YAML" \
+  --model yolo11s.pt \
+  --epochs "$EPOCHS" \
+  --imgsz "$IMG" \
+  --batch "$BATCH" \
+  --device "$DEVICE" \
+  --classes "$CLASSES" \
+  --project "$ROOT/runs/detect" \
+  --name "$RUN_NAME" \
+  --no-export
 
 BEST_PT=$(ls -t "$ROOT"/runs/detect/${RUN_NAME}*/weights/best.pt | head -1)
 echo "Using model: $BEST_PT"

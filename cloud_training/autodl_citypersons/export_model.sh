@@ -1,52 +1,30 @@
-#!/bin/bash
-# 导出训练好的模型到 ONNX 格式
+#!/usr/bin/env bash
+# Deprecated wrapper for tools/export_yolov8_to_onnx.py
 
-set -e
+set -euo pipefail
 
-echo "导出模型到 ONNX..."
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+source "$REPO_ROOT/scripts/lib/deprecation.sh"
 
-MODEL="outputs/yolov8n_citypersons/weights/best.pt"
+warn_deprecated "cloud_training/autodl_citypersons/export_model.sh" "python tools/export_yolov8_to_onnx.py"
 
-if [ ! -f "$MODEL" ]; then
-    echo "错误: 未找到训练好的模型: $MODEL"
-    exit 1
+MODEL="${MODEL:-outputs/yolov8n_citypersons/weights/best.pt}"
+OUTDIR="$(dirname "$MODEL")"
+OUTFILE="${OUTFILE:-best.onnx}"
+
+if [[ ! -f "$MODEL" ]]; then
+  echo "Model not found: $MODEL" >&2
+  exit 1
 fi
 
-# 导出 ONNX
-yolo export \
-    model=$MODEL \
-    format=onnx \
-    opset=12 \
-    simplify=True \
-    imgsz=640
+python "$REPO_ROOT/tools/export_yolov8_to_onnx.py" \
+  --weights "$MODEL" \
+  --imgsz "${IMG_SIZE:-640}" \
+  --opset "${OPSET:-12}" \
+  --simplify \
+  --outdir "$OUTDIR" \
+  --outfile "$OUTFILE"
 
-echo ""
-echo "导出完成!"
-echo "  PT:   $MODEL"
-echo "  ONNX: ${MODEL%.pt}.onnx"
-echo ""
+echo "Exported ONNX model: $OUTDIR/$OUTFILE"
 
-# 显示模型信息
-python3 << 'PYEOF'
-import os
-
-pt_file = "outputs/yolov8n_citypersons/weights/best.pt"
-onnx_file = "outputs/yolov8n_citypersons/weights/best.onnx"
-
-if os.path.exists(pt_file):
-    size_mb = os.path.getsize(pt_file) / 1024 / 1024
-    print(f"PyTorch模型: {size_mb:.1f} MB")
-
-if os.path.exists(onnx_file):
-    size_mb = os.path.getsize(onnx_file) / 1024 / 1024
-    print(f"ONNX模型: {size_mb:.1f} MB")
-
-    # 预估 RKNN INT8 大小 (约为 ONNX 的 40%)
-    rknn_est = size_mb * 0.4
-    print(f"RKNN INT8预估: {rknn_est:.1f} MB")
-
-    if rknn_est < 5.0:
-        print("✅ 满足毕设要求 (<5MB)")
-    else:
-        print("⚠️ 可能超过毕设要求 (>5MB)")
-PYEOF

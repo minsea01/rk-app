@@ -10,5 +10,4 @@ by default. Import them explicitly when needed.
 #   from apps.utils import preprocessing
 #   from apps.utils import yolo_post
 
-__all__ = ["preprocessing", "yolo_post", "headless", "paths"]
-
+__all__ = ["decode", "preprocessing", "yolo_post", "headless", "paths"]

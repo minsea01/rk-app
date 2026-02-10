@@ -1,7 +1,7 @@
 # Simple orchestration for training, export, conversion, and evidence collection
 
 # Defaults (override with env, e.g., make DATA_YAML=...)
-EXP_YAML  ?= configs/experiments/exp.yaml
+EXP_YAML  ?= config/experiments/exp.yaml
 DATA_YAML ?= $(shell yq -r '.dataset_yaml' $(EXP_YAML) 2>/dev/null || echo $(HOME)/datasets/coco80_yolo/data.yaml)
 RUN_NAME  ?= $(shell yq -r '.run_name' $(EXP_YAML) 2>/dev/null || echo coco80_y8s)
 IMG_SIZE  ?= $(shell yq -r '.imgsz' $(EXP_YAML) 2>/dev/null || echo 640)
@@ -29,9 +29,9 @@ train:
 	@echo "[TRAIN] data=$(DATA_YAML) run=$(RUN_NAME)" 
 	docker run --rm -it --gpus all -v "$$PWD":/work -w /work \
 	  -v $(HOME)/datasets:$(HOME)/datasets $(TRAIN_IMG) \
-	  python tools/train_yolov8.py --data $(DATA_YAML) --model yolov8s.pt \
+	  bash scripts/train.sh --profile none --data $(DATA_YAML) --model yolov8s.pt \
 	  --imgsz $(IMG_SIZE) --epochs $(EPOCHS) --batch $(BATCH) --device $(DEVICE) \
-	  --workers $(WORKERS) --project runs/train --name $(RUN_NAME)
+	  --workers $(WORKERS) --project runs/train --name $(RUN_NAME) --no-export --no-summary
 
 export:
 	@echo "[EXPORT] weights=$(BEST_PT) -> $(ONNX_OUT)"
@@ -59,12 +59,12 @@ collect:
 COMPARE_IMG ?=
 compare:
 	@echo "[COMPARE] ONNX vs RKNN(sim)"
-	python tools/pc_compare.py --onnx $(ONNX_OUT) $(if $(COMPARE_IMG),--img $(COMPARE_IMG),) --imgsz $(IMG_SIZE)
+	python tools/compare.py --onnx $(ONNX_OUT) $(if $(COMPARE_IMG),--img $(COMPARE_IMG),) --imgsz $(IMG_SIZE) --metrics tensor,post
 
 VALIDATE_IMG ?= assets/test.jpg
 validate:
 	@echo "[VALIDATE] onnx=$(ONNX_OUT) rknn=$(RKNN_INT8) img=$(VALIDATE_IMG)"
-	python scripts/validate_models.py --onnx $(ONNX_OUT) --rknn $(RKNN_INT8) --image $(VALIDATE_IMG) --imgsz $(IMG_SIZE)
+	python tools/compare.py --onnx $(ONNX_OUT) --rknn $(RKNN_INT8) --img $(VALIDATE_IMG) --imgsz $(IMG_SIZE) --metrics tensor
 
 .PHONY: calib
 CALIB_SRC ?=

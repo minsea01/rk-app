@@ -7,14 +7,9 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from apps.utils.decode_meta import (
-    load_decode_meta,
-    normalize_decode_meta,
-    resolve_dfl_layout,
-    resolve_head,
-    resolve_raw_layout,
-)
-from apps.utils.yolo_post import postprocess_yolov8
+from apps.deprecation import warn_deprecated
+from apps.utils.decode import decode_predictions as _decode_predictions
+from apps.utils.decode_meta import load_decode_meta
 from apps.utils.preprocess_pipeline import (
     PreprocessState,
     build_preprocess_config,
@@ -36,97 +31,21 @@ def decode_predictions(
     orig_shape=None,
     decode_meta=None,
 ):
-    # pred: (1, N, C) or (1, C, N) or (N, C)
-    from apps.utils.yolo_post import sigmoid, nms
-    # unify to (1, N, C)
-    if pred.ndim == 2:
-        pred = pred[None, ...]
-    # Normalize to (1, N, C)
-    if pred.shape[1] >= pred.shape[2]:
-        pred_nc = pred
-    else:
-        pred_nc = pred.transpose(0, 2, 1)
-    C = pred_nc.shape[2]
-
-    decode_meta = normalize_decode_meta(decode_meta)
-    resolved_head = resolve_head(head, C, decode_meta)
-    if resolved_head is None:
-        return np.empty((0, 4), dtype=np.float32), np.array([], dtype=np.float32), np.array([], dtype=np.int64)
-
-    if resolved_head == 'dfl':
-        dfl_layout = resolve_dfl_layout(C, decode_meta)
-        if dfl_layout is None:
-            return (
-                np.empty((0, 4), dtype=np.float32),
-                np.array([], dtype=np.float32),
-                np.array([], dtype=np.int64),
-            )
-        reg_max, strides = dfl_layout
-        try:
-            boxes, confs, cls_ids = postprocess_yolov8(
-                pred_nc,
-                imgsz,
-                orig_shape or (imgsz, imgsz),
-                ratio_pad,
-                conf_thres,
-                iou_thres,
-                reg_max=reg_max,
-                strides=tuple(strides),
-            )
-        except ValueError:
-            return (
-                np.empty((0, 4), dtype=np.float32),
-                np.array([], dtype=np.float32),
-                np.array([], dtype=np.int64),
-            )
-        return boxes, confs, cls_ids
-
-    raw_layout = resolve_raw_layout(C, decode_meta)
-    if raw_layout is None:
-        return np.empty((0, 4), dtype=np.float32), np.array([], dtype=np.float32), np.array([], dtype=np.int64)
-    has_objness, num_classes = raw_layout
-
-    # raw path as heuristic decode: [cx,cy,w,h,obj,cls...]
-    p = pred_nc[0]
-    if C < 5:
-        return np.empty((0, 4), dtype=np.float32), np.array([], dtype=np.float32), np.array([], dtype=np.int64)
-    cx, cy, w, h = p[:, 0], p[:, 1], p[:, 2], p[:, 3]
-    obj = sigmoid(p[:, 4]) if has_objness else np.ones_like(cx, dtype=np.float32)
-    cls_offset = 5 if has_objness else 4
-    if num_classes > 0:
-        cls_scores = sigmoid(p[:, cls_offset:cls_offset + num_classes])
-        cls_ids = cls_scores.argmax(axis=1)
-        cls_conf = cls_scores.max(axis=1)
-    else:
-        cls_ids = np.zeros(cx.shape[0], dtype=np.int64)
-        cls_conf = np.ones_like(obj)
-    conf = obj * cls_conf
-    m = conf >= conf_thres
-    if not np.any(m):
-        return np.empty((0, 4), dtype=np.float32), np.array([], dtype=np.float32), np.array([], dtype=np.int64)
-    scale_needed = (np.percentile(w[m], 95) < 1.0) or (np.percentile(h[m], 95) < 1.0)
-    s = float(imgsz) if scale_needed else 1.0
-    cx *= s; cy *= s; w *= s; h *= s
-    x1 = cx - w / 2.0
-    y1 = cy - h / 2.0
-    x2 = cx + w / 2.0
-    y2 = cy + h / 2.0
-    boxes = np.stack([x1, y1, x2, y2], axis=1)[m]
-    conf = conf[m]
-    cls_ids = cls_ids[m]
-    keep = nms(boxes, conf, iou_thres=iou_thres)
-    boxes = boxes[keep]; conf = conf[keep]; cls_ids = cls_ids[keep]
-
-    # Scale back to original coordinates if provided
-    r, (dw, dh) = ratio_pad
-    if orig_shape is not None and r is not None:
-        boxes[:, [0, 2]] -= dw
-        boxes[:, [1, 3]] -= dh
-        boxes /= r
-        h0, w0 = orig_shape
-        boxes[:, 0::2] = boxes[:, 0::2].clip(0, w0 - 1)
-        boxes[:, 1::2] = boxes[:, 1::2].clip(0, h0 - 1)
-    return boxes, conf, cls_ids
+    warn_deprecated(
+        "apps.yolov8_rknn_infer.decode_predictions",
+        "apps.utils.decode.decode_predictions",
+        once=True,
+    )
+    return _decode_predictions(
+        pred=pred,
+        imgsz=imgsz,
+        conf_thres=conf_thres,
+        iou_thres=iou_thres,
+        head=head,
+        ratio_pad=ratio_pad,
+        orig_shape=orig_shape,
+        decode_meta=decode_meta,
+    )
 
 
 def load_labels(names_path: Path):

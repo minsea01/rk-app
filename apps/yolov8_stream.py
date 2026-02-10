@@ -17,16 +17,11 @@ from urllib import request, error
 import cv2
 import numpy as np
 
+from apps.deprecation import warn_deprecated
 from apps.exceptions import InferenceError, PreprocessError, RKAppException, RKNNError
 from apps.logger import setup_logger
-from apps.utils.decode_meta import (
-    load_decode_meta,
-    normalize_decode_meta,
-    resolve_dfl_layout,
-    resolve_head,
-    resolve_raw_layout,
-)
-from apps.utils.yolo_post import nms, sigmoid
+from apps.utils.decode import decode_predictions as _decode_predictions
+from apps.utils.decode_meta import load_decode_meta
 from apps.utils.preprocess_pipeline import (
     PreprocessState,
     build_preprocess_config,
@@ -88,115 +83,22 @@ def decode_predictions(
     head: str = 'auto',
     decode_meta: Optional[Mapping[str, Any]] = None,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Decode YOLO model predictions to bounding boxes.
-    
-    Args:
-        pred: Model predictions array
-        imgsz: Input image size used for inference
-        conf_thres: Confidence threshold for filtering
-        iou_thres: IOU threshold for NMS
-        head: Decoding method ('auto', 'dfl', 'raw')
-        decode_meta: Optional decode metadata dict
-        
-    Returns:
-        Tuple of (boxes, confidences, class_ids)
-    """
-    # Normalize pred to (1, N, C)
-    if pred.ndim == 2:
-        pred = pred[None, ...]
-    # Normalize to (1, N, C)
-    if pred.shape[1] >= pred.shape[2]:
-        pred_nc = pred
-    else:
-        pred_nc = pred.transpose(0, 2, 1)
-    C = pred_nc.shape[2]
-    decode_meta = normalize_decode_meta(decode_meta)
-    resolved_head = resolve_head(head, C, decode_meta)
-    if resolved_head is None:
-        return (
-            np.empty((0, 4), dtype=np.float32),
-            np.array([], dtype=np.float32),
-            np.array([], dtype=np.int64),
-        )
-
-    if resolved_head == 'dfl':
-        # Lazy import to avoid circular deps
-        from apps.utils.yolo_post import postprocess_yolov8
-        dfl_layout = resolve_dfl_layout(C, decode_meta)
-        if dfl_layout is None:
-            return (
-                np.empty((0, 4), dtype=np.float32),
-                np.array([], dtype=np.float32),
-                np.array([], dtype=np.int64),
-            )
-        reg_max, strides = dfl_layout
-        # Here we assume decode on resized image; caller will scale to original if needed
-        try:
-            boxes, confs, cls_ids = postprocess_yolov8(
-                pred_nc,
-                imgsz,
-                (imgsz, imgsz),
-                (1.0, (0.0, 0.0)),
-                conf_thres,
-                iou_thres,
-                reg_max=reg_max,
-                strides=tuple(strides),
-            )
-        except ValueError:
-            return (
-                np.empty((0, 4), dtype=np.float32),
-                np.array([], dtype=np.float32),
-                np.array([], dtype=np.int64),
-            )
-        return boxes, confs, cls_ids
-
-    raw_layout = resolve_raw_layout(C, decode_meta)
-    if raw_layout is None:
-        return (
-            np.empty((0, 4), dtype=np.float32),
-            np.array([], dtype=np.float32),
-            np.array([], dtype=np.int64),
-        )
-    has_objness, num_classes = raw_layout
-
-    # raw: [cx,cy,w,h,obj,cls...]
-    p = pred_nc[0]
-    if C < 5:
-        return (
-            np.empty((0, 4), dtype=np.float32),
-            np.array([], dtype=np.float32),
-            np.array([], dtype=np.int64),
-        )
-    cx, cy, w, h = p[:, 0], p[:, 1], p[:, 2], p[:, 3]
-    obj = sigmoid(p[:, 4]) if has_objness else np.ones_like(cx, dtype=np.float32)
-    cls_offset = 5 if has_objness else 4
-    if num_classes > 0:
-        cls_scores = sigmoid(p[:, cls_offset:cls_offset + num_classes])
-        cls_ids = cls_scores.argmax(axis=1)
-        cls_conf = cls_scores.max(axis=1)
-    else:
-        cls_ids = np.zeros(cx.shape[0], dtype=np.int64)
-        cls_conf = np.ones_like(obj)
-    conf = obj * cls_conf
-    m = conf >= conf_thres
-    if not np.any(m):
-        return (
-            np.empty((0, 4), dtype=np.float32),
-            np.array([], dtype=np.float32),
-            np.array([], dtype=np.int64),
-        )
-    scale_needed = (np.percentile(w[m], 95) < 1.0) or (np.percentile(h[m], 95) < 1.0)
-    s = float(imgsz) if scale_needed else 1.0
-    cx *= s; cy *= s; w *= s; h *= s
-    x1 = cx - w / 2.0
-    y1 = cy - h / 2.0
-    x2 = cx + w / 2.0
-    y2 = cy + h / 2.0
-    boxes = np.stack([x1, y1, x2, y2], axis=1)[m]
-    conf = conf[m]
-    cls_ids = cls_ids[m]
-    keep = nms(boxes, conf, iou_thres=iou_thres)
-    return boxes[keep], conf[keep], cls_ids[keep]
+    """Decode YOLO predictions in resize-space for stream processing."""
+    warn_deprecated(
+        "apps.yolov8_stream.decode_predictions",
+        "apps.utils.decode.decode_predictions",
+        once=True,
+    )
+    return _decode_predictions(
+        pred=pred,
+        imgsz=imgsz,
+        conf_thres=conf_thres,
+        iou_thres=iou_thres,
+        head=head,
+        decode_meta=decode_meta,
+        orig_shape=None,
+        ratio_pad=(1.0, (0.0, 0.0)),
+    )
 
 
 class StageStats:

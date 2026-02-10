@@ -78,7 +78,7 @@ python tools/model_evaluation.py \
 ```bash
 # 使用专门优化的配置文件
 yolo detect train \
-  cfg=configs/optimized_training.yaml \
+  cfg=config/optimized_training.yaml \
   data=industrial_dataset/data.yaml
 ```
 
@@ -121,7 +121,7 @@ yolo detect train \
 
 4. **使用优化配置重训**
    ```bash
-   yolo detect train cfg=configs/optimized_training.yaml
+   yolo detect train cfg=config/optimized_training.yaml
    ```
 
 5. **监控训练过程**

@@ -1,36 +1,38 @@
-#!/bin/bash
-# 训练完成后导出ONNX模型
+#!/usr/bin/env bash
+# Deprecated wrapper for tools/export_yolov8_to_onnx.py
 
-set -e
+set -euo pipefail
 
-cd ~/pedestrian_training
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+source "$REPO_ROOT/scripts/lib/deprecation.sh"
 
-BEST_PT="outputs/yolov8n_pedestrian/weights/best.pt"
+warn_deprecated "cloud_training/export_onnx.sh" "python tools/export_yolov8_to_onnx.py"
 
-if [ ! -f "$BEST_PT" ]; then
-    echo "错误: $BEST_PT 不存在"
-    echo "请先运行训练脚本"
-    exit 1
+WORK_DIR="${WORK_DIR:-$HOME/pedestrian_training}"
+BEST_PT="${BEST_PT:-$WORK_DIR/outputs/yolov8n_pedestrian/weights/best.pt}"
+OUTDIR="${OUTDIR:-$WORK_DIR/outputs/yolov8n_pedestrian/weights}"
+
+if [[ ! -f "$BEST_PT" ]]; then
+  echo "Model not found: $BEST_PT" >&2
+  exit 1
 fi
 
-echo "========================================="
-echo "导出ONNX模型"
-echo "========================================="
+python "$REPO_ROOT/tools/export_yolov8_to_onnx.py" \
+  --weights "$BEST_PT" \
+  --imgsz 640 \
+  --opset 12 \
+  --simplify \
+  --outdir "$OUTDIR" \
+  --outfile best_640.onnx
 
-# 导出640x640 ONNX (标准)
-echo "[1/2] 导出 640x640 ONNX..."
-yolo export model=$BEST_PT format=onnx imgsz=640 simplify=True opset=12
+python "$REPO_ROOT/tools/export_yolov8_to_onnx.py" \
+  --weights "$BEST_PT" \
+  --imgsz 416 \
+  --opset 12 \
+  --simplify \
+  --outdir "$OUTDIR" \
+  --outfile best_416.onnx
 
-# 导出416x416 ONNX (NPU优化)
-echo "[2/2] 导出 416x416 ONNX (NPU优化)..."
-yolo export model=$BEST_PT format=onnx imgsz=416 simplify=True opset=12
+echo "Exported ONNX models to: $OUTDIR"
 
-echo ""
-echo "========================================="
-echo "导出完成!"
-echo "文件位置:"
-ls -lh outputs/yolov8n_pedestrian/weights/*.onnx 2>/dev/null || echo "  (检查 outputs/ 目录)"
-echo ""
-echo "下载这些文件回本地进行RKNN转换:"
-echo "  scp root@<autodl_ip>:~/pedestrian_training/outputs/yolov8n_pedestrian/weights/best*.onnx ."
-echo "========================================="

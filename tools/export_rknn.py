@@ -1,169 +1,58 @@
 #!/usr/bin/env python3
-"""RKNN Model Conversion Script.
+"""Deprecated wrapper for tools.convert_onnx_to_rknn."""
 
-Converts ONNX YOLO model to RKNN format for RK3588 deployment.
-"""
+from __future__ import annotations
 
-import os
-import sys
 import argparse
-import logging
+import sys
 from pathlib import Path
-from typing import Optional
 
-# Setup logging
-logging.basicConfig(level=logging.INFO, format='%(message)s')
-logger = logging.getLogger(__name__)
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from apps.deprecation import warn_deprecated
+from apps.exceptions import ConfigurationError, ModelLoadError
+from tools.convert_onnx_to_rknn import build_rknn
 
 
-def convert_to_rknn(
-    onnx_path: str,
-    quant_dataset: Optional[str] = None,
-    output_name: Optional[str] = None
-) -> None:
-    """Convert ONNX model to RKNN format.
-    
-    Args:
-        onnx_path: Path to input ONNX model
-        quant_dataset: Path to quantization dataset file (optional)
-        output_name: Output RKNN model filename (optional)
-        
-    Raises:
-        ImportError: If RKNN toolkit is not installed
-        FileNotFoundError: If ONNX model not found
-        RuntimeError: If conversion fails
-    """
-    # Check if RKNN toolkit is available
-    try:
-        from rknn.api import RKNN
-    except ImportError as e:
-        logger.error("❌ RKNN toolkit not found. Please install rknn-toolkit2")
-        logger.error("   pip install rknn-toolkit2")
-        raise ImportError("rknn-toolkit2 not installed") from e
-    
-    # Validate input
-    if not os.path.exists(onnx_path):
-        raise FileNotFoundError(f"ONNX model not found: {onnx_path}")
-    
-    # Set output name
-    if output_name is None:
-        output_name = Path(onnx_path).stem + "_rk3588_int8.rknn"
-    
-    logger.info("🔧 RKNN Conversion Configuration:")
-    logger.info(f"   - Input: {onnx_path}")
-    logger.info(f"   - Output: {output_name}")
-    logger.info(f"   - Target: RK3588")
-    logger.info(f"   - Quantization: {'INT8' if quant_dataset else 'FP16'}")
-    if quant_dataset:
-        logger.info(f"   - Dataset: {quant_dataset}")
-    
-    # Create RKNN instance
-    rknn = RKNN(verbose=False)
-    
-    try:
-        # Configure RKNN
-        logger.info("\n📋 Configuring RKNN...")
-        
-        config_params = {
-            'target_platform': 'rk3588',
-            'optimization_level': 3,
-            'output_optimize': True
-        }
+def build_arg_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Deprecated: use tools/convert_onnx_to_rknn.py --onnx ... --out ..."
+    )
+    parser.add_argument("onnx_model", type=Path, help="Path to ONNX model file")
+    parser.add_argument("-d", "--dataset", type=Path, default=None, help="Calibration dataset (file or dir)")
+    parser.add_argument("-o", "--output", type=Path, default=None, help="Output RKNN model path")
+    parser.add_argument("--target", type=str, default="rk3588", help="Target platform")
+    return parser
 
-        quantize = False
-        if quant_dataset:
-            if not os.path.exists(quant_dataset):
-                raise FileNotFoundError(f"Quantization dataset not found: {quant_dataset}")
-            quantize = True
 
-        if quantize:
-            # INT8 quantization
-            config_params.update({
-                'quantized_dtype': 'asymmetric_quantized-u8',
-                'quantized_algorithm': 'normal',
-                'quantized_method': 'channel',
-                # Input preprocessing: 0-1 normalized -> u8 (0-255)
-                'mean_values': [[0, 0, 0]],
-                'std_values': [[255, 255, 255]],
-                'reorder_channel': '0 1 2'  # RGB
-            })
-            logger.info("   ✓ INT8 quantization enabled")
-        else:
-            logger.info("   ✓ No quantization (FP16/FP32 depends on toolkit)")
-        
-        rknn.config(**config_params)
-        
-        # Load ONNX model
-        logger.info("📂 Loading ONNX model...")
-        ret = rknn.load_onnx(onnx_path)
-        if ret != 0:
-            raise RuntimeError(f"Failed to load ONNX model: {ret}")
-        logger.info("   ✓ ONNX model loaded")
-        
-        # Build RKNN model
-        logger.info("🔨 Building RKNN model...")
-        build_params = {}
-        if quantize:
-            build_params['do_quantization'] = True
-            build_params['dataset'] = quant_dataset
-        
-        ret = rknn.build(**build_params)
-        if ret != 0:
-            raise RuntimeError(f"Failed to build RKNN model: {ret}")
-        logger.info("   ✓ RKNN model built")
-        
-        # Export RKNN model
-        logger.info("💾 Exporting RKNN model...")
-        ret = rknn.export_rknn(output_name)
-        if ret != 0:
-            raise RuntimeError(f"Failed to export RKNN model: {ret}")
-        
-        logger.info(f"✅ RKNN model exported: {output_name}")
-        
-        # Show file info
-        if os.path.exists(output_name):
-            file_size = os.path.getsize(output_name) / (1024 * 1024)  # MB
-            logger.info(f"📊 Model size: {file_size:.1f} MB")
-            
-        logger.info("\n🚀 Deployment ready!")
-        logger.info("   Next steps:")
-        logger.info("   1. Copy model to RK3588 device")
-        logger.info("   2. Use RknnEngine in C++ application")
-        logger.info("   3. Test inference performance")
-        
-    except RuntimeError:
-        raise
-        
-    finally:
-        # Clean up
-        rknn.release()
+def _default_output(onnx_path: Path, quantized: bool) -> Path:
+    suffix = "_int8.rknn" if quantized else "_fp16.rknn"
+    return onnx_path.with_name(f"{onnx_path.stem}{suffix}")
+
 
 def main() -> int:
-    """Main entry point.
-    
-    Returns:
-        Exit code (0 for success, non-zero for failure)
-    """
-    parser = argparse.ArgumentParser(description="Convert ONNX YOLO model to RKNN format")
-    parser.add_argument("onnx_model", help="Path to ONNX model file")
-    parser.add_argument("-d", "--dataset", help="Path to quantization dataset file")
-    parser.add_argument("-o", "--output", help="Output RKNN model name")
-    
-    args = parser.parse_args()
-    
-    logger.info("🎯 RKNN Model Conversion")
-    logger.info("=" * 40)
-    
+    args = build_arg_parser().parse_args()
+    warn_deprecated("tools/export_rknn.py", "tools/convert_onnx_to_rknn.py", once=True)
+
+    do_quant = args.dataset is not None
+    out_path = args.output or _default_output(args.onnx_model, do_quant)
+
     try:
-        convert_to_rknn(args.onnx_model, args.dataset, args.output)
+        build_rknn(
+            onnx_path=args.onnx_model,
+            out_path=out_path,
+            calib=args.dataset,
+            do_quant=do_quant,
+            target=args.target,
+        )
         return 0
-    except (ImportError, FileNotFoundError, RuntimeError) as e:
-        logger.error(f"❌ Conversion failed: {e}")
+    except (ModelLoadError, ConfigurationError, ValueError) as exc:
+        print(f"Conversion failed: {exc}")
         return 1
     except KeyboardInterrupt:
-        logger.info("Interrupted by user")
+        print("Interrupted by user")
         return 130
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    raise SystemExit(main())
