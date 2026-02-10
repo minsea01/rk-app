@@ -313,3 +313,55 @@ class TestRawDecodePath:
         if len(boxes) > 0:
             # Coordinates should be scaled to image size
             assert np.max(boxes) > 1.0  # Not normalized anymore
+
+
+class TestArgumentParser:
+    """Test suite for CLI argument parser compatibility."""
+
+    def test_parser_accepts_new_preprocess_options(self):
+        from apps.yolov8_rknn_infer import build_arg_parser
+
+        parser = build_arg_parser()
+        args = parser.parse_args([
+            '--model', 'dummy.rknn',
+            '--cfg', 'config/detect.yaml',
+            '--pp-profile', 'quality',
+            '--undistort-enable',
+            '--undistort-calib', 'calib.yaml',
+            '--roi-enable',
+            '--roi-mode', 'pixel',
+            '--roi-px', '1,2,30,40',
+            '--roi-min-size', '12',
+            '--gamma-enable',
+            '--gamma', '0.7',
+            '--white-balance-enable',
+            '--white-balance-clip', '1.5',
+            '--denoise-enable',
+            '--denoise-method', 'bilateral',
+            '--denoise-d', '7',
+            '--denoise-sigma-color', '30',
+            '--denoise-sigma-space', '20',
+            '--input-format', 'gray',
+        ])
+
+        assert args.cfg == Path('config/detect.yaml')
+        assert args.pp_profile == 'quality'
+        assert args.undistort_enable is True
+        assert args.roi_enable is True
+        assert args.roi_px == '1,2,30,40'
+        assert args.gamma_enable is True
+        assert args.white_balance_enable is True
+        assert args.denoise_enable is True
+        assert args.input_format == 'gray'
+
+    def test_parser_keeps_backward_compatible_defaults(self):
+        from apps.yolov8_rknn_infer import build_arg_parser
+
+        parser = build_arg_parser()
+        args = parser.parse_args(['--model', 'dummy.rknn'])
+
+        assert args.cfg is None
+        assert args.pp_profile is None
+        assert args.undistort_enable is None
+        assert args.gamma_enable is None
+        assert args.denoise_enable is None

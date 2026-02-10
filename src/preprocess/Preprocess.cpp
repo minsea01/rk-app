@@ -2,6 +2,8 @@
 #include <algorithm>
 #include <cstring>
 #include <cmath>
+#include <limits>
+#include <vector>
 
 // RGA hardware acceleration headers (RK3588)
 #if RKNN_USE_RGA
@@ -372,6 +374,366 @@ cv::Mat Preprocess::convertColor(const cv::Mat& src, int code, AccelBackend back
     (void)backend;
     return convertColorCpu(src, code);
 #endif
+}
+
+bool Preprocess::loadCalibration(const std::string& calibration_path,
+                                 CameraCalibration& calibration) {
+    calibration = {};
+    if (calibration_path.empty()) {
+        LOGW("Preprocess::loadCalibration: Empty calibration path");
+        return false;
+    }
+
+    cv::FileStorage fs(calibration_path, cv::FileStorage::READ);
+    if (!fs.isOpened()) {
+        LOGW("Preprocess::loadCalibration: Failed to open calibration file: ", calibration_path);
+        return false;
+    }
+
+    auto readFirstNode = [&](const std::vector<std::string>& keys, cv::Mat& dst) -> bool {
+        for (const auto& key : keys) {
+            if (!fs[key].empty()) {
+                fs[key] >> dst;
+                if (!dst.empty()) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    };
+
+    cv::Mat camera_matrix;
+    cv::Mat dist_coeffs;
+    const bool has_camera = readFirstNode(
+        {"camera_matrix", "cameraMatrix", "K", "intrinsic_matrix"}, camera_matrix);
+    const bool has_dist = readFirstNode(
+        {"dist_coeffs", "distCoeffs", "distortion_coefficients", "D"}, dist_coeffs);
+
+    if (!has_camera || !has_dist) {
+        LOGW("Preprocess::loadCalibration: Missing camera_matrix/dist_coeffs in ",
+             calibration_path);
+        return false;
+    }
+
+    camera_matrix.convertTo(camera_matrix, CV_64F);
+    dist_coeffs.convertTo(dist_coeffs, CV_64F);
+
+    if (camera_matrix.rows == 1 && camera_matrix.cols == 9) {
+        camera_matrix = camera_matrix.reshape(1, 3);
+    }
+    if (camera_matrix.rows != 3 || camera_matrix.cols != 3) {
+        LOGW("Preprocess::loadCalibration: camera_matrix must be 3x3");
+        return false;
+    }
+
+    if (dist_coeffs.rows > 1 && dist_coeffs.cols > 1) {
+        dist_coeffs = dist_coeffs.reshape(1, 1);
+    }
+    if (dist_coeffs.rows != 1) {
+        dist_coeffs = dist_coeffs.reshape(1, 1);
+    }
+    if (dist_coeffs.cols < 4) {
+        LOGW("Preprocess::loadCalibration: dist_coeffs length must be >= 4");
+        return false;
+    }
+
+    calibration.camera_matrix = camera_matrix;
+    calibration.dist_coeffs = dist_coeffs;
+    return calibration.isValid();
+}
+
+bool Preprocess::buildUndistortMaps(const CameraCalibration& calibration, cv::Size image_size,
+                                    cv::Mat& map1, cv::Mat& map2) {
+    map1.release();
+    map2.release();
+
+    if (!calibration.isValid()) {
+        LOGW("Preprocess::buildUndistortMaps: Invalid camera calibration");
+        return false;
+    }
+    if (image_size.width <= 0 || image_size.height <= 0) {
+        LOGW("Preprocess::buildUndistortMaps: Invalid image size");
+        return false;
+    }
+
+    try {
+        cv::Mat new_camera = cv::getOptimalNewCameraMatrix(
+            calibration.camera_matrix, calibration.dist_coeffs, image_size, 0.0, image_size);
+        cv::initUndistortRectifyMap(
+            calibration.camera_matrix, calibration.dist_coeffs, cv::Mat(), new_camera,
+            image_size, CV_16SC2, map1, map2);
+    } catch (const cv::Exception& e) {
+        LOGW("Preprocess::buildUndistortMaps: OpenCV error: ", e.what());
+        map1.release();
+        map2.release();
+        return false;
+    }
+
+    return !map1.empty() && !map2.empty();
+}
+
+cv::Mat Preprocess::undistort(const cv::Mat& src, const cv::Mat& map1, const cv::Mat& map2) {
+    if (src.empty() || map1.empty() || map2.empty()) {
+        return {};
+    }
+
+    cv::Mat dst;
+    try {
+        cv::remap(src, dst, map1, map2, cv::INTER_LINEAR, cv::BORDER_CONSTANT);
+    } catch (const cv::Exception& e) {
+        LOGW("Preprocess::undistort: OpenCV error: ", e.what());
+        return {};
+    }
+    return dst;
+}
+
+cv::Mat Preprocess::ensureBgr8(const cv::Mat& src, AccelBackend backend,
+                               FourChannelOrder four_channel_order) {
+    if (src.empty()) {
+        return {};
+    }
+
+    cv::Mat input = src;
+    if (src.depth() != CV_8U) {
+        src.convertTo(input, CV_8U);
+    }
+
+    if (input.type() == CV_8UC3) {
+        return input;
+    }
+    if (input.type() == CV_8UC1) {
+        return convertColor(input, cv::COLOR_GRAY2BGR, backend);
+    }
+    if (input.type() == CV_8UC4) {
+        if (four_channel_order == FourChannelOrder::BGRA) {
+            return convertColor(input, cv::COLOR_BGRA2BGR, backend);
+        }
+        if (four_channel_order == FourChannelOrder::RGBA) {
+            return convertColor(input, cv::COLOR_RGBA2BGR, backend);
+        }
+        LOGW("Preprocess::ensureBgr8: Ambiguous 4-channel input. Specify BGRA or RGBA order.");
+        return {};
+    }
+
+    LOGW("Preprocess::ensureBgr8: Unsupported input type: ", input.type());
+    return {};
+}
+
+bool Preprocess::resolveRoiRect(cv::Size image_size, bool normalized_mode,
+                                const cv::Rect2f& normalized_xywh,
+                                const cv::Rect& pixel_xywh, bool clamp,
+                                int min_size, cv::Rect& roi_out) {
+    roi_out = cv::Rect();
+    if (image_size.width <= 0 || image_size.height <= 0) {
+        return false;
+    }
+
+    const int width = image_size.width;
+    const int height = image_size.height;
+    const int min_dim = std::max(1, min_size);
+
+    if (width < min_dim || height < min_dim) {
+        return false;
+    }
+
+    int x = 0;
+    int y = 0;
+    int roi_w = width;
+    int roi_h = height;
+
+    if (normalized_mode) {
+        x = static_cast<int>(std::round(normalized_xywh.x * static_cast<float>(width)));
+        y = static_cast<int>(std::round(normalized_xywh.y * static_cast<float>(height)));
+        roi_w =
+            static_cast<int>(std::round(normalized_xywh.width * static_cast<float>(width)));
+        roi_h =
+            static_cast<int>(std::round(normalized_xywh.height * static_cast<float>(height)));
+    } else {
+        x = pixel_xywh.x;
+        y = pixel_xywh.y;
+        roi_w = pixel_xywh.width;
+        roi_h = pixel_xywh.height;
+    }
+
+    if (clamp) {
+        x = std::clamp(x, 0, width - 1);
+        y = std::clamp(y, 0, height - 1);
+        roi_w = std::max(roi_w, min_dim);
+        roi_h = std::max(roi_h, min_dim);
+
+        if (x + roi_w > width) {
+            roi_w = width - x;
+        }
+        if (y + roi_h > height) {
+            roi_h = height - y;
+        }
+    }
+
+    if (roi_w < min_dim || roi_h < min_dim) {
+        return false;
+    }
+    if (x < 0 || y < 0 || x + roi_w > width || y + roi_h > height) {
+        return false;
+    }
+
+    roi_out = cv::Rect(x, y, roi_w, roi_h);
+    return roi_out.area() > 0;
+}
+
+cv::Mat Preprocess::cropRoi(const cv::Mat& src, const cv::Rect& roi) {
+    if (src.empty()) {
+        return {};
+    }
+    if (roi.width <= 0 || roi.height <= 0 || roi.x < 0 || roi.y < 0 ||
+        roi.x + roi.width > src.cols || roi.y + roi.height > src.rows) {
+        return {};
+    }
+    if (roi.x == 0 && roi.y == 0 && roi.width == src.cols && roi.height == src.rows) {
+        return src;
+    }
+    return src(roi).clone();
+}
+
+cv::Mat Preprocess::applyGammaLut(const cv::Mat& src, float gamma) {
+    if (src.empty() || gamma <= 0.0f) {
+        return {};
+    }
+
+    cv::Mat input = src;
+    if (src.depth() != CV_8U) {
+        src.convertTo(input, CV_8U);
+    }
+
+    if (std::fabs(gamma - 1.0f) < 1e-6f) {
+        return input;
+    }
+
+    struct GammaLutCache {
+        float gamma = std::numeric_limits<float>::quiet_NaN();
+        cv::Mat lut;
+    };
+    thread_local GammaLutCache cache;
+
+    if (cache.lut.empty() || std::fabs(cache.gamma - gamma) > 1e-6f) {
+        cache.lut = cv::Mat(1, 256, CV_8U);
+        for (int i = 0; i < 256; ++i) {
+            const double normalized = static_cast<double>(i) / 255.0;
+            const double corrected = std::pow(normalized, static_cast<double>(gamma));
+            cache.lut.at<uint8_t>(0, i) =
+                cv::saturate_cast<uint8_t>(std::round(corrected * 255.0));
+        }
+        cache.gamma = gamma;
+    }
+
+    cv::Mat dst;
+    cv::LUT(input, cache.lut, dst);
+    return dst;
+}
+
+namespace {
+
+float percentileOfChannel(const cv::Mat& channel, float percentile) {
+    if (channel.empty()) {
+        return 0.0f;
+    }
+
+    cv::Mat flat = channel.reshape(1, 1);
+    cv::Mat sorted;
+    cv::sort(flat, sorted, cv::SORT_ASCENDING);
+
+    const int count = sorted.cols;
+    if (count <= 0) {
+        return 0.0f;
+    }
+
+    const float clamped_percentile = std::clamp(percentile, 0.0f, 100.0f);
+    const int idx = static_cast<int>(
+        std::round((clamped_percentile / 100.0f) * static_cast<float>(count - 1)));
+    return sorted.at<float>(0, idx);
+}
+
+}  // namespace
+
+cv::Mat Preprocess::whiteBalanceGrayWorld(const cv::Mat& src, float clip_percent) {
+    if (src.empty()) {
+        return {};
+    }
+
+    cv::Mat input = src;
+    if (src.depth() != CV_8U) {
+        src.convertTo(input, CV_8U);
+    }
+
+    if (input.channels() != 3) {
+        return input;
+    }
+
+    cv::Mat working;
+    input.convertTo(working, CV_32F);
+
+    std::vector<cv::Mat> channels;
+    cv::split(working, channels);
+    if (channels.size() != 3) {
+        return input;
+    }
+
+    const float clipped = std::clamp(clip_percent, 0.0f, 49.0f);
+    if (clipped > 0.0f) {
+        const float each_side = clipped * 0.5f;
+        for (auto& channel : channels) {
+            const float lo = percentileOfChannel(channel, each_side);
+            const float hi = percentileOfChannel(channel, 100.0f - each_side);
+            cv::max(channel, lo, channel);
+            cv::min(channel, hi, channel);
+        }
+    }
+
+    const double mean_b = cv::mean(channels[0])[0];
+    const double mean_g = cv::mean(channels[1])[0];
+    const double mean_r = cv::mean(channels[2])[0];
+    const double gray = (mean_b + mean_g + mean_r) / 3.0;
+    if (gray <= std::numeric_limits<double>::epsilon()) {
+        return input;
+    }
+
+    const double gain_b = std::clamp(gray / (mean_b + 1e-6), 0.2, 5.0);
+    const double gain_g = std::clamp(gray / (mean_g + 1e-6), 0.2, 5.0);
+    const double gain_r = std::clamp(gray / (mean_r + 1e-6), 0.2, 5.0);
+
+    channels[0] *= gain_b;
+    channels[1] *= gain_g;
+    channels[2] *= gain_r;
+
+    cv::Mat merged;
+    cv::merge(channels, merged);
+    cv::Mat dst;
+    merged.convertTo(dst, CV_8U);
+    return dst;
+}
+
+cv::Mat Preprocess::denoiseBilateral(const cv::Mat& src, int d, double sigma_color,
+                                     double sigma_space) {
+    if (src.empty()) {
+        return {};
+    }
+
+    cv::Mat input = src;
+    if (src.depth() != CV_8U) {
+        src.convertTo(input, CV_8U);
+    }
+    if (input.channels() != 3) {
+        return input;
+    }
+
+    cv::Mat dst;
+    try {
+        cv::bilateralFilter(input, dst, d, std::max(0.1, sigma_color),
+                            std::max(0.1, sigma_space));
+    } catch (const cv::Exception& e) {
+        LOGW("Preprocess::denoiseBilateral: OpenCV error: ", e.what());
+        return input;
+    }
+    return dst;
 }
 
 // ============================================================================

@@ -5,6 +5,7 @@
 
 set -e
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd /root/autodl-tmp/pedestrian_training
 
 echo "========================================="
@@ -33,48 +34,20 @@ echo ""
 if [[ "$PRETRAINED" == *"person"* ]]; then
     echo "=== 阶段1: 小学习率微调 ==="
 
-    yolo detect train \
-        model=$PRETRAINED \
-        data=$DATA \
-        epochs=200 \
-        imgsz=640 \
-        batch=64 \
-        device=0 \
-        project=outputs \
-        name=yolov8n_person_90_stage1 \
-        patience=80 \
-        save=True \
-        save_period=25 \
-        val=True \
-        plots=True \
-        exist_ok=True \
-        optimizer=AdamW \
-        lr0=0.0001 \
-        lrf=0.0001 \
-        momentum=0.937 \
-        weight_decay=0.001 \
-        warmup_epochs=3 \
-        box=7.5 \
-        cls=0.5 \
-        dfl=1.5 \
-        hsv_h=0.02 \
-        hsv_s=0.8 \
-        hsv_v=0.5 \
-        degrees=10.0 \
-        translate=0.2 \
-        scale=0.7 \
-        shear=5.0 \
-        perspective=0.001 \
-        flipud=0.0 \
-        fliplr=0.5 \
-        mosaic=1.0 \
-        mixup=0.2 \
-        copy_paste=0.15 \
-        erasing=0.5 \
-        workers=16 \
-        cache=ram \
-        amp=True \
-        classes=0
+    "$SCRIPT_DIR/train_runner.sh" \
+      --profile extreme_stage1 \
+      --model "$PRETRAINED" \
+      --data "$DATA" \
+      --epochs 200 \
+      --imgsz 640 \
+      --batch 64 \
+      --device 0 \
+      --project outputs \
+      --name yolov8n_person_90_stage1 \
+      --workers 16 \
+      --cache ram \
+      --classes 0 \
+      --no-export
 
     PRETRAINED="outputs/yolov8n_person_90_stage1/weights/best.pt"
 fi
@@ -83,48 +56,20 @@ fi
 echo ""
 echo "=== 阶段2: 强增强训练 ==="
 
-yolo detect train \
-    model=$PRETRAINED \
-    data=$DATA \
-    epochs=300 \
-    imgsz=640 \
-    batch=64 \
-    device=0 \
-    project=outputs \
-    name=yolov8n_person_90_final \
-    patience=100 \
-    save=True \
-    save_period=30 \
-    val=True \
-    plots=True \
-    exist_ok=True \
-    optimizer=SGD \
-    lr0=0.001 \
-    lrf=0.0001 \
-    momentum=0.937 \
-    weight_decay=0.0005 \
-    warmup_epochs=5 \
-    box=7.5 \
-    cls=0.5 \
-    dfl=1.5 \
-    hsv_h=0.03 \
-    hsv_s=0.9 \
-    hsv_v=0.6 \
-    degrees=15.0 \
-    translate=0.25 \
-    scale=0.8 \
-    shear=10.0 \
-    perspective=0.001 \
-    flipud=0.0 \
-    fliplr=0.5 \
-    mosaic=1.0 \
-    mixup=0.3 \
-    copy_paste=0.2 \
-    erasing=0.6 \
-    workers=16 \
-    cache=ram \
-    amp=True \
-    classes=0
+"$SCRIPT_DIR/train_runner.sh" \
+  --profile extreme_stage2 \
+  --model "$PRETRAINED" \
+  --data "$DATA" \
+  --epochs 300 \
+  --imgsz 640 \
+  --batch 64 \
+  --device 0 \
+  --project outputs \
+  --name yolov8n_person_90_final \
+  --workers 16 \
+  --cache ram \
+  --classes 0 \
+  --no-export
 
 echo ""
 echo "========================================="

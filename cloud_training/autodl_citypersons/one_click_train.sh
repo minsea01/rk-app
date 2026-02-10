@@ -9,6 +9,9 @@
 
 set -e
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+TRAIN_RUNNER="$SCRIPT_DIR/../train_runner.sh"
+
 echo "============================================================"
 echo "  YOLOv8n 行人检测训练 - 目标 90% mAP"
 echo "  AutoDL 4090 预计: 2-4 小时"
@@ -207,94 +210,26 @@ names:
 nc: 1
 EOF
 
-# 训练
-yolo detect train \
-    model=yolov8n.pt \
-    data="$WORK_DIR/person.yaml" \
-    epochs=100 \
-    imgsz=640 \
-    batch=64 \
-    device=0 \
-    project=outputs \
-    name=yolov8n_person \
-    patience=30 \
-    save=True \
-    save_period=10 \
-    val=True \
-    plots=True \
-    exist_ok=True \
-    pretrained=True \
-    optimizer=AdamW \
-    lr0=0.001 \
-    lrf=0.01 \
-    warmup_epochs=3 \
-    mosaic=1.0 \
-    mixup=0.1 \
-    copy_paste=0.1 \
-    workers=8 \
-    cache=disk \
-    amp=True \
-    classes=0
-
-# ==================== 6. 导出 ONNX ====================
-echo ""
-echo "[5/6] 导出 ONNX 模型..."
-
-yolo export \
-    model=outputs/yolov8n_person/weights/best.pt \
-    format=onnx \
-    opset=12 \
-    simplify=True \
-    imgsz=640
-
-# ==================== 7. 结果汇总 ====================
-echo ""
-echo "[6/6] 训练结果..."
-
-python3 << 'PYEOF'
-import csv
-import os
-
-results_file = "outputs/yolov8n_person/results.csv"
-if os.path.exists(results_file):
-    with open(results_file, 'r') as f:
-        reader = csv.DictReader(f)
-        rows = list(reader)
-        if rows:
-            last = rows[-1]
-            for key in last.keys():
-                if 'mAP50' in key and 'mAP50-95' not in key:
-                    try:
-                        val = float(last[key].strip())
-                        print(f"\n最终 mAP@0.5: {val*100:.1f}%")
-                        if val >= 0.90:
-                            print("✅ 达到 90% mAP 目标!")
-                        elif val >= 0.85:
-                            print(f"⚠️ 接近目标，差 {(0.90-val)*100:.1f}%")
-                        else:
-                            print(f"⚠️ 未达标，差 {(0.90-val)*100:.1f}%")
-                            print("建议: 增加 epochs 或使用 CrowdHuman 数据集")
-                    except:
-                        pass
-                    break
-
-# 模型大小
-pt_file = "outputs/yolov8n_person/weights/best.pt"
-onnx_file = "outputs/yolov8n_person/weights/best.onnx"
-
-print("\n模型大小:")
-if os.path.exists(pt_file):
-    size_mb = os.path.getsize(pt_file) / 1024 / 1024
-    print(f"  PyTorch: {size_mb:.1f} MB")
-
-if os.path.exists(onnx_file):
-    size_mb = os.path.getsize(onnx_file) / 1024 / 1024
-    print(f"  ONNX: {size_mb:.1f} MB")
-    rknn_est = size_mb * 0.4
-    print(f"  RKNN INT8 (预估): {rknn_est:.1f} MB")
-    if rknn_est < 5.0:
-        print("  ✅ 满足毕设要求 (<5MB)")
-PYEOF
+"$TRAIN_RUNNER" \
+  --profile baseline \
+  --workdir "$WORK_DIR" \
+  --model yolov8n.pt \
+  --data "$WORK_DIR/person.yaml" \
+  --epochs 100 \
+  --imgsz 640 \
+  --batch 64 \
+  --device 0 \
+  --project outputs \
+  --name yolov8n_person \
+  --patience 30 \
+  --save-period 10 \
+  --workers 8 \
+  --cache disk \
+  --optimizer AdamW \
+  --lr0 0.001 \
+  --lrf 0.01 \
+  --extra "mixup=0.1" \
+  --classes 0
 
 echo ""
 echo "============================================================"

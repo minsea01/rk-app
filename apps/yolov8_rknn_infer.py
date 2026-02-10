@@ -14,7 +14,13 @@ from apps.utils.decode_meta import (
     resolve_head,
     resolve_raw_layout,
 )
-from apps.utils.yolo_post import letterbox, postprocess_yolov8
+from apps.utils.yolo_post import postprocess_yolov8
+from apps.utils.preprocess_pipeline import (
+    PreprocessState,
+    build_preprocess_config,
+    map_boxes_back,
+    run_preprocess,
+)
 from apps.utils.headless import safe_imshow, safe_waitKey
 from apps.exceptions import RKNNError, PreprocessError, InferenceError, ModelLoadError
 from apps.logger import setup_logger
@@ -139,10 +145,19 @@ def draw_boxes(img, boxes, confs, class_ids, names=None):
     return img
 
 
-def main():
+def build_arg_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(description='YOLOv8 RKNNLite inference on RK3588')
+    ap.set_defaults(
+        undistort_enable=None,
+        roi_enable=None,
+        gamma_enable=None,
+        white_balance_enable=None,
+        denoise_enable=None,
+        roi_clamp=None,
+    )
     ap.add_argument('--model', type=Path, required=True, help='path to .rknn model file')
     ap.add_argument('--source', type=Path, help='image path; if omitted, opens /dev/video0')
+    ap.add_argument('--cfg', type=Path, default=None, help='optional YAML config file')
     # 默认使用 416 分辨率以避免 Transpose 回退并提升 NPU 吞吐
     ap.add_argument('--imgsz', type=int, default=416)
     ap.add_argument(
@@ -155,6 +170,30 @@ def main():
     ap.add_argument('--names', type=Path, default=None, help='names.txt (one class per line)')
     ap.add_argument('--head', type=str, choices=['auto', 'dfl', 'raw'], default='auto',
                     help='head decode type (auto uses decode metadata when available)')
+    ap.add_argument('--pp-profile', type=str, default=None, choices=['speed', 'balanced', 'quality'])
+    ap.add_argument('--undistort-enable', action='store_true')
+    ap.add_argument('--undistort-calib', type=str, default=None)
+    ap.add_argument('--roi-enable', action='store_true')
+    ap.add_argument('--roi-mode', type=str, default=None, choices=['normalized', 'pixel'])
+    ap.add_argument('--roi-norm', type=str, default=None, help='normalized ROI x,y,w,h in [0,1]')
+    ap.add_argument('--roi-px', type=str, default=None, help='pixel ROI x,y,w,h')
+    ap.add_argument('--roi-min-size', type=int, default=None)
+    ap.add_argument('--roi-no-clamp', dest='roi_clamp', action='store_false')
+    ap.add_argument('--gamma-enable', action='store_true')
+    ap.add_argument('--gamma', type=float, default=None)
+    ap.add_argument('--white-balance-enable', action='store_true')
+    ap.add_argument('--white-balance-clip', type=float, default=None)
+    ap.add_argument('--denoise-enable', action='store_true')
+    ap.add_argument('--denoise-method', type=str, default=None, choices=['bilateral'])
+    ap.add_argument('--denoise-d', type=int, default=None)
+    ap.add_argument('--denoise-sigma-color', type=float, default=None)
+    ap.add_argument('--denoise-sigma-space', type=float, default=None)
+    ap.add_argument(
+        '--input-format',
+        type=str,
+        default=None,
+        choices=['auto', 'bgr', 'rgb', 'gray', 'bayer_rg', 'bayer_bg', 'bayer_gr', 'bayer_gb'],
+    )
     # 默认三核全开，满足“轻量化+多核并行”要求
     ap.add_argument('--core-mask', type=lambda x: int(x, 0), default=0x7, help='NPU core mask (e.g., 0x7 for 3 cores)')
     ap.add_argument('--save', type=Path, default=None, help='save annotated result image')
@@ -165,9 +204,40 @@ def main():
         choices=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'],
         help='logging verbosity'
     )
+    return ap
+
+
+def main():
+    ap = build_arg_parser()
     args = ap.parse_args()
 
     logger = setup_logger(__name__, level=getattr(logging, args.log_level.upper()))
+    preprocess_overrides = {
+        'profile': args.pp_profile,
+        'undistort_enable': args.undistort_enable,
+        'calibration_file': args.undistort_calib,
+        'roi_enable': args.roi_enable,
+        'roi_mode': args.roi_mode,
+        'roi_normalized_xywh': args.roi_norm,
+        'roi_pixel_xywh': args.roi_px,
+        'roi_min_size': args.roi_min_size,
+        'roi_clamp': args.roi_clamp,
+        'gamma_enable': args.gamma_enable,
+        'gamma_value': args.gamma,
+        'white_balance_enable': args.white_balance_enable,
+        'white_balance_clip_percent': args.white_balance_clip,
+        'denoise_enable': args.denoise_enable,
+        'denoise_method': args.denoise_method,
+        'denoise_d': args.denoise_d,
+        'denoise_sigma_color': args.denoise_sigma_color,
+        'denoise_sigma_space': args.denoise_sigma_space,
+        'input_format': args.input_format,
+    }
+    try:
+        preprocess_config = build_preprocess_config(args.cfg, preprocess_overrides, logger=logger)
+    except (ValueError, OSError) as e:
+        raise PreprocessError(f'Failed to load preprocess config: {e}') from e
+    preprocess_state = PreprocessState()
 
     if args.source is not None:
         if not args.source.exists():
@@ -223,7 +293,9 @@ def main():
             img0 = cv2.imread(str(args.source))
             if img0 is None:
                 raise PreprocessError(f'Failed to read image: {args.source}')
-            img, r, d = letterbox(img0, args.imgsz)
+            img, frame_meta, coord_frame = run_preprocess(
+                img0, args.imgsz, preprocess_config, preprocess_state, logger=logger
+            )
         except PreprocessError:
             raise
         except (cv2.error, ValueError) as e:
@@ -249,12 +321,13 @@ def main():
             args.conf,
             args.iou,
             args.head,
-            (r, d),
-            img0.shape[:2],
+            (1.0, (0.0, 0.0)),
+            img.shape[:2],
             decode_meta=decode_meta,
         )
+        boxes = map_boxes_back(boxes, frame_meta)
         logger.info('Detections: %d', len(boxes))
-        vis = draw_boxes(img0.copy(), boxes, confs, cls_ids, class_names)
+        vis = draw_boxes(coord_frame.copy(), boxes, confs, cls_ids, class_names)
         if args.save:
             cv2.imwrite(str(args.save), vis)
             logger.info('Saved: %s', args.save)
@@ -312,7 +385,9 @@ def main():
                 reconnect_delay = min(reconnect_max, reconnect_delay * 2)
                 continue
             try:
-                img, r, d = letterbox(img0, args.imgsz)
+                img, frame_meta, coord_frame = run_preprocess(
+                    img0, args.imgsz, preprocess_config, preprocess_state, logger=logger
+                )
                 # Add batch dimension: (H, W, 3) -> (1, H, W, 3) to match image path
                 input_data = np.expand_dims(img, axis=0)
                 t0 = time.time()
@@ -329,14 +404,15 @@ def main():
                 args.conf,
                 args.iou,
                 args.head,
-                (r, d),
-                img0.shape[:2],
+                (1.0, (0.0, 0.0)),
+                img.shape[:2],
                 decode_meta=decode_meta,
             )
+            boxes = map_boxes_back(boxes, frame_meta)
             t1 = time.time()
             fps = 1.0 / max(1e-6, (t1 - t0))
             fps_hist.append(fps)
-            vis = draw_boxes(img0.copy(), boxes, confs, cls_ids, class_names)
+            vis = draw_boxes(coord_frame.copy(), boxes, confs, cls_ids, class_names)
             cv2.putText(vis, f'FPS: {fps:.1f}', (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0,255,0), 2)
 
             # Auto-handles headless mode (saves to file instead of displaying)

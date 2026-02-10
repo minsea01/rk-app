@@ -10,6 +10,7 @@ echo "============================================================"
 echo "  CityPersons 行人检测训练 - 目标 90% mAP"
 echo "============================================================"
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORK_DIR="/root/autodl-tmp/citypersons"
 mkdir -p "$WORK_DIR"
 cd "$WORK_DIR"
@@ -203,41 +204,24 @@ fi
 
 nvidia-smi --query-gpu=name,memory.total --format=csv 2>/dev/null || echo "警告: 未检测到GPU"
 
-yolo detect train \
-    model=yolov8n.pt \
-    data="$DATA_YAML" \
-    epochs=150 \
-    imgsz=640 \
-    batch=64 \
-    device=0 \
-    project=outputs \
-    name=yolov8n_citypersons \
-    patience=50 \
-    save=True \
-    save_period=10 \
-    val=True \
-    plots=True \
-    exist_ok=True \
-    pretrained=True \
-    optimizer=AdamW \
-    lr0=0.001 \
-    lrf=0.01 \
-    warmup_epochs=3 \
-    mosaic=1.0 \
-    mixup=0.15 \
-    copy_paste=0.1 \
-    degrees=5.0 \
-    translate=0.1 \
-    scale=0.5 \
-    fliplr=0.5 \
-    workers=8 \
-    cache=disk \
-    amp=True
-
-# 导出
-echo ""
-echo "导出 ONNX..."
-yolo export model=outputs/yolov8n_citypersons/weights/best.pt format=onnx opset=12 simplify=True imgsz=640
+"$SCRIPT_DIR/train_runner.sh" \
+  --profile baseline \
+  --workdir "$WORK_DIR" \
+  --model yolov8n.pt \
+  --data "$DATA_YAML" \
+  --epochs 150 \
+  --imgsz 640 \
+  --batch 64 \
+  --device 0 \
+  --project outputs \
+  --name yolov8n_citypersons \
+  --patience 50 \
+  --save-period 10 \
+  --workers 8 \
+  --cache disk \
+  --optimizer AdamW \
+  --lr0 0.001 \
+  --lrf 0.01
 
 echo ""
 echo "============================================================"

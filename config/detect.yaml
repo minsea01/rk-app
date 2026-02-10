@@ -38,9 +38,34 @@ postprocess:
   min_box_size: 20     # 最小框尺寸（像素）
   aspect_ratio_range: [0.3, 5.0]  # 行人长宽比范围
 
+preprocess:
+  profile: speed  # speed|balanced|quality
+  undistort:
+    enable: false
+    calibration_file: ""  # OpenCV 标定文件，需包含 camera_matrix / dist_coeffs
+  roi:
+    enable: false
+    mode: normalized  # normalized|pixel
+    normalized_xywh: [0.0, 0.0, 1.0, 1.0]
+    pixel_xywh: [0, 0, 0, 0]
+    clamp: true
+    min_size: 8
+  gamma:
+    enable: false
+    value: 1.0
+  white_balance:
+    enable: false
+    clip_percent: 0.0
+  denoise:
+    enable: false
+    method: bilateral
+    d: 5
+    sigma_color: 35.0
+    sigma_space: 35.0
+
 # 输入源配置
 input:
-  type: gige  # gige / video / image
+  type: gige  # gige / csi / video / image
   
   # GigE相机配置
   gige:
@@ -48,6 +73,10 @@ input:
     width: 1920
     height: 1080
     format: RGB  # RGB / GRAY8
+
+  # CSI相机配置（OV5647等）
+  csi:
+    pipeline: "device=/dev/video0,width=640,height=480,framerate=30,format=NV12"
     
   # 视频文件配置（调试用）
   video:

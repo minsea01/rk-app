@@ -11,6 +11,7 @@ echo "  CrowdHuman 行人检测训练 - 目标 90% mAP"
 echo "============================================================"
 echo ""
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # 工作目录
 WORK_DIR="/root/autodl-tmp/crowdhuman_training"
 mkdir -p "$WORK_DIR"
@@ -197,85 +198,29 @@ echo ""
 
 nvidia-smi --query-gpu=name,memory.total --format=csv 2>/dev/null || echo "警告: 未检测到 GPU"
 
-yolo detect train \
-    model=yolov8n.pt \
-    data=datasets/crowdhuman_yolo/crowdhuman.yaml \
-    epochs=150 \
-    imgsz=640 \
-    batch=64 \
-    device=0 \
-    project=outputs \
-    name=yolov8n_crowdhuman \
-    patience=50 \
-    save=True \
-    save_period=10 \
-    val=True \
-    plots=True \
-    exist_ok=True \
-    pretrained=True \
-    optimizer=AdamW \
-    lr0=0.001 \
-    lrf=0.01 \
-    warmup_epochs=3 \
-    mosaic=1.0 \
-    mixup=0.15 \
-    copy_paste=0.1 \
-    degrees=5.0 \
-    translate=0.1 \
-    scale=0.5 \
-    fliplr=0.5 \
-    workers=8 \
-    cache=disk \
-    amp=True
+"$SCRIPT_DIR/train_runner.sh" \
+  --profile baseline \
+  --workdir "$WORK_DIR" \
+  --model yolov8n.pt \
+  --data datasets/crowdhuman_yolo/crowdhuman.yaml \
+  --epochs 150 \
+  --imgsz 640 \
+  --batch 64 \
+  --device 0 \
+  --project outputs \
+  --name yolov8n_crowdhuman \
+  --patience 50 \
+  --save-period 10 \
+  --workers 8 \
+  --cache disk \
+  --optimizer AdamW \
+  --lr0 0.001 \
+  --lrf 0.01
 
-# ==================== 5. 导出 ====================
-echo ""
-echo "[5/5] 导出 ONNX..."
-
-yolo export \
-    model=outputs/yolov8n_crowdhuman/weights/best.pt \
-    format=onnx \
-    opset=12 \
-    simplify=True \
-    imgsz=640
-
-# 结果
 echo ""
 echo "============================================================"
 echo "  训练完成!"
 echo "============================================================"
-
-python3 << 'PYEOF'
-import csv
-import os
-
-results_file = "outputs/yolov8n_crowdhuman/results.csv"
-if os.path.exists(results_file):
-    with open(results_file, 'r') as f:
-        reader = csv.DictReader(f)
-        rows = list(reader)
-        if rows:
-            last = rows[-1]
-            for key in last.keys():
-                if 'mAP50' in key and 'mAP50-95' not in key:
-                    try:
-                        val = float(last[key].strip())
-                        print(f"\n最终 mAP@0.5: {val*100:.1f}%")
-                        if val >= 0.90:
-                            print("✅ 达到 90% mAP 目标!")
-                        else:
-                            print(f"⚠️ 差 {(0.90-val)*100:.1f}%，建议增加 epochs")
-                    except:
-                        pass
-                    break
-
-pt_file = "outputs/yolov8n_crowdhuman/weights/best.pt"
-onnx_file = "outputs/yolov8n_crowdhuman/weights/best.onnx"
-if os.path.exists(onnx_file):
-    size = os.path.getsize(onnx_file) / 1024 / 1024
-    print(f"\nONNX 大小: {size:.1f} MB")
-    print(f"RKNN INT8 预估: {size*0.4:.1f} MB")
-PYEOF
 
 echo ""
 echo "下载命令:"

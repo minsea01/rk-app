@@ -177,12 +177,28 @@ def build_rknn(
             quantized_dtype = _detect_rknn_default_qdtype()
             print(f'Auto-select quantized_dtype={quantized_dtype}')
 
-        rknn.config(
-            target_platform=target,
-            mean_values=mean_values,
-            std_values=std_values,
-            quantized_dtype=quantized_dtype,
-        )
+        config_kwargs = {
+            'target_platform': target,
+            'mean_values': mean_values,
+            'std_values': std_values,
+            'quantized_dtype': quantized_dtype,
+        }
+        if reorder:
+            config_kwargs['reorder_channel'] = reorder
+
+        try:
+            rknn.config(**config_kwargs)
+        except TypeError as e:
+            # Older/variant toolkit builds may not support reorder_channel.
+            if 'reorder_channel' in config_kwargs and 'reorder_channel' in str(e):
+                logger.warning(
+                    "Current RKNN toolkit does not support reorder_channel, "
+                    "falling back without explicit channel reorder"
+                )
+                config_kwargs.pop('reorder_channel', None)
+                rknn.config(**config_kwargs)
+            else:
+                raise
 
         logger.info(f'Loading ONNX: {onnx_path}')
         ret = rknn.load_onnx(model=str(onnx_path))

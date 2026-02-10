@@ -44,6 +44,42 @@ TEST(GigeSourceTest, ParseColorPipeline) {
     EXPECT_NE(pipeline.find("camera-name=\"Cam One\""), std::string::npos);
 }
 
+TEST(GigeSourceTest, ParseBayerFormatWithoutVideoConvert) {
+    auto cfg = GigeSource::parseUri("camera-name=Cam Two,format=BayerRG8,width=1280,height=1024");
+    EXPECT_EQ(cfg.camera_name, "Cam Two");
+    EXPECT_FALSE(cfg.use_videoconvert);
+    EXPECT_EQ(cfg.desired_format, "rggb");
+    EXPECT_TRUE(containsCaps(cfg.caps_kv, "format=rggb"));
+    EXPECT_TRUE(containsCaps(cfg.caps_kv, "width=1280"));
+    EXPECT_TRUE(containsCaps(cfg.caps_kv, "height=1024"));
+
+    const auto pipeline = GigeSource::buildPipelineDescription(cfg);
+    EXPECT_EQ(pipeline.find("videoconvert"), std::string::npos);
+    EXPECT_NE(pipeline.find("video/x-bayer"), std::string::npos);
+    EXPECT_NE(pipeline.find("format=rggb"), std::string::npos);
+}
+
+TEST(GigeSourceTest, ParseMono8AsGray8) {
+    auto cfg = GigeSource::parseUri("format=MONO8");
+    EXPECT_FALSE(cfg.use_videoconvert);
+    EXPECT_EQ(cfg.desired_format, "GRAY8");
+    EXPECT_TRUE(containsCaps(cfg.caps_kv, "format=GRAY8"));
+}
+
+TEST(GigeSourceTest, ParseBayerAliasFormat) {
+    auto cfg = GigeSource::parseUri("format=BAYER_RGGB8");
+    EXPECT_FALSE(cfg.use_videoconvert);
+    EXPECT_EQ(cfg.desired_format, "rggb");
+    EXPECT_TRUE(containsCaps(cfg.caps_kv, "format=rggb"));
+}
+
+TEST(GigeSourceTest, ParseRgbaFormatUsesVideoConvert) {
+    auto cfg = GigeSource::parseUri("format=RGBA");
+    EXPECT_TRUE(cfg.use_videoconvert);
+    EXPECT_EQ(cfg.desired_format, "RGBA");
+    EXPECT_TRUE(containsCaps(cfg.caps_kv, "format=RGBA"));
+}
+
 TEST(GigeSourceTest, SanitizesCameraName) {
     auto cfg = GigeSource::parseUri("camera-name=\";rm -rf;,format=GRAY8");
     const auto pipeline = GigeSource::buildPipelineDescription(cfg);

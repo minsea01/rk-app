@@ -93,7 +93,7 @@ if [ -f "$BEST_WEIGHTS" ]; then
     echo ""
     echo "  3. Convert to RKNN:"
     echo "     python tools/convert_onnx_to_rknn.py \\"
-    echo "       --onnx $BEST_WEIGHTS.onnx \\"
+    echo "       --onnx ${BEST_WEIGHTS%.pt}.onnx \\"
     echo "       --out artifacts/models/yolo11n_citypersons.rknn"
 else
     echo "❌ Training failed - weights not found"

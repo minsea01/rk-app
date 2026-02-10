@@ -17,6 +17,8 @@ from urllib import request, error
 import cv2
 import numpy as np
 
+from apps.exceptions import InferenceError, PreprocessError, RKAppException, RKNNError
+from apps.logger import setup_logger
 from apps.utils.decode_meta import (
     load_decode_meta,
     normalize_decode_meta,
@@ -24,11 +26,17 @@ from apps.utils.decode_meta import (
     resolve_head,
     resolve_raw_layout,
 )
-from apps.utils.yolo_post import letterbox, nms, sigmoid
+from apps.utils.yolo_post import nms, sigmoid
+from apps.utils.preprocess_pipeline import (
+    PreprocessState,
+    build_preprocess_config,
+    map_boxes_back,
+    run_preprocess,
+)
 from apps.utils.headless import safe_imshow, safe_waitKey
 
 # Setup logging
-logger = logging.getLogger(__name__)
+logger = setup_logger(__name__)
 
 
 def parse_source(src: str) -> Union[int, str]:
@@ -240,7 +248,42 @@ def run_stream(args) -> None:
     try:
         from rknnlite.api import RKNNLite
     except ImportError as e:
-        raise SystemExit(f"rknn-toolkit-lite2 not installed: {e}")
+        raise RKNNError(f"rknn-toolkit-lite2 not installed: {e}") from e
+
+    preprocess_overrides = {
+        'profile': args.pp_profile,
+        'undistort_enable': args.undistort_enable,
+        'calibration_file': args.undistort_calib,
+        'roi_enable': args.roi_enable,
+        'roi_mode': args.roi_mode,
+        'roi_normalized_xywh': args.roi_norm,
+        'roi_pixel_xywh': args.roi_px,
+        'roi_min_size': args.roi_min_size,
+        'roi_clamp': args.roi_clamp,
+        'gamma_enable': args.gamma_enable,
+        'gamma_value': args.gamma,
+        'white_balance_enable': args.white_balance_enable,
+        'white_balance_clip_percent': args.white_balance_clip,
+        'denoise_enable': args.denoise_enable,
+        'denoise_method': args.denoise_method,
+        'denoise_d': args.denoise_d,
+        'denoise_sigma_color': args.denoise_sigma_color,
+        'denoise_sigma_space': args.denoise_sigma_space,
+        'input_format': args.input_format,
+    }
+    try:
+        preprocess_config = build_preprocess_config(args.cfg, preprocess_overrides, logger=logger)
+    except (ValueError, OSError) as e:
+        raise PreprocessError(f"Failed to load preprocess config: {e}") from e
+    preprocess_state = PreprocessState()
+    logger.info(
+        "Preprocess profile=%s roi=%s wb=%s gamma=%s denoise=%s",
+        preprocess_config.profile,
+        preprocess_config.roi_enable,
+        preprocess_config.white_balance_enable,
+        preprocess_config.gamma_enable,
+        preprocess_config.denoise_enable,
+    )
 
     cap_src = parse_source(args.source)
     use_gst = isinstance(cap_src, str) and _should_use_gstreamer(cap_src)
@@ -256,7 +299,7 @@ def run_stream(args) -> None:
 
     cap = _open_capture()
     if not cap.isOpened():
-        raise SystemExit(f'Failed to open source: {args.source}')
+        raise PreprocessError(f'Failed to open source: {args.source}')
 
     # Debug: print video properties
     logger.info(f"Video opened: {args.source}")
@@ -331,17 +374,22 @@ def run_stream(args) -> None:
                 continue
             try:
                 t2 = time.perf_counter()
-                img, r, d = letterbox(frame, args.imgsz)
+                try:
+                    img, frame_meta, coord_frame = run_preprocess(
+                        frame, args.imgsz, preprocess_config, preprocess_state, logger=logger
+                    )
+                except (ValueError, cv2.error, RuntimeError) as e:
+                    raise PreprocessError(f"run_preprocess failed: {e}") from e
                 # feed BGR uint8 to RKNN; conversion handled by runtime config (BGR->RGB, /255)
                 t3 = time.perf_counter()
                 try:
-                    q_pre.put((frame, img, r, d, t0, t1, t2, t3), timeout=0.1)
+                    q_pre.put((coord_frame, img, frame_meta, t0, t1, t2, t3), timeout=0.1)
                 except Full:
                     dropped_frames += 1
                     if dropped_frames % 100 == 1:
                         logger.debug(f"Preproc queue full, dropped {dropped_frames} frames")
                 stats['preproc'].add(t3 - t2)
-            except Exception as e:
+            except PreprocessError as e:
                 logger.error(f"Preproc thread error: {e}")
                 stop.set()
                 break
@@ -349,9 +397,9 @@ def run_stream(args) -> None:
 
     rknn = RKNNLite()
     if rknn.load_rknn(str(args.model)) != 0:
-        raise SystemExit('load_rknn failed')
+        raise RKNNError('load_rknn failed')
     if rknn.init_runtime(core_mask=args.core_mask) != 0:
-        raise SystemExit('init_runtime failed')
+        raise RKNNError('init_runtime failed')
     decode_meta = load_decode_meta(args.model, logger=logger)
 
     def t_infer() -> None:
@@ -361,35 +409,41 @@ def run_stream(args) -> None:
             # Warmup
             for _ in range(max(0, args.warmup)):
                 try:
-                    frame, img, r, d, *ts = q_pre.get(timeout=1.0)
+                    frame, img, frame_meta, *ts = q_pre.get(timeout=1.0)
                 except Empty:
                     continue
                 # Add batch dimension for RKNN
                 img_batch = img[None, ...] if img.ndim == 3 else img
-                rknn.inference(inputs=[img_batch])
+                try:
+                    rknn.inference(inputs=[img_batch])
+                except (RuntimeError, ValueError, TypeError) as e:
+                    raise RKNNError(f"Warmup inference failed: {e}") from e
             logger.debug(f"Inference warmup complete ({args.warmup} frames)")
             # Main
             while not stop.is_set():
                 try:
-                    frame, img, r, d, t0, t1, t2, t3 = q_pre.get(timeout=0.1)
+                    frame, img, frame_meta, t0, t1, t2, t3 = q_pre.get(timeout=0.1)
                 except Empty:
                     continue
                 t4 = time.perf_counter()
                 # Add batch dimension: (H, W, 3) → (1, H, W, 3)
                 img_batch = img[None, ...] if img.ndim == 3 else img
-                outputs = rknn.inference(inputs=[img_batch])
+                try:
+                    outputs = rknn.inference(inputs=[img_batch])
+                except (RuntimeError, ValueError, TypeError) as e:
+                    raise RKNNError(f"Inference failed: {e}") from e
                 pred = outputs[0]
                 if pred.ndim == 2:
                     pred = pred[None, ...]
                 t5 = time.perf_counter()
                 try:
-                    q_out.put((frame, pred, r, d, t0, t1, t2, t3, t4, t5), timeout=0.1)
+                    q_out.put((frame, pred, frame_meta, t0, t1, t2, t3, t4, t5), timeout=0.1)
                 except Full:
                     dropped_frames += 1
                     if dropped_frames % 100 == 1:
                         logger.debug(f"Output queue full, dropped {dropped_frames} frames")
                 stats['infer'].add(t5 - t4)
-        except Exception as e:
+        except RKNNError as e:
             logger.error(f"Infer thread error: {e}")
         finally:
             stop.set()
@@ -406,25 +460,22 @@ def run_stream(args) -> None:
         t_start = time.perf_counter()
         while not stop.is_set():
             try:
-                frame, pred, r, d, t0, t1, t2, t3, t4, t5 = q_out.get(timeout=0.1)
+                frame, pred, frame_meta, t0, t1, t2, t3, t4, t5 = q_out.get(timeout=0.1)
             except Empty:
                 continue
             t6 = time.perf_counter()
             try:
-                boxes, confs, cls_ids = decode_predictions(
-                    pred, args.imgsz, args.conf, args.iou, head=args.head, decode_meta=decode_meta
-                )
-            except Exception as e:
+                try:
+                    boxes, confs, cls_ids = decode_predictions(
+                        pred, args.imgsz, args.conf, args.iou, head=args.head, decode_meta=decode_meta
+                    )
+                    boxes = map_boxes_back(boxes, frame_meta)
+                except (ValueError, TypeError, cv2.error) as e:
+                    raise InferenceError(f"Postprocess failed: {e}") from e
+            except InferenceError as e:
                 logger.error(f"Postprocess error: {e}")
                 stop.set()
                 break
-            # scale boxes back to original frame size when using letterbox
-            if len(boxes) > 0:
-                boxes[:, [0, 2]] -= d[0]
-                boxes[:, [1, 3]] -= d[1]
-                boxes /= r
-                boxes[:, 0::2] = boxes[:, 0::2].clip(0, frame.shape[1] - 1)
-                boxes[:, 1::2] = boxes[:, 1::2].clip(0, frame.shape[0] - 1)
             # draw
             for (x1, y1, x2, y2), c, cls in zip(boxes.astype(int), confs, cls_ids):
                 label = f"{int(cls)}:{c:.2f}"
@@ -541,8 +592,8 @@ def run_stream(args) -> None:
             cap.release()
         try:
             rknn.release()
-        except Exception:
-            pass
+        except (RuntimeError, ValueError, TypeError) as e:
+            logger.warning("RKNN release failed: %s", e)
         # Summary
         total_time = sum(s.t_sum for s in stats.values())
         logger.info('Stage stats (ms):')
@@ -550,14 +601,47 @@ def run_stream(args) -> None:
             logger.info(f"  {k}: {s.summary()}")
 
 
-def main():
+def build_arg_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description='High-performance streaming RKNN inference pipeline')
+    p.set_defaults(
+        undistort_enable=None,
+        roi_enable=None,
+        gamma_enable=None,
+        white_balance_enable=None,
+        denoise_enable=None,
+        roi_clamp=None,
+    )
     p.add_argument('--model', type=Path, required=True)
+    p.add_argument('--cfg', type=Path, default=None, help='optional YAML config file')
     p.add_argument('--source', type=str, default='0', help='camera index (as string) or gstreamer/rtsp/file path')
     p.add_argument('--imgsz', type=int, default=640)
     p.add_argument('--conf', type=float, default=0.25)
     p.add_argument('--iou', type=float, default=0.45)
     p.add_argument('--head', type=str, choices=['auto', 'dfl', 'raw'], default='auto')
+    p.add_argument('--pp-profile', type=str, default=None, choices=['speed', 'balanced', 'quality'])
+    p.add_argument('--undistort-enable', action='store_true')
+    p.add_argument('--undistort-calib', type=str, default=None)
+    p.add_argument('--roi-enable', action='store_true')
+    p.add_argument('--roi-mode', type=str, default=None, choices=['normalized', 'pixel'])
+    p.add_argument('--roi-norm', type=str, default=None, help='normalized ROI x,y,w,h in [0,1]')
+    p.add_argument('--roi-px', type=str, default=None, help='pixel ROI x,y,w,h')
+    p.add_argument('--roi-min-size', type=int, default=None)
+    p.add_argument('--roi-no-clamp', dest='roi_clamp', action='store_false')
+    p.add_argument('--gamma-enable', action='store_true')
+    p.add_argument('--gamma', type=float, default=None)
+    p.add_argument('--white-balance-enable', action='store_true')
+    p.add_argument('--white-balance-clip', type=float, default=None)
+    p.add_argument('--denoise-enable', action='store_true')
+    p.add_argument('--denoise-method', type=str, default=None, choices=['bilateral'])
+    p.add_argument('--denoise-d', type=int, default=None)
+    p.add_argument('--denoise-sigma-color', type=float, default=None)
+    p.add_argument('--denoise-sigma-space', type=float, default=None)
+    p.add_argument(
+        '--input-format',
+        type=str,
+        default=None,
+        choices=['auto', 'bgr', 'rgb', 'gray', 'bayer_rg', 'bayer_bg', 'bayer_gr', 'bayer_gb'],
+    )
     p.add_argument('--names', type=Path, default=None)
     p.add_argument('--core-mask', type=lambda x: int(x, 0), default=0x7)
     p.add_argument('--queue', type=int, default=4)
@@ -570,13 +654,26 @@ def main():
     p.add_argument('--max-frames', type=int, default=0)
     p.add_argument('--upload-http', type=str, default=None, help='POST detections JSON to this URL')
     p.add_argument('--upload-interval', type=float, default=0.0, help='seconds between uploads (throttle)')
-    args = p.parse_args()
-    # Configure logging
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    p.add_argument(
+        '--log-level',
+        type=str,
+        default='INFO',
+        choices=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'],
+        help='logging verbosity',
     )
-    run_stream(args)
+    return p
+
+
+def main():
+    global logger
+    p = build_arg_parser()
+    args = p.parse_args()
+    logger = setup_logger(__name__, level=getattr(logging, args.log_level.upper()))
+    try:
+        run_stream(args)
+    except RKAppException as e:
+        logger.error("%s", e)
+        raise SystemExit(str(e)) from e
 
 
 if __name__ == '__main__':

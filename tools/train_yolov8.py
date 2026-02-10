@@ -9,6 +9,34 @@ logging.basicConfig(level=logging.INFO, format='%(message)s')
 logger = logging.getLogger(__name__)
 
 
+def parse_batch(value):
+    """Parse Ultralytics batch argument.
+
+    Supports:
+      - integer batch size, e.g. 16
+      - fractional auto-batch, e.g. 0.7
+      - "auto" (mapped to -1)
+    """
+    if isinstance(value, (int, float)):
+        return value
+
+    s = str(value).strip().lower()
+    if s == 'auto':
+        return -1
+
+    try:
+        return int(s)
+    except ValueError:
+        pass
+
+    try:
+        return float(s)
+    except ValueError as e:
+        raise argparse.ArgumentTypeError(
+            f"invalid --batch value '{value}', expected int/float/auto"
+        ) from e
+
+
 def main() -> int:
     """Main training entry point.
     
@@ -20,7 +48,7 @@ def main() -> int:
     ap.add_argument('--model', type=str, default='yolov8s.pt', help='initial weights or model yaml (e.g., yolov8s.yaml)')
     ap.add_argument('--imgsz', type=int, default=640)
     ap.add_argument('--epochs', type=int, default=100)
-    ap.add_argument('--batch', type=int, default=16)
+    ap.add_argument('--batch', type=parse_batch, default=16, help='batch size (e.g. 16), fraction (e.g. 0.7), or auto')
     ap.add_argument('--device', type=str, default='0', help='GPU id, e.g., 0; use cpu for CPU')
     ap.add_argument('--workers', type=int, default=8)
     ap.add_argument('--project', type=str, default='runs/train')
@@ -68,4 +96,3 @@ def main() -> int:
 
 if __name__ == '__main__':
     raise SystemExit(main())
-

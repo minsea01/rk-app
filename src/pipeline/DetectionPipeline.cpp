@@ -3,6 +3,7 @@
 #include "rkapp/capture/FolderSource.hpp"
 #include "rkapp/capture/MppSource.hpp"
 #include "rkapp/capture/GigeSource.hpp"
+#include "rkapp/capture/CsiSource.hpp"
 #include "rkapp/infer/RknnEngine.hpp"
 #include "rkapp/infer/OnnxEngine.hpp"
 #include "rkapp/post/Postprocess.hpp"
@@ -11,7 +12,9 @@
 #include <algorithm>
 #include <cctype>
 #include <chrono>
+#include <cmath>
 #include <condition_variable>
+#include <limits>
 #include <mutex>
 #include <optional>
 #include <queue>
@@ -44,6 +47,85 @@ bool isMppDecodeEnabledInStats(const PipelineConfig& config) {
     (void)config;
 #endif
     return false;
+}
+
+std::string toLowerCopy(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return value;
+}
+
+struct PreprocessFeatureFlags {
+    bool gamma = false;
+    bool white_balance = false;
+    bool denoise = false;
+};
+
+PreprocessFeatureFlags resolveFeatureFlags(const PipelineConfig& config) {
+    PreprocessFeatureFlags flags;
+    const std::string profile = toLowerCopy(config.preprocess_profile);
+    if (profile == "balanced") {
+        flags.gamma = true;
+        flags.white_balance = true;
+    } else if (profile == "quality") {
+        flags.gamma = true;
+        flags.white_balance = true;
+        flags.denoise = true;
+    }
+
+    if (config.gamma_enable.has_value()) {
+        flags.gamma = *config.gamma_enable;
+    }
+    if (config.white_balance_enable.has_value()) {
+        flags.white_balance = *config.white_balance_enable;
+    }
+    if (config.denoise_enable.has_value()) {
+        flags.denoise = *config.denoise_enable;
+    }
+    return flags;
+}
+
+bool roiModeIsNormalized(const std::string& mode) {
+    return toLowerCopy(mode) != "pixel";
+}
+
+cv::Mat buildGammaLut(float gamma) {
+    if (gamma <= 0.0f || std::fabs(gamma - 1.0f) < 1e-6f) {
+        return {};
+    }
+    cv::Mat lut(1, 256, CV_8U);
+    for (int i = 0; i < 256; ++i) {
+        const double normalized = static_cast<double>(i) / 255.0;
+        const double corrected = std::pow(normalized, static_cast<double>(gamma));
+        lut.at<uint8_t>(0, i) = cv::saturate_cast<uint8_t>(std::round(corrected * 255.0));
+    }
+    return lut;
+}
+
+void applyRoiOffsetAndClip(std::vector<infer::Detection>& detections,
+                           const cv::Rect& roi, cv::Size frame_size) {
+    if (frame_size.width <= 0 || frame_size.height <= 0) {
+        return;
+    }
+
+    const float max_x = static_cast<float>(frame_size.width - 1);
+    const float max_y = static_cast<float>(frame_size.height - 1);
+    for (auto& det : detections) {
+        float x1 = det.x + static_cast<float>(roi.x);
+        float y1 = det.y + static_cast<float>(roi.y);
+        float x2 = x1 + det.w;
+        float y2 = y1 + det.h;
+
+        x1 = std::clamp(x1, 0.0f, max_x);
+        y1 = std::clamp(y1, 0.0f, max_y);
+        x2 = std::clamp(x2, 0.0f, max_x);
+        y2 = std::clamp(y2, 0.0f, max_y);
+
+        det.x = x1;
+        det.y = y1;
+        det.w = std::max(0.0f, x2 - x1);
+        det.h = std::max(0.0f, y2 - y1);
+    }
 }
 
 } // namespace
@@ -80,6 +162,16 @@ struct DetectionPipeline::Impl {
     std::atomic<double> current_fps{0.0};
     TimePoint last_fps_update;
     int frames_since_update{0};
+
+    // Optional undistort state
+    preprocess::CameraCalibration calibration;
+    bool calibration_loaded{false};
+    cv::Mat undistort_map1;
+    cv::Mat undistort_map2;
+    cv::Size undistort_size{0, 0};
+    PreprocessFeatureFlags preprocess_flags;
+    cv::Mat gamma_lut_cache;
+    float gamma_lut_value{std::numeric_limits<float>::quiet_NaN()};
 
     void updateFps() {
         frames_since_update++;
@@ -123,6 +215,27 @@ DetectionPipeline::~DetectionPipeline() {
 bool DetectionPipeline::init(const PipelineConfig& config) {
     impl_->config = config;
     impl_->rknn_engine = nullptr;
+    impl_->calibration = {};
+    impl_->calibration_loaded = false;
+    impl_->undistort_map1.release();
+    impl_->undistort_map2.release();
+    impl_->undistort_size = {0, 0};
+    impl_->preprocess_flags = resolveFeatureFlags(config);
+    impl_->gamma_lut_cache.release();
+    impl_->gamma_lut_value = std::numeric_limits<float>::quiet_NaN();
+
+    if (config.enable_undistort) {
+        if (config.calibration_file.empty()) {
+            LOGW("DetectionPipeline: Undistort requested but calibration_file is empty");
+        } else if (preprocess::Preprocess::loadCalibration(
+                       config.calibration_file, impl_->calibration)) {
+            impl_->calibration_loaded = true;
+            LOGI("DetectionPipeline: Loaded calibration from ", config.calibration_file);
+        } else {
+            LOGW("DetectionPipeline: Failed to load calibration file: ",
+                 config.calibration_file, "; undistort disabled");
+        }
+    }
 
     // Create source
     impl_->source = createSource(config);
@@ -202,6 +315,12 @@ bool DetectionPipeline::init(const PipelineConfig& config) {
     LOGI("  - RGA preprocess: ", (impl_->stats.rga_enabled ? "enabled" : "disabled"));
     LOGI("  - MPP decode: ", (impl_->stats.mpp_enabled ? "enabled" : "disabled"));
     LOGI("  - Zero-copy: ", (impl_->stats.zero_copy_enabled ? "enabled" : "disabled"));
+    LOGI("  - Undistort: ", (impl_->calibration_loaded ? "enabled" : "disabled"));
+    LOGI("  - Preprocess profile: ", config.preprocess_profile);
+    LOGI("  - ROI: ", (config.roi_enable ? "enabled" : "disabled"));
+    LOGI("  - White balance: ", (impl_->preprocess_flags.white_balance ? "enabled" : "disabled"));
+    LOGI("  - Gamma: ", (impl_->preprocess_flags.gamma ? "enabled" : "disabled"));
+    LOGI("  - Denoise: ", (impl_->preprocess_flags.denoise ? "enabled" : "disabled"));
 
     return true;
 }
@@ -241,17 +360,126 @@ PipelineResult DetectionPipeline::process(const cv::Mat& image) {
         return result;
     }
 
+    preprocess::AccelBackend backend = impl_->config.use_rga_preprocess
+        ? preprocess::AccelBackend::AUTO
+        : preprocess::AccelBackend::OPENCV;
+
+    auto preprocess_start = Clock::now();
+
+    cv::Mat bgr_input = preprocess::Preprocess::ensureBgr8( image, backend);
+    if (bgr_input.empty()) {
+        LOGW("DetectionPipeline: Failed to normalize frame to BGR8");
+        return result;
+    }
+
+    cv::Mat working = bgr_input;
+    if (impl_->calibration_loaded) {
+        if (impl_->undistort_size != bgr_input.size()) {
+            if (preprocess::Preprocess::buildUndistortMaps(
+                    impl_->calibration, bgr_input.size(), impl_->undistort_map1,
+                    impl_->undistort_map2)) {
+                impl_->undistort_size = bgr_input.size();
+            } else {
+                LOGW("DetectionPipeline: Failed to build undistort maps; bypassing undistort");
+                impl_->undistort_map1.release();
+                impl_->undistort_map2.release();
+                impl_->undistort_size = {0, 0};
+                impl_->calibration_loaded = false;
+            }
+        }
+        if (!impl_->undistort_map1.empty() && !impl_->undistort_map2.empty()) {
+            cv::Mat undistorted = preprocess::Preprocess::undistort(
+                bgr_input, impl_->undistort_map1, impl_->undistort_map2);
+            if (!undistorted.empty()) {
+                working = std::move(undistorted);
+            }
+        }
+    }
+
+    const cv::Size coord_space_size = working.size();
+    cv::Rect roi_rect(0, 0, working.cols, working.rows);
+    bool roi_applied = false;
+    if (impl_->config.roi_enable) {
+        cv::Rect resolved_roi;
+        const cv::Rect2f normalized_roi(
+            impl_->config.roi_normalized_xywh[0], impl_->config.roi_normalized_xywh[1],
+            impl_->config.roi_normalized_xywh[2], impl_->config.roi_normalized_xywh[3]);
+        const cv::Rect pixel_roi(
+            impl_->config.roi_pixel_xywh[0], impl_->config.roi_pixel_xywh[1],
+            impl_->config.roi_pixel_xywh[2], impl_->config.roi_pixel_xywh[3]);
+        if (preprocess::Preprocess::resolveRoiRect(
+                working.size(), roiModeIsNormalized(impl_->config.roi_mode), normalized_roi,
+                pixel_roi, impl_->config.roi_clamp, impl_->config.roi_min_size,
+                resolved_roi)) {
+            roi_rect = resolved_roi;
+            if (roi_rect.x != 0 || roi_rect.y != 0 ||
+                roi_rect.width != working.cols || roi_rect.height != working.rows) {
+                cv::Mat cropped = preprocess::Preprocess::cropRoi(working, roi_rect);
+                if (!cropped.empty()) {
+                    working = std::move(cropped);
+                    roi_applied = true;
+                } else {
+                    LOGW("DetectionPipeline: ROI crop failed, using full frame");
+                    roi_rect = cv::Rect(0, 0, working.cols, working.rows);
+                }
+            }
+        } else {
+            LOGW("DetectionPipeline: Invalid ROI config, using full frame");
+        }
+    }
+
+    if (impl_->preprocess_flags.denoise) {
+        if (toLowerCopy(impl_->config.denoise_method) != "bilateral") {
+            LOGW("DetectionPipeline: Unsupported denoise method '",
+                 impl_->config.denoise_method, "', using bilateral");
+        }
+        cv::Mat denoised = preprocess::Preprocess::denoiseBilateral(
+            working, impl_->config.denoise_d, impl_->config.denoise_sigma_color,
+            impl_->config.denoise_sigma_space);
+        if (!denoised.empty()) {
+            working = std::move(denoised);
+        }
+    }
+
+    if (impl_->preprocess_flags.white_balance) {
+        cv::Mat balanced = preprocess::Preprocess::whiteBalanceGrayWorld(
+            working, impl_->config.white_balance_clip_percent);
+        if (!balanced.empty()) {
+            working = std::move(balanced);
+        }
+    }
+
+    if (impl_->preprocess_flags.gamma) {
+        const float gamma_value = impl_->config.gamma_value;
+        if (gamma_value > 0.0f && std::fabs(gamma_value - 1.0f) >= 1e-6f) {
+            if (impl_->gamma_lut_cache.empty() ||
+                std::fabs(impl_->gamma_lut_value - gamma_value) > 1e-6f) {
+                impl_->gamma_lut_cache = buildGammaLut(gamma_value);
+                impl_->gamma_lut_value = gamma_value;
+            }
+            if (!impl_->gamma_lut_cache.empty()) {
+                cv::Mat gamma_corrected;
+                cv::LUT(working, impl_->gamma_lut_cache, gamma_corrected);
+                if (!gamma_corrected.empty()) {
+                    working = std::move(gamma_corrected);
+                }
+            }
+        } else if (gamma_value <= 0.0f) {
+            LOGW("DetectionPipeline: Invalid gamma value ", gamma_value, ", skipping gamma correction");
+        }
+    }
+
 #if RKAPP_WITH_RKNN
     if (impl_->rknn_engine) {
         // Preprocess
-        auto preprocess_start = Clock::now();
         preprocess::LetterboxInfo letterbox_info;
-        preprocess::AccelBackend backend = impl_->config.use_rga_preprocess
-            ? preprocess::AccelBackend::AUTO
-            : preprocess::AccelBackend::OPENCV;
 
         cv::Mat preprocessed = preprocess::Preprocess::letterbox(
-            image, impl_->config.input_size, letterbox_info, backend);
+            working, impl_->config.input_size, letterbox_info, backend);
+        if (preprocessed.empty()) {
+            LOGW("DetectionPipeline: Letterbox preprocessing failed");
+            return result;
+        }
 
         if (impl_->config.enable_profiling) {
             result.timing.preprocess_us = microsecondsSince(preprocess_start);
@@ -269,22 +497,26 @@ PipelineResult DetectionPipeline::process(const cv::Mat& image) {
                     preprocessed, cv::COLOR_BGR2RGB, backend);
                 if (dma_buf->copyFrom(rgb)) {
                     result.detections = impl_->rknn_engine->inferDmaBuf(
-                        *dma_buf, image.size(), letterbox_info);
+                        *dma_buf, working.size(), letterbox_info);
                 } else {
                     result.detections = impl_->rknn_engine->inferPreprocessed(
-                        preprocessed, image.size(), letterbox_info);
+                        preprocessed, working.size(), letterbox_info);
                 }
                 impl_->buffer_pool->release(dma_buf);
             } else {
                 // No buffer available, use regular path
                 result.detections = impl_->rknn_engine->inferPreprocessed(
-                    preprocessed, image.size(), letterbox_info);
+                    preprocessed, working.size(), letterbox_info);
             }
         } else {
             // Standard inference path: pass preprocessed image to avoid double letterbox
             // Cast to RknnEngine to use inferPreprocessed
             result.detections = impl_->rknn_engine->inferPreprocessed(
-                preprocessed, image.size(), letterbox_info);
+                preprocessed, working.size(), letterbox_info);
+        }
+
+        if (roi_applied) {
+            applyRoiOffsetAndClip(result.detections, roi_rect, coord_space_size);
         }
 
         if (impl_->config.enable_profiling) {
@@ -297,8 +529,14 @@ PipelineResult DetectionPipeline::process(const cv::Mat& image) {
     }
 #endif
 
+    if (impl_->config.enable_profiling) {
+        result.timing.preprocess_us = microsecondsSince(preprocess_start);
+    }
     auto inference_start = Clock::now();
-    result.detections = impl_->engine->infer(image);
+    result.detections = impl_->engine->infer(working);
+    if (roi_applied) {
+        applyRoiOffsetAndClip(result.detections, roi_rect, coord_space_size);
+    }
     if (impl_->config.enable_profiling) {
         result.timing.inference_us = microsecondsSince(inference_start);
     }
@@ -430,6 +668,14 @@ capture::SourcePtr createSource(const PipelineConfig& config) {
             return std::make_unique<capture::GigeSource>();
 #else
             LOGW("DetectionPipeline: GIGE not available, falling back to VideoSource");
+            return std::make_unique<capture::VideoSource>();
+#endif
+
+        case capture::SourceType::CSI:
+#if RKAPP_WITH_CSI
+            return std::make_unique<capture::CsiSource>();
+#else
+            LOGW("DetectionPipeline: CSI not available, falling back to VideoSource");
             return std::make_unique<capture::VideoSource>();
 #endif
 

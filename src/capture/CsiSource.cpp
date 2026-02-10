@@ -1,10 +1,11 @@
-#include "rkapp/capture/GigeSource.hpp"
+#include "rkapp/capture/CsiSource.hpp"
 
 #include <algorithm>
 #include <charconv>
 #include <cctype>
 #include <iostream>
 #include <sstream>
+#include <thread>
 #include <utility>
 
 #include <opencv2/opencv.hpp>
@@ -12,7 +13,7 @@
 #include "log.hpp"
 #include "pixel_format_utils.hpp"
 
-#ifdef RKAPP_WITH_GIGE
+#ifdef RKAPP_WITH_CSI
 #include <gst/app/gstappsink.h>
 #include <gst/gst.h>
 #include <gst/gstcaps.h>
@@ -31,8 +32,11 @@ std::string trimCopy(const std::string& input) {
   auto first = std::find_if_not(input.begin(), input.end(),
                                 [](unsigned char ch) { return std::isspace(ch); });
   auto last = std::find_if_not(input.rbegin(), input.rend(),
-                               [](unsigned char ch) { return std::isspace(ch); }).base();
-  if (first >= last) return {};
+                               [](unsigned char ch) { return std::isspace(ch); })
+                  .base();
+  if (first >= last) {
+    return {};
+  }
   return std::string(first, last);
 }
 
@@ -44,7 +48,9 @@ std::string toLowerCopy(std::string value) {
 
 bool parseInt(const std::string& input, int& out) {
   const auto trimmed = trimCopy(input);
-  if (trimmed.empty()) return false;
+  if (trimmed.empty()) {
+    return false;
+  }
   int value = 0;
   const char* begin = trimmed.data();
   const char* end = trimmed.data() + trimmed.size();
@@ -55,11 +61,24 @@ bool parseInt(const std::string& input, int& out) {
   return false;
 }
 
-bool parseBool(const std::string& input) {
-  const auto lowered = toLowerCopy(trimCopy(input));
-  return lowered == "1" || lowered == "true" || lowered == "yes" ||
-         lowered == "on" || lowered == "color" || lowered == "colour" ||
-         lowered == "bgr" || lowered == "rgb";
+int parseFramerate(const std::string& value, int fallback) {
+  int parsed = 0;
+  if (parseInt(value, parsed)) {
+    return std::max(1, parsed);
+  }
+  const size_t slash = value.find('/');
+  if (slash == std::string::npos) {
+    return fallback;
+  }
+  int num = 0;
+  int den = 1;
+  if (!parseInt(value.substr(0, slash), num) || !parseInt(value.substr(slash + 1), den)) {
+    return fallback;
+  }
+  if (den <= 0) {
+    return fallback;
+  }
+  return std::max(1, num / den);
 }
 
 using detail::PixelFormatKind;
@@ -70,7 +89,7 @@ using detail::isBayerFormat;
 using detail::mediaTypeForFormat;
 using detail::shouldUseVideoConvert;
 
-#ifdef RKAPP_WITH_GIGE
+#ifdef RKAPP_WITH_CSI
 struct GstSampleHolder {
   GstSample* sample = nullptr;
   GstBuffer* buffer = nullptr;
@@ -110,22 +129,22 @@ struct GstSampleGuard {
 
 }  // namespace
 
-GigeSource::~GigeSource() {
+CsiSource::~CsiSource() {
   try {
     release();
   } catch (...) {
-    // destructors must not throw
+    // Destructors must not throw.
   }
 }
 
-bool GigeSource::open(const std::string& uri) {
-#ifdef RKAPP_WITH_GIGE
+bool CsiSource::open(const std::string& uri) {
+#ifdef RKAPP_WITH_CSI
   std::lock_guard<std::mutex> lock(mtx_);
   destroyPipeline();
   opened_ = false;
   count_ = 0;
   consecutive_failures_ = 0;
-  camera_uri_ = uri;
+  device_uri_ = uri;
 
   if (!gst_is_initialized()) {
     int argc = 0;
@@ -147,19 +166,20 @@ bool GigeSource::open(const std::string& uri) {
 
   opened_ = true;
   size_ = {0, 0};
-  fps_ = 30.0;
+  fps_ = static_cast<double>(uri_config_.framerate);
   count_ = 0;
   return true;
 #else
   (void)uri;
-  std::cerr << "GigeSource: 未启用 GIGE (Aravis)。请以 -DENABLE_GIGE=ON 并安装 aravis-0.8 后重编译。" << std::endl;
+  std::cerr << "CsiSource: CSI source is not enabled. Rebuild with -DENABLE_CSI=ON."
+            << std::endl;
   opened_ = false;
   return false;
 #endif
 }
 
-bool GigeSource::read(cv::Mat& frame) {
-#ifdef RKAPP_WITH_GIGE
+bool CsiSource::read(cv::Mat& frame) {
+#ifdef RKAPP_WITH_CSI
   CaptureFrame capture;
   if (!readFrame(capture)) {
     return false;
@@ -172,13 +192,15 @@ bool GigeSource::read(cv::Mat& frame) {
 #endif
 }
 
-bool GigeSource::readFrame(CaptureFrame& frame) {
-#ifdef RKAPP_WITH_GIGE
+bool CsiSource::readFrame(CaptureFrame& frame) {
+#ifdef RKAPP_WITH_CSI
   frame.owner.reset();
   frame.mat.release();
 
   std::unique_lock<std::mutex> lock(mtx_);
-  if (!opened_) return false;
+  if (!opened_) {
+    return false;
+  }
   if (!ensurePipelineLocked()) {
     return false;
   }
@@ -200,23 +222,31 @@ bool GigeSource::readFrame(CaptureFrame& frame) {
   sample_guard.sample =
       gst_app_sink_try_pull_sample(sample_guard.sink, pull_timeout.count() * GST_MSECOND);
   if (!sample_guard.sample) {
-    LOGW("GigeSource: pull_sample timeout, scheduling reconnect");
+    LOGW("CsiSource: pull_sample timeout, scheduling reconnect");
     lock.lock();
     handleReadFailureLocked();
     return false;
   }
 
   sample_guard.buffer = gst_sample_get_buffer(sample_guard.sample);
-  GstCaps* caps = gst_sample_get_caps(sample_guard.sample);
-  if (!caps) {
-    LOGE("GigeSource: missing caps in sample");
+  if (!sample_guard.buffer) {
+    LOGW("CsiSource: sample has no GstBuffer");
     lock.lock();
     handleReadFailureLocked();
     return false;
   }
+
+  GstCaps* caps = gst_sample_get_caps(sample_guard.sample);
+  if (!caps) {
+    LOGW("CsiSource: sample has no caps");
+    lock.lock();
+    handleReadFailureLocked();
+    return false;
+  }
+
   const GstStructure* structure = gst_caps_get_structure(caps, 0);
   if (!structure) {
-    LOGE("GigeSource: missing structure in caps");
+    LOGW("CsiSource: sample caps has no structure");
     lock.lock();
     handleReadFailureLocked();
     return false;
@@ -225,34 +255,29 @@ bool GigeSource::readFrame(CaptureFrame& frame) {
   int width = 0;
   int height = 0;
   if (!gst_structure_get_int(structure, "width", &width) ||
-      !gst_structure_get_int(structure, "height", &height) ||
-      width <= 0 || height <= 0 || width > 8192 || height > 8192) {
-    LOGE("GigeSource: invalid frame dimensions: ", width, "x", height);
+      !gst_structure_get_int(structure, "height", &height) || width <= 0 || height <= 0 ||
+      width > 8192 || height > 8192) {
+    LOGW("CsiSource: invalid frame dimensions: ", width, "x", height);
     lock.lock();
     handleReadFailureLocked();
     return false;
   }
 
   const gchar* fmt = gst_structure_get_string(structure, "format");
-  if (!fmt) {
-    LOGW("GigeSource: sample format unspecified, assuming BGR");
-  }
   const std::string sample_format = fmt ? fmt : "BGR";
   PixelFormatKind pixel_kind = classifyPixelFormat(sample_format);
   if (!fmt) {
     pixel_kind = PixelFormatKind::BGR;
-  } else if (pixel_kind == PixelFormatKind::UNKNOWN && !uri_config_.desired_format.empty()) {
-    pixel_kind = classifyPixelFormat(uri_config_.desired_format);
   }
   if (pixel_kind == PixelFormatKind::UNKNOWN) {
-    LOGW("GigeSource: unsupported sample format: ", sample_format);
+    LOGW("CsiSource: unsupported sample format: ", sample_format);
     lock.lock();
     handleReadFailureLocked();
     return false;
   }
 
   if (!gst_buffer_map(sample_guard.buffer, &sample_guard.map, GST_MAP_READ)) {
-    LOGW("GigeSource: failed to map buffer");
+    LOGW("CsiSource: failed to map buffer");
     lock.lock();
     handleReadFailureLocked();
     return false;
@@ -282,11 +307,12 @@ bool GigeSource::readFrame(CaptureFrame& frame) {
       src_type = CV_8UC3;
       break;
   }
+
   const size_t row_stride =
       static_cast<size_t>(sample_guard.map.size) / static_cast<size_t>(height);
   const size_t expected_stride = static_cast<size_t>(width) * static_cast<size_t>(src_channels);
   if (row_stride < expected_stride) {
-    LOGW("GigeSource: buffer stride smaller than expected");
+    LOGW("CsiSource: buffer stride smaller than expected");
     lock.lock();
     handleReadFailureLocked();
     return false;
@@ -317,7 +343,7 @@ bool GigeSource::readFrame(CaptureFrame& frame) {
       } else if (isBayerFormat(pixel_kind)) {
         const int bayer_code = bayerToBgrCode(pixel_kind);
         if (bayer_code < 0) {
-          LOGW("GigeSource: unsupported Bayer format: ", sample_format);
+          LOGW("CsiSource: unsupported Bayer format: ", sample_format);
           lock.lock();
           handleReadFailureLocked();
           return false;
@@ -325,8 +351,7 @@ bool GigeSource::readFrame(CaptureFrame& frame) {
         cv::cvtColor(mapped, frame.mat, bayer_code);
       }
     } catch (const cv::Exception& e) {
-      LOGW("GigeSource: color conversion failed for format ", sample_format,
-           ": ", e.what());
+      LOGW("CsiSource: color conversion failed for format ", sample_format, ": ", e.what());
       lock.lock();
       handleReadFailureLocked();
       return false;
@@ -336,7 +361,9 @@ bool GigeSource::readFrame(CaptureFrame& frame) {
 
   lock.lock();
   consecutive_failures_ = 0;
-  if (size_.width == 0) size_ = {width, height};
+  if (size_.width == 0) {
+    size_ = {width, height};
+  }
   ++count_;
   return true;
 #else
@@ -345,8 +372,8 @@ bool GigeSource::readFrame(CaptureFrame& frame) {
 #endif
 }
 
-void GigeSource::release() {
-#ifdef RKAPP_WITH_GIGE
+void CsiSource::release() {
+#ifdef RKAPP_WITH_CSI
   std::lock_guard<std::mutex> lock(mtx_);
   destroyPipeline();
 #endif
@@ -355,209 +382,189 @@ void GigeSource::release() {
   size_ = {0, 0};
 }
 
-GigeSource::UriConfig GigeSource::parseUri(const std::string& uri) {
+CsiSource::UriConfig CsiSource::parseUri(const std::string& uri) {
   UriConfig config;
-  bool format_explicit = false;
-  bool color_requested = false;
 
-  auto applyFormat = [&](const std::string& fmt) {
-    const auto caps_fmt = canonicalCapsFormat(fmt);
-    if (caps_fmt.empty()) return;
-    const auto sanitized = sanitizeCaps("format=" + caps_fmt);
-    if (sanitized.empty()) return;
-    config.desired_format = caps_fmt;
-    config.use_videoconvert = shouldUseVideoConvert(caps_fmt);
-    format_explicit = true;
-    config.caps_kv.erase(
-        std::remove_if(config.caps_kv.begin(), config.caps_kv.end(),
-                       [](const std::string& entry) {
-                         return entry.rfind("format=", 0) == 0;
-                       }),
-        config.caps_kv.end());
-    config.caps_kv.push_back("format=" + caps_fmt);
+  auto applyFormat = [&](const std::string& format) {
+    const std::string normalized = canonicalCapsFormat(format);
+    if (normalized.empty()) {
+      return;
+    }
+    config.format = normalized;
+    config.use_videoconvert = shouldUseVideoConvert(normalized);
   };
 
   if (!uri.empty()) {
     size_t start = 0;
     while (start <= uri.size()) {
-      size_t comma = uri.find(',', start);
+      const size_t comma = uri.find(',', start);
       std::string token =
           (comma == std::string::npos) ? uri.substr(start) : uri.substr(start, comma - start);
       start = (comma == std::string::npos) ? uri.size() + 1 : comma + 1;
       token = trimCopy(token);
-      if (token.empty()) continue;
+      if (token.empty()) {
+        continue;
+      }
 
       const size_t eq = token.find('=');
       if (eq == std::string::npos) {
         continue;
       }
-      std::string key = trimCopy(token.substr(0, eq));
-      std::string value = trimCopy(token.substr(eq + 1));
-      if (key.empty()) continue;
 
-      const std::string lowered = toLowerCopy(key);
-      if (lowered == "camera-name") {
-        if (!value.empty()) config.camera_name = value;
+      const std::string key = toLowerCopy(trimCopy(token.substr(0, eq)));
+      const std::string value = trimCopy(token.substr(eq + 1));
+      if (key.empty()) {
         continue;
       }
 
-      if (lowered == "pull-timeout-ms") {
-        int parsed = 0;
-        if (parseInt(value, parsed)) {
-          parsed = std::clamp(parsed, 50, 5000);
-          config.pull_timeout = std::chrono::milliseconds(parsed);
+      if (key == "device") {
+        if (!value.empty()) {
+          config.device = sanitizeDevicePath(value);
         }
         continue;
       }
-
-      if (lowered == "max-failures" || lowered == "max-consecutive-failures") {
+      if (key == "width") {
+        int parsed = 0;
+        if (parseInt(value, parsed)) {
+          config.width = std::clamp(parsed, 32, 8192);
+        }
+        continue;
+      }
+      if (key == "height") {
+        int parsed = 0;
+        if (parseInt(value, parsed)) {
+          config.height = std::clamp(parsed, 32, 8192);
+        }
+        continue;
+      }
+      if (key == "framerate" || key == "fps") {
+        config.framerate = std::clamp(parseFramerate(value, config.framerate), 1, 240);
+        continue;
+      }
+      if (key == "format") {
+        if (!value.empty()) {
+          applyFormat(value);
+        }
+        continue;
+      }
+      if (key == "pull-timeout-ms") {
+        int parsed = 0;
+        if (parseInt(value, parsed)) {
+          config.pull_timeout = std::chrono::milliseconds(std::clamp(parsed, 50, 5000));
+        }
+        continue;
+      }
+      if (key == "max-failures" || key == "max-consecutive-failures") {
         int parsed = 0;
         if (parseInt(value, parsed)) {
           config.max_consecutive_failures = std::clamp(parsed, 1, 100);
         }
         continue;
       }
-
-      if (lowered == "color" || lowered == "colour" || lowered == "mode") {
-        color_requested = parseBool(value);
-        continue;
-      }
-
-      if (lowered == "format") {
-        if (!value.empty()) {
-          applyFormat(value);
-        }
-        continue;
-      }
-
-      auto sanitized = sanitizeCaps(token);
-      if (!sanitized.empty()) {
-        config.caps_kv.push_back(std::move(sanitized));
-      }
     }
   }
 
-  if (!format_explicit) {
-    config.caps_kv.erase(
-        std::remove_if(config.caps_kv.begin(), config.caps_kv.end(),
-                       [](const std::string& entry) {
-                         return entry.rfind("format=", 0) == 0;
-                       }),
-        config.caps_kv.end());
-    if (color_requested) {
-      config.desired_format = "BGR";
-      config.use_videoconvert = true;
-      config.caps_kv.push_back("format=BGR");
-    } else {
-      config.desired_format = "GRAY8";
-      config.use_videoconvert = false;
-      config.caps_kv.push_back("format=GRAY8");
-    }
+  if (config.device.empty()) {
+    config.device = "/dev/video0";
   }
-
-  std::vector<std::string> deduped;
-  deduped.reserve(config.caps_kv.size());
-  for (const auto& entry : config.caps_kv) {
-    if (entry.empty()) continue;
-    if (std::find(deduped.begin(), deduped.end(), entry) == deduped.end()) {
-      deduped.push_back(entry);
-    }
+  if (config.format.empty()) {
+    config.format = "NV12";
   }
-  config.caps_kv = std::move(deduped);
-
+  config.use_videoconvert = shouldUseVideoConvert(config.format);
   return config;
 }
 
-std::string GigeSource::buildPipelineDescription(const UriConfig& config) {
-  const std::string media_type = mediaTypeForFormat(config.desired_format);
-  std::string caps = media_type;
-  for (const auto& kv : config.caps_kv) {
-    auto sanitized = sanitizeCaps(kv);
-    if (sanitized.empty()) continue;
-    if (sanitized.rfind("video/", 0) == 0) continue;
-    caps += ",";
-    caps += sanitized;
-  }
+std::string CsiSource::buildPipelineDescription(const UriConfig& config) {
+  const std::string media_type = mediaTypeForFormat(config.format);
+  const std::string safe_device = sanitizeDevicePath(config.device);
+  const std::string safe_format = sanitizeCapsToken(config.format);
+  const int safe_width = std::clamp(config.width, 32, 8192);
+  const int safe_height = std::clamp(config.height, 32, 8192);
+  const int safe_fps = std::clamp(config.framerate, 1, 240);
 
   std::ostringstream pipeline;
-  pipeline << "aravissrc camera-name=\"" << sanitizeCameraName(config.camera_name) << "\" ! "
-           << caps << " ! ";
+  pipeline << "v4l2src device=" << safe_device << " ! "
+           << media_type << ",format=" << (safe_format.empty() ? "NV12" : safe_format)
+           << ",width=" << safe_width << ",height=" << safe_height << ",framerate=" << safe_fps
+           << "/1 ! ";
+
   if (config.use_videoconvert) {
-    pipeline << "videoconvert ! video/x-raw,format=" << config.desired_format
-             << " ! appsink name=sink sync=false max-buffers=2 drop=true";
+    pipeline << "videoconvert ! video/x-raw,format=BGR ! ";
+    pipeline << "appsink name=sink sync=false max-buffers=2 drop=true";
   } else {
-    pipeline << "appsink name=sink caps=" << media_type << ",format=" << config.desired_format
+    pipeline << "appsink name=sink caps=" << media_type << ",format="
+             << (safe_format.empty() ? "NV12" : safe_format)
              << " sync=false max-buffers=2 drop=true";
   }
   return pipeline.str();
 }
 
-std::string GigeSource::sanitizeCameraName(const std::string& name) {
+std::string CsiSource::sanitizeDevicePath(const std::string& value) {
   std::string safe;
-  safe.reserve(name.size());
-  for (char ch : name) {
-    unsigned char c = static_cast<unsigned char>(ch);
-    if (ch == '"' || ch == '\\') {
-      safe.push_back('\\');
-      safe.push_back(ch);
-    } else if (std::isalnum(c) || ch == '-' || ch == '_' || ch == '.' || ch == ' ') {
+  safe.reserve(value.size());
+  for (char ch : value) {
+    const unsigned char c = static_cast<unsigned char>(ch);
+    if (std::isalnum(c) || ch == '/' || ch == '_' || ch == '-' || ch == '.' || ch == ':') {
       safe.push_back(ch);
     }
   }
-  if (safe.empty()) safe = "camera";
-  return safe;
-}
-
-std::string GigeSource::sanitizeCaps(const std::string& caps) {
-  std::string safe;
-  safe.reserve(caps.size());
-  for (char ch : caps) {
-    unsigned char c = static_cast<unsigned char>(ch);
-    if (std::isalnum(c) || ch == '_' || ch == '-' || ch == ':' || ch == '/' ||
-        ch == '=' || ch == ',' || ch == '.') {
-      safe.push_back(ch);
-    }
+  if (safe.empty()) {
+    return "/dev/video0";
   }
   return safe;
 }
 
-bool GigeSource::isOpened() const {
+std::string CsiSource::sanitizeCapsToken(const std::string& value) {
+  std::string safe;
+  safe.reserve(value.size());
+  for (char ch : value) {
+    const unsigned char c = static_cast<unsigned char>(ch);
+    if (std::isalnum(c) || ch == '_' || ch == '-') {
+      safe.push_back(ch);
+    }
+  }
+  return safe;
+}
+
+bool CsiSource::isOpened() const {
   std::lock_guard<std::mutex> lock(mtx_);
   return opened_;
 }
 
-double GigeSource::getFPS() const {
+double CsiSource::getFPS() const {
   std::lock_guard<std::mutex> lock(mtx_);
   return fps_;
 }
 
-cv::Size GigeSource::getSize() const {
+cv::Size CsiSource::getSize() const {
   std::lock_guard<std::mutex> lock(mtx_);
   return size_;
 }
 
-int GigeSource::getTotalFrames() const { return 0; }
+int CsiSource::getTotalFrames() const { return 0; }
 
-int GigeSource::getCurrentFrame() const {
+int CsiSource::getCurrentFrame() const {
   std::lock_guard<std::mutex> lock(mtx_);
   return count_;
 }
 
-#ifdef RKAPP_WITH_GIGE
-bool GigeSource::createPipeline() {
+#ifdef RKAPP_WITH_CSI
+bool CsiSource::createPipeline() {
   destroyPipeline();
 
   GError* err = nullptr;
   pipeline_ = gst_parse_launch(pipeline_desc_.c_str(), &err);
   if (!pipeline_) {
-    LOGE("GigeSource: 创建GStreamer管道失败: ", (err ? err->message : "unknown"));
-    if (err) g_error_free(err);
+    LOGE("CsiSource: failed to create GStreamer pipeline: ", (err ? err->message : "unknown"));
+    if (err) {
+      g_error_free(err);
+    }
     return false;
   }
 
   sink_element_ = gst_bin_get_by_name(GST_BIN(pipeline_), "sink");
   if (!sink_element_) {
-    LOGE("GigeSource: 未找到appsink");
+    LOGE("CsiSource: appsink element not found");
     destroyPipeline();
     return false;
   }
@@ -567,18 +574,17 @@ bool GigeSource::createPipeline() {
   gst_app_sink_set_drop(appsink_, true);
   gst_app_sink_set_max_buffers(appsink_, 3);
 
-  GstStateChangeReturn sret = gst_element_set_state(pipeline_, GST_STATE_PLAYING);
-  if (sret == GST_STATE_CHANGE_FAILURE) {
-    LOGE("GigeSource: 管道无法进入PLAYING");
+  const GstStateChangeReturn state_ret = gst_element_set_state(pipeline_, GST_STATE_PLAYING);
+  if (state_ret == GST_STATE_CHANGE_FAILURE) {
+    LOGE("CsiSource: pipeline failed to enter PLAYING state");
     destroyPipeline();
     return false;
   }
 
-  // Bound the wait for READY->PLAYING to avoid hanging the capture loop
-  GstStateChangeReturn wait_ret =
+  const GstStateChangeReturn wait_ret =
       gst_element_get_state(pipeline_, nullptr, nullptr, 2 * GST_SECOND);
   if (wait_ret != GST_STATE_CHANGE_SUCCESS && wait_ret != GST_STATE_CHANGE_NO_PREROLL) {
-    LOGE("GigeSource: pipeline failed to reach PLAYING within timeout (ret=", wait_ret, ")");
+    LOGE("CsiSource: pipeline failed to reach PLAYING within timeout (ret=", wait_ret, ")");
     destroyPipeline();
     return false;
   }
@@ -588,7 +594,7 @@ bool GigeSource::createPipeline() {
   return true;
 }
 
-void GigeSource::destroyPipeline() {
+void CsiSource::destroyPipeline() {
   if (pipeline_) {
     gst_element_set_state(pipeline_, GST_STATE_NULL);
     gst_element_get_state(pipeline_, nullptr, nullptr, 1 * GST_SECOND);
@@ -605,41 +611,51 @@ void GigeSource::destroyPipeline() {
   opened_ = false;
 }
 
-bool GigeSource::ensurePipelineLocked() {
+bool CsiSource::ensurePipelineLocked() {
   if (pipeline_ && appsink_) {
     return true;
   }
   return attemptReconnectLocked();
 }
 
-bool GigeSource::checkPipelineHealthLocked() {
-  if (!pipeline_) return false;
+bool CsiSource::checkPipelineHealthLocked() {
+  if (!pipeline_) {
+    return false;
+  }
   GstBus* bus = gst_element_get_bus(pipeline_);
-  if (!bus) return true;
+  if (!bus) {
+    return true;
+  }
 
   bool healthy = true;
   while (true) {
     GstMessage* msg = gst_bus_timed_pop_filtered(
         bus, 0, static_cast<GstMessageType>(GST_MESSAGE_ERROR | GST_MESSAGE_EOS));
-    if (!msg) break;
+    if (!msg) {
+      break;
+    }
 
     switch (GST_MESSAGE_TYPE(msg)) {
       case GST_MESSAGE_ERROR: {
         GError* err = nullptr;
         gchar* debug_info = nullptr;
         gst_message_parse_error(msg, &err, &debug_info);
-        LOGW("GigeSource: pipeline error: ", (err ? err->message : "unknown"));
+        LOGW("CsiSource: pipeline error: ", (err ? err->message : "unknown"));
         if (debug_info) {
-          LOGW("GigeSource: debug info: ", debug_info);
+          LOGW("CsiSource: debug info: ", debug_info);
         }
-        if (err) g_error_free(err);
-        if (debug_info) g_free(debug_info);
+        if (err) {
+          g_error_free(err);
+        }
+        if (debug_info) {
+          g_free(debug_info);
+        }
         healthy = false;
         gst_message_unref(msg);
         break;
       }
       case GST_MESSAGE_EOS:
-        LOGW("GigeSource: received EOS, restarting pipeline");
+        LOGW("CsiSource: pipeline reached EOS");
         healthy = false;
         gst_message_unref(msg);
         break;
@@ -647,42 +663,44 @@ bool GigeSource::checkPipelineHealthLocked() {
         gst_message_unref(msg);
         break;
     }
-    if (!healthy) break;
+
+    if (!healthy) {
+      break;
+    }
   }
 
   gst_object_unref(bus);
   return healthy;
 }
 
-bool GigeSource::attemptReconnectLocked() {
-  auto now = std::chrono::steady_clock::now();
+bool CsiSource::attemptReconnectLocked() {
+  const auto now = std::chrono::steady_clock::now();
   if (now - last_reconnect_ < reconnect_backoff_) {
     return false;
   }
-
   last_reconnect_ = now;
+
+  LOGW("CsiSource: reconnecting with backoff=", reconnect_backoff_.count(), " ms");
+  destroyPipeline();
   if (!createPipeline()) {
     reconnect_backoff_ = std::min(reconnect_backoff_ * 2, std::chrono::milliseconds(5000));
-    opened_ = false;
     return false;
   }
 
   reconnect_backoff_ = std::chrono::milliseconds(500);
-  opened_ = true;
   consecutive_failures_ = 0;
   return true;
 }
 
-void GigeSource::handleReadFailureLocked() {
+void CsiSource::handleReadFailureLocked() {
   ++consecutive_failures_;
   if (consecutive_failures_ >= max_consecutive_failures_) {
-    LOGW("GigeSource: consecutive failures reached threshold (", consecutive_failures_,
-         "), forcing pipeline recreation");
+    LOGW("CsiSource: too many failures (", consecutive_failures_,
+         "), forcing pipeline restart");
     destroyPipeline();
     consecutive_failures_ = 0;
   }
-  attemptReconnectLocked();
 }
-#endif  // RKAPP_WITH_GIGE
+#endif
 
 }  // namespace rkapp::capture

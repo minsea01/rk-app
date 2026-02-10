@@ -133,8 +133,6 @@ names:
 EOF
 
 # 4) Train
-cd "$WORK_DIR"
-
 EPOCHS="${EPOCHS:-100}"
 IMGSZ="${IMGSZ:-640}"
 BATCH="${BATCH:-32}"
@@ -146,49 +144,22 @@ NAME="${NAME:-yolov8n_coco_full}"
 
 export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True,max_split_size_mb:128}"
 
-yolo detect train \
-  model="$WORK_DIR/models/yolov8n.pt" \
-  data="$COCO_YAML" \
-  epochs="$EPOCHS" \
-  imgsz="$IMGSZ" \
-  batch="$BATCH" \
-  device="$DEVICE" \
-  project="$PROJECT" \
-  name="$NAME" \
-  patience=80 \
-  save=True \
-  save_period=25 \
-  val=True \
-  plots=True \
-  exist_ok=True \
-  pretrained=True \
-  optimizer=AdamW \
-  lr0=0.0005 \
-  lrf=0.001 \
-  momentum=0.937 \
-  weight_decay=0.0005 \
-  warmup_epochs=5 \
-  warmup_momentum=0.8 \
-  box=7.5 \
-  cls=0.5 \
-  dfl=1.5 \
-  hsv_h=0.02 \
-  hsv_s=0.8 \
-  hsv_v=0.5 \
-  degrees=10.0 \
-  translate=0.15 \
-  scale=0.6 \
-  shear=5.0 \
-  perspective=0.0005 \
-  flipud=0.0 \
-  fliplr=0.5 \
-  mosaic=1.0 \
-  mixup=0.15 \
-  copy_paste=0.1 \
-  erasing=0.4 \
-  workers="$WORKERS" \
-  cache="$CACHE_MODE" \
-  amp=True
+"$SCRIPT_DIR/train_runner.sh" \
+  --profile map90 \
+  --workdir "$WORK_DIR" \
+  --model "$WORK_DIR/models/yolov8n.pt" \
+  --data "$COCO_YAML" \
+  --epochs "$EPOCHS" \
+  --imgsz "$IMGSZ" \
+  --batch "$BATCH" \
+  --device "$DEVICE" \
+  --project "$PROJECT" \
+  --name "$NAME" \
+  --workers "$WORKERS" \
+  --cache "$CACHE_MODE" \
+  --patience 80 \
+  --save-period 25 \
+  --no-export
 
 echo ""
 echo "========================================="

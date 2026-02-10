@@ -383,90 +383,26 @@ if [ -f "outputs/yolov8n_citypersons/weights/last.pt" ]; then
     RESUME_MODEL="outputs/yolov8n_citypersons/weights/last.pt"
 fi
 
-# 训练
-yolo detect train \
-    model=$RESUME_MODEL \
-    data="$DATA_YAML" \
-    epochs=$EPOCHS \
-    imgsz=$IMGSZ \
-    batch=$BATCH \
-    device=0 \
-    project=outputs \
-    name=yolov8n_citypersons \
-    patience=50 \
-    save=True \
-    save_period=20 \
-    val=True \
-    plots=True \
-    exist_ok=True \
-    pretrained=True \
-    optimizer=AdamW \
-    lr0=$LR0 \
-    lrf=0.01 \
-    warmup_epochs=5 \
-    mosaic=1.0 \
-    mixup=0.15 \
-    copy_paste=0.1 \
-    degrees=5.0 \
-    translate=0.1 \
-    scale=0.5 \
-    shear=2.0 \
-    fliplr=0.5 \
-    workers=$WORKERS \
-    cache=$CACHE \
-    amp=True
-
-# ==================== 6. 导出与汇总 ====================
-echo ""
-echo "[6/6] 导出 ONNX..."
-
-yolo export \
-    model=outputs/yolov8n_citypersons/weights/best.pt \
-    format=onnx \
-    opset=12 \
-    simplify=True \
-    imgsz=640
-
-# 结果汇总
-echo ""
-echo "============================================================"
-python3 << 'PYEOF'
-import csv
-import os
-
-results_file = "outputs/yolov8n_citypersons/results.csv"
-if os.path.exists(results_file):
-    with open(results_file, 'r') as f:
-        reader = csv.DictReader(f)
-        rows = list(reader)
-        if rows:
-            last = rows[-1]
-            for key in last.keys():
-                if 'mAP50' in key and 'mAP50-95' not in key:
-                    try:
-                        val = float(last[key].strip())
-                        print(f"\n最终 mAP@0.5: {val*100:.1f}%")
-                        if val >= 0.90:
-                            print("  达到 90% mAP 目标!")
-                        elif val >= 0.85:
-                            print(f"  接近目标，差 {(0.90-val)*100:.1f}%")
-                            print("  建议: 增加 epochs 或降低最小目标阈值")
-                        else:
-                            print(f"  未达标，考虑增加数据或训练轮数")
-                    except:
-                        pass
-                    break
-
-# 模型大小
-print("\n模型大小:")
-for name, path in [("PyTorch", "outputs/yolov8n_citypersons/weights/best.pt"),
-                   ("ONNX", "outputs/yolov8n_citypersons/weights/best.onnx")]:
-    if os.path.exists(path):
-        size_mb = os.path.getsize(path) / 1024 / 1024
-        print(f"  {name}: {size_mb:.1f} MB")
-        if name == "ONNX":
-            print(f"  RKNN INT8 (预估): {size_mb * 0.4:.1f} MB")
-PYEOF
+"$SCRIPT_DIR/train_runner.sh" \
+  --profile baseline \
+  --workdir "$WORK_DIR" \
+  --model "$RESUME_MODEL" \
+  --data "$DATA_YAML" \
+  --epochs "$EPOCHS" \
+  --imgsz "$IMGSZ" \
+  --batch "$BATCH" \
+  --device 0 \
+  --project outputs \
+  --name yolov8n_citypersons \
+  --patience 50 \
+  --save-period 20 \
+  --workers "$WORKERS" \
+  --cache "$CACHE" \
+  --optimizer AdamW \
+  --lr0 "$LR0" \
+  --lrf 0.01 \
+  --warmup-epochs 5 \
+  --extra "shear=2.0"
 
 echo ""
 echo "============================================================"

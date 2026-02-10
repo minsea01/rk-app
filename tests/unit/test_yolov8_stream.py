@@ -352,3 +352,49 @@ class TestDecodePredictons:
 
         # NMS should reduce overlapping detections
         assert len(boxes) <= 2
+
+
+class TestArgumentParser:
+    """Test suite for stream parser compatibility."""
+
+    def test_parser_accepts_new_preprocess_options(self):
+        from apps.yolov8_stream import build_arg_parser
+
+        parser = build_arg_parser()
+        args = parser.parse_args([
+            '--model', 'dummy.rknn',
+            '--cfg', 'config/detect.yaml',
+            '--pp-profile', 'balanced',
+            '--undistort-enable',
+            '--undistort-calib', 'calib.yaml',
+            '--roi-enable',
+            '--roi-mode', 'normalized',
+            '--roi-norm', '0.1,0.2,0.5,0.6',
+            '--gamma-enable',
+            '--white-balance-enable',
+            '--denoise-enable',
+            '--denoise-method', 'bilateral',
+            '--input-format', 'bayer_rg',
+        ])
+
+        assert str(args.cfg) == 'config/detect.yaml'
+        assert args.pp_profile == 'balanced'
+        assert args.undistort_enable is True
+        assert args.roi_enable is True
+        assert args.roi_norm == '0.1,0.2,0.5,0.6'
+        assert args.gamma_enable is True
+        assert args.white_balance_enable is True
+        assert args.denoise_enable is True
+        assert args.input_format == 'bayer_rg'
+
+    def test_parser_keeps_backward_compatible_defaults(self):
+        from apps.yolov8_stream import build_arg_parser
+
+        parser = build_arg_parser()
+        args = parser.parse_args(['--model', 'dummy.rknn'])
+
+        assert args.cfg is None
+        assert args.pp_profile is None
+        assert args.undistort_enable is None
+        assert args.gamma_enable is None
+        assert args.denoise_enable is None

@@ -21,6 +21,7 @@
  *   --no-rga          Disable RGA hardware preprocess
  *   --no-zero-copy    Disable DMA-BUF zero-copy
  *   --profile         Enable profiling output
+ *   --undistort-calib PATH  Camera calibration file for lens undistort
  *   --show            Display results (requires X11)
  *   --output PATH     Save annotated video to file
  */
@@ -53,6 +54,7 @@ void printUsage(const char* prog) {
               << "  --no-rga          Disable RGA hardware preprocess\n"
               << "  --no-zero-copy    Disable DMA-BUF zero-copy\n"
               << "  --profile         Enable profiling output\n"
+              << "  --undistort-calib PATH  Camera calibration file for lens undistort\n"
               << "  --show            Display results (requires X11)\n"
               << "  --output PATH     Save annotated video to file\n";
 }
@@ -111,6 +113,9 @@ int main(int argc, char** argv) {
         } else if (arg == "--profile") {
             profiling = true;
             config.enable_profiling = true;
+        } else if (arg == "--undistort-calib" && i + 1 < argc) {
+            config.calibration_file = argv[++i];
+            config.enable_undistort = true;
         } else if (arg == "--show") {
             show_display = true;
         } else if (arg == "--output" && i + 1 < argc) {
@@ -148,6 +153,7 @@ int main(int argc, char** argv) {
     std::cout << "\n=== RK3588 Detection Pipeline ===\n"
               << "Model: " << config.model_path << "\n"
               << "Input: " << config.source_uri << "\n"
+              << "Undistort: " << (config.enable_undistort ? "on" : "off") << "\n"
               << "Press Ctrl+C to stop\n\n";
 
     // Main processing loop

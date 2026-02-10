@@ -28,6 +28,10 @@ python3 filter_coco_person.py --coco-root /root/autodl-tmp/coco
 # 4. 开始训练 (使用优化版脚本，避免RAM溢出)
 ./train_90map_optimized.sh
 
+# 可选: 直接使用统一参数化入口
+# ./train_runner.sh --profile map90 --workdir /root/autodl-tmp/pedestrian_training \
+#   --model yolov8n.pt --data datasets/merged/merged.yaml --epochs 300 --imgsz 640 --batch 160
+
 # 5. 导出ONNX
 ./export_onnx.sh
 ```
@@ -38,6 +42,7 @@ python3 filter_coco_person.py --coco-root /root/autodl-tmp/coco
 
 | 脚本 | 用途 | 预计时间 | RAM安全 |
 |------|------|----------|---------|
+| `train_runner.sh` | **统一训练入口**（参数化，可被其他脚本复用） | 按参数而定 | 按参数而定 |
 | `train_90map_optimized.sh` | **推荐** - 90% mAP训练 | 6-10小时 | ✅ |
 | `train_90map.sh` | 高精度训练 (旧版) | 4-8小时 | ⚠️ cache=ram |
 | `train_coco_extreme.sh` | 极限训练 | 8-12小时 | ⚠️ cache=ram |
