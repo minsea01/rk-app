@@ -1,8 +1,11 @@
 #include <iostream>
 #include <chrono>
 #include <atomic>
+#include <algorithm>
+#include <array>
 #include <cctype>
 #include <filesystem>
+#include <optional>
 #include <yaml-cpp/yaml.h>
 #include <vector>
 
@@ -18,6 +21,9 @@
 #include "rkapp/capture/VideoSource.hpp"
 #ifdef RKAPP_WITH_GIGE
 #include "rkapp/capture/GigeSource.hpp"
+#endif
+#ifdef RKAPP_WITH_CSI
+#include "rkapp/capture/CsiSource.hpp"
 #endif
 #ifdef RKAPP_WITH_ONNX
 #include "rkapp/infer/OnnxEngine.hpp"
@@ -52,6 +58,24 @@ struct Config {
     float max_box_size = 0.0f;
     float min_aspect_ratio = 0.0f;
     float max_aspect_ratio = 0.0f;
+    bool enable_undistort = false;
+    std::string calibration_file;
+    std::string preprocess_profile = "speed";
+    bool roi_enable = false;
+    std::string roi_mode = "normalized";
+    std::array<float, 4> roi_normalized_xywh{0.0f, 0.0f, 1.0f, 1.0f};
+    std::array<int, 4> roi_pixel_xywh{0, 0, 0, 0};
+    bool roi_clamp = true;
+    int roi_min_size = 8;
+    std::optional<bool> gamma_enable;
+    float gamma_value = 1.0f;
+    std::optional<bool> white_balance_enable;
+    float white_balance_clip_percent = 0.0f;
+    std::optional<bool> denoise_enable;
+    std::string denoise_method = "bilateral";
+    int denoise_d = 5;
+    float denoise_sigma_color = 35.0f;
+    float denoise_sigma_space = 35.0f;
 };
 
 void printUsage(const char* program_name) {
@@ -63,6 +87,8 @@ void printUsage(const char* program_name) {
     std::cout << "  --json <file>        Save JSON results to file\\n";
     std::cout << "  --warmup <N>         Warmup iterations before timing (default: 5)\\n";
     std::cout << "  --async              Enable async capture->infer pipeline\\n";
+    std::cout << "  --undistort-calib <path>  Override calibration file and enable undistort\\n";
+    std::cout << "  --pp-profile <name>  Preprocess profile: speed|balanced|quality\\n";
     std::cout << "  --log-level <lvl>    Set log level (TRACE/DEBUG/INFO/WARN/ERROR)\\n";
     std::cout << "  --help               Show this help message\\n";
 }
@@ -83,11 +109,72 @@ rklog::Level parseLogLevel(const std::string& level_name) {
 }
 
 bool shouldRetryRead(const std::string& source_type, rkapp::capture::SourceType actual_type) {
-    if (source_type == "rtsp" || source_type == "gige") {
+    if (source_type == "rtsp" || source_type == "gige" || source_type == "csi") {
         return true;
     }
     return actual_type == rkapp::capture::SourceType::RTSP ||
-           actual_type == rkapp::capture::SourceType::GIGE;
+           actual_type == rkapp::capture::SourceType::GIGE ||
+           actual_type == rkapp::capture::SourceType::CSI;
+}
+
+std::string toLowerCopy(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return value;
+}
+
+struct FeatureFlags {
+    bool gamma = false;
+    bool white_balance = false;
+    bool denoise = false;
+};
+
+FeatureFlags resolveFeatureFlags(const Config& config) {
+    FeatureFlags flags;
+    const std::string profile = toLowerCopy(config.preprocess_profile);
+    if (profile == "balanced") {
+        flags.gamma = true;
+        flags.white_balance = true;
+    } else if (profile == "quality") {
+        flags.gamma = true;
+        flags.white_balance = true;
+        flags.denoise = true;
+    }
+    if (config.gamma_enable.has_value()) {
+        flags.gamma = *config.gamma_enable;
+    }
+    if (config.white_balance_enable.has_value()) {
+        flags.white_balance = *config.white_balance_enable;
+    }
+    if (config.denoise_enable.has_value()) {
+        flags.denoise = *config.denoise_enable;
+    }
+    return flags;
+}
+
+void applyRoiOffsetAndClip(std::vector<rkapp::infer::Detection>& detections,
+                           const cv::Rect& roi, cv::Size frame_size) {
+    if (frame_size.width <= 0 || frame_size.height <= 0) {
+        return;
+    }
+    const float max_x = static_cast<float>(frame_size.width - 1);
+    const float max_y = static_cast<float>(frame_size.height - 1);
+    for (auto& det : detections) {
+        float x1 = det.x + static_cast<float>(roi.x);
+        float y1 = det.y + static_cast<float>(roi.y);
+        float x2 = x1 + det.w;
+        float y2 = y1 + det.h;
+
+        x1 = std::clamp(x1, 0.0f, max_x);
+        y1 = std::clamp(y1, 0.0f, max_y);
+        x2 = std::clamp(x2, 0.0f, max_x);
+        y2 = std::clamp(y2, 0.0f, max_y);
+
+        det.x = x1;
+        det.y = y1;
+        det.w = std::max(0.0f, x2 - x1);
+        det.h = std::max(0.0f, y2 - y1);
+    }
 }
 
 Config loadConfig(const std::string& config_path) {
@@ -138,6 +225,93 @@ Config loadConfig(const std::string& config_path) {
                 if (post["nms_threshold"]) config.iou_thres = post["nms_threshold"].as<float>(config.iou_thres);
             }
 
+            if (yaml["preprocess"]) {
+                const auto& preprocess = yaml["preprocess"];
+                if (preprocess["profile"]) {
+                    config.preprocess_profile =
+                        preprocess["profile"].as<std::string>(config.preprocess_profile);
+                }
+                if (preprocess["undistort"]) {
+                    const auto& undistort = preprocess["undistort"];
+                    if (undistort["enable"]) {
+                        config.enable_undistort = undistort["enable"].as<bool>(config.enable_undistort);
+                    }
+                    if (undistort["calibration_file"]) {
+                        config.calibration_file =
+                            undistort["calibration_file"].as<std::string>(config.calibration_file);
+                    }
+                }
+                if (preprocess["roi"]) {
+                    const auto& roi = preprocess["roi"];
+                    if (roi["enable"]) {
+                        config.roi_enable = roi["enable"].as<bool>(config.roi_enable);
+                    }
+                    if (roi["mode"]) {
+                        config.roi_mode = roi["mode"].as<std::string>(config.roi_mode);
+                    }
+                    if (roi["normalized_xywh"] && roi["normalized_xywh"].IsSequence() &&
+                        roi["normalized_xywh"].size() == 4) {
+                        for (size_t i = 0; i < 4; ++i) {
+                            config.roi_normalized_xywh[i] =
+                                roi["normalized_xywh"][i].as<float>(config.roi_normalized_xywh[i]);
+                        }
+                    }
+                    if (roi["pixel_xywh"] && roi["pixel_xywh"].IsSequence() &&
+                        roi["pixel_xywh"].size() == 4) {
+                        for (size_t i = 0; i < 4; ++i) {
+                            config.roi_pixel_xywh[i] =
+                                roi["pixel_xywh"][i].as<int>(config.roi_pixel_xywh[i]);
+                        }
+                    }
+                    if (roi["clamp"]) {
+                        config.roi_clamp = roi["clamp"].as<bool>(config.roi_clamp);
+                    }
+                    if (roi["min_size"]) {
+                        config.roi_min_size = roi["min_size"].as<int>(config.roi_min_size);
+                    }
+                }
+                if (preprocess["gamma"]) {
+                    const auto& gamma = preprocess["gamma"];
+                    if (gamma["enable"]) {
+                        config.gamma_enable = gamma["enable"].as<bool>();
+                    }
+                    if (gamma["value"]) {
+                        config.gamma_value = gamma["value"].as<float>(config.gamma_value);
+                    }
+                }
+                if (preprocess["white_balance"]) {
+                    const auto& wb = preprocess["white_balance"];
+                    if (wb["enable"]) {
+                        config.white_balance_enable = wb["enable"].as<bool>();
+                    }
+                    if (wb["clip_percent"]) {
+                        config.white_balance_clip_percent =
+                            wb["clip_percent"].as<float>(config.white_balance_clip_percent);
+                    }
+                }
+                if (preprocess["denoise"]) {
+                    const auto& denoise = preprocess["denoise"];
+                    if (denoise["enable"]) {
+                        config.denoise_enable = denoise["enable"].as<bool>();
+                    }
+                    if (denoise["method"]) {
+                        config.denoise_method =
+                            denoise["method"].as<std::string>(config.denoise_method);
+                    }
+                    if (denoise["d"]) {
+                        config.denoise_d = denoise["d"].as<int>(config.denoise_d);
+                    }
+                    if (denoise["sigma_color"]) {
+                        config.denoise_sigma_color =
+                            denoise["sigma_color"].as<float>(config.denoise_sigma_color);
+                    }
+                    if (denoise["sigma_space"]) {
+                        config.denoise_sigma_space =
+                            denoise["sigma_space"].as<float>(config.denoise_sigma_space);
+                    }
+                }
+            }
+
             // Alternate schema: input.* (used by detect_pedestrian.yaml)
             if (yaml["input"]) {
                 const auto& input = yaml["input"];
@@ -149,6 +323,9 @@ Config loadConfig(const std::string& config_path) {
                 };
                 if (config.source_type == "gige") {
                     try_assign(input["gige"], "pipeline");
+                    if (config.source_uri.empty()) try_assign(input, "pipeline");
+                } else if (config.source_type == "csi") {
+                    try_assign(input["csi"], "pipeline");
                     if (config.source_uri.empty()) try_assign(input, "pipeline");
                 } else if (config.source_type == "video" || config.source_type == "rtsp") {
                     try_assign(input["video"], "path");
@@ -177,45 +354,45 @@ Config loadConfig(const std::string& config_path) {
                     if (tcp["port"]) config.output_port = tcp["port"].as<int>(config.output_port);
                     if (tcp["queue"]) config.output_queue = tcp["queue"].as<int>(config.output_queue);
                 }
-        }
+            }
 
-        if (yaml["classes"]) {
-            const auto& cls = yaml["classes"];
-            if (cls.IsScalar()) {
-                config.classes_path = cls.as<std::string>("config/classes.txt");
-                config.inline_class_names.clear();
-            } else if (cls.IsSequence()) {
-                config.classes_path.clear();
-                config.inline_class_names.clear();
-                for (const auto& node : cls) {
-                    config.inline_class_names.push_back(node.as<std::string>());
-                }
-            } else if (cls.IsMap()) {
-                if (cls["path"]) {
-                    config.classes_path = cls["path"].as<std::string>("config/classes.txt");
-                }
-                if (cls["names"] && cls["names"].IsSequence()) {
+            if (yaml["classes"]) {
+                const auto& cls = yaml["classes"];
+                if (cls.IsScalar()) {
+                    config.classes_path = cls.as<std::string>("config/classes.txt");
                     config.inline_class_names.clear();
-                    for (const auto& node : cls["names"]) {
+                } else if (cls.IsSequence()) {
+                    config.classes_path.clear();
+                    config.inline_class_names.clear();
+                    for (const auto& node : cls) {
                         config.inline_class_names.push_back(node.as<std::string>());
                     }
-                    if (!cls["path"]) {
-                        config.classes_path.clear();
+                } else if (cls.IsMap()) {
+                    if (cls["path"]) {
+                        config.classes_path = cls["path"].as<std::string>("config/classes.txt");
+                    }
+                    if (cls["names"] && cls["names"].IsSequence()) {
+                        config.inline_class_names.clear();
+                        for (const auto& node : cls["names"]) {
+                            config.inline_class_names.push_back(node.as<std::string>());
+                        }
+                        if (!cls["path"]) {
+                            config.classes_path.clear();
+                        }
                     }
                 }
             }
-        }
 
-        if (yaml["logging"]) {
-            const auto& logging = yaml["logging"];
-            if (logging["level"]) {
-                config.log_level = logging["level"].as<std::string>(config.log_level);
+            if (yaml["logging"]) {
+                const auto& logging = yaml["logging"];
+                if (logging["level"]) {
+                    config.log_level = logging["level"].as<std::string>(config.log_level);
+                }
+            } else if (yaml["log_level"]) {
+                config.log_level = yaml["log_level"].as<std::string>(config.log_level);
             }
-        } else if (yaml["log_level"]) {
-            config.log_level = yaml["log_level"].as<std::string>(config.log_level);
-        }
 
-        LOGI("Loaded configuration from ", config_path);
+            LOGI("Loaded configuration from ", config_path);
         } else {
             LOGW("Configuration file not found: ", config_path, ", using defaults");
         }
@@ -253,6 +430,8 @@ int main(int argc, char* argv[]) {
     std::string save_vis_dir;
     std::string json_output_file;
     std::string log_level_override;
+    std::string undistort_calib_override;
+    std::string preprocess_profile_override;
     
     // Parse command line arguments
     for (int i = 1; i < argc; ++i) {
@@ -271,6 +450,10 @@ int main(int argc, char* argv[]) {
             ++i; // consume N
         } else if (arg == "--log-level" && i + 1 < argc) {
             log_level_override = argv[++i];
+        } else if (arg == "--undistort-calib" && i + 1 < argc) {
+            undistort_calib_override = argv[++i];
+        } else if (arg == "--pp-profile" && i + 1 < argc) {
+            preprocess_profile_override = argv[++i];
         } else if (arg == "--help") {
             printUsage(argv[0]);
             return 0;
@@ -291,6 +474,13 @@ int main(int argc, char* argv[]) {
     if (!log_level_override.empty()) {
         config.log_level = log_level_override;
     }
+    if (!undistort_calib_override.empty()) {
+        config.enable_undistort = true;
+        config.calibration_file = undistort_calib_override;
+    }
+    if (!preprocess_profile_override.empty()) {
+        config.preprocess_profile = preprocess_profile_override;
+    }
 
     // Re-scan argv to pick CLI-only options that override config
     for (int i = 1; i < argc; ++i) {
@@ -300,6 +490,10 @@ int main(int argc, char* argv[]) {
         } else if (arg == "--async") {
             config.async = true;
         } else if (arg == "--log-level" && i + 1 < argc) {
+            ++i; // already consumed earlier
+        } else if (arg == "--undistort-calib" && i + 1 < argc) {
+            ++i; // already consumed earlier
+        } else if (arg == "--pp-profile" && i + 1 < argc) {
             ++i; // already consumed earlier
         }
     }
@@ -316,6 +510,136 @@ int main(int argc, char* argv[]) {
     LOGI("Engine: ", config.engine_type, " (", config.model_path, ")");
     LOGI("Input size: ", config.imgsz);
     LOGI("Thresholds: conf=", config.conf_thres, ", iou=", config.iou_thres);
+    LOGI("Undistort: ", (config.enable_undistort ? "enabled" : "disabled"));
+    LOGI("Preprocess profile: ", config.preprocess_profile);
+
+    const FeatureFlags feature_flags = resolveFeatureFlags(config);
+    LOGI("ROI: ", (config.roi_enable ? "enabled" : "disabled"));
+    LOGI("White balance: ", (feature_flags.white_balance ? "enabled" : "disabled"));
+    LOGI("Gamma: ", (feature_flags.gamma ? "enabled" : "disabled"));
+    LOGI("Denoise: ", (feature_flags.denoise ? "enabled" : "disabled"));
+
+    rkapp::preprocess::CameraCalibration calibration;
+    bool undistort_active = false;
+    cv::Mat undistort_map1;
+    cv::Mat undistort_map2;
+    cv::Size undistort_size{0, 0};
+    if (config.enable_undistort) {
+        if (config.calibration_file.empty()) {
+            LOGW("Undistort enabled but calibration file path is empty");
+        } else if (rkapp::preprocess::Preprocess::loadCalibration(
+                       config.calibration_file, calibration)) {
+            undistort_active = true;
+            LOGI("Loaded calibration file: ", config.calibration_file);
+        } else {
+            LOGW("Failed to load calibration file: ", config.calibration_file);
+        }
+    }
+
+    struct PreprocessedFrame {
+        cv::Mat infer_frame;
+        cv::Mat coord_frame;
+        cv::Rect roi_rect;
+        bool roi_applied = false;
+    };
+
+    auto preprocess_frame = [&](const cv::Mat& src) -> PreprocessedFrame {
+        PreprocessedFrame out;
+        if (src.empty()) {
+            return out;
+        }
+
+        cv::Mat bgr = rkapp::preprocess::Preprocess::ensureBgr8(
+            src, rkapp::preprocess::AccelBackend::OPENCV,
+            rkapp::preprocess::FourChannelOrder::UNKNOWN);
+        if (bgr.empty()) {
+            return out;
+        }
+
+        cv::Mat coord_frame = bgr;
+        if (undistort_active) {
+            if (undistort_size != bgr.size()) {
+                if (rkapp::preprocess::Preprocess::buildUndistortMaps(
+                        calibration, bgr.size(), undistort_map1, undistort_map2)) {
+                    undistort_size = bgr.size();
+                } else {
+                    LOGW("Failed to build undistort maps for frame size ", bgr.cols, "x", bgr.rows,
+                         ", disabling undistort");
+                    undistort_active = false;
+                    undistort_map1.release();
+                    undistort_map2.release();
+                    undistort_size = {0, 0};
+                }
+            }
+            if (undistort_active && !undistort_map1.empty() && !undistort_map2.empty()) {
+                cv::Mat undistorted =
+                    rkapp::preprocess::Preprocess::undistort(bgr, undistort_map1, undistort_map2);
+                if (!undistorted.empty()) {
+                    coord_frame = std::move(undistorted);
+                }
+            }
+        }
+
+        out.coord_frame = coord_frame;
+        out.roi_rect = cv::Rect(0, 0, coord_frame.cols, coord_frame.rows);
+
+        cv::Mat working = coord_frame;
+        if (config.roi_enable) {
+            cv::Rect resolved_roi;
+            const cv::Rect2f normalized_roi(
+                config.roi_normalized_xywh[0], config.roi_normalized_xywh[1],
+                config.roi_normalized_xywh[2], config.roi_normalized_xywh[3]);
+            const cv::Rect pixel_roi(
+                config.roi_pixel_xywh[0], config.roi_pixel_xywh[1],
+                config.roi_pixel_xywh[2], config.roi_pixel_xywh[3]);
+            if (rkapp::preprocess::Preprocess::resolveRoiRect(
+                    coord_frame.size(), toLowerCopy(config.roi_mode) != "pixel", normalized_roi,
+                    pixel_roi, config.roi_clamp, config.roi_min_size, resolved_roi)) {
+                out.roi_rect = resolved_roi;
+                if (resolved_roi.x != 0 || resolved_roi.y != 0 ||
+                    resolved_roi.width != coord_frame.cols || resolved_roi.height != coord_frame.rows) {
+                    cv::Mat cropped = rkapp::preprocess::Preprocess::cropRoi(coord_frame, resolved_roi);
+                    if (!cropped.empty()) {
+                        working = std::move(cropped);
+                        out.roi_applied = true;
+                    } else {
+                        LOGW("ROI crop failed, using full frame");
+                        out.roi_rect = cv::Rect(0, 0, coord_frame.cols, coord_frame.rows);
+                    }
+                }
+            } else {
+                LOGW("Invalid ROI config, using full frame");
+            }
+        }
+
+        if (feature_flags.denoise) {
+            if (toLowerCopy(config.denoise_method) != "bilateral") {
+                LOGW("Unsupported denoise method '", config.denoise_method, "', using bilateral");
+            }
+            cv::Mat denoised = rkapp::preprocess::Preprocess::denoiseBilateral(
+                working, config.denoise_d, config.denoise_sigma_color, config.denoise_sigma_space);
+            if (!denoised.empty()) {
+                working = std::move(denoised);
+            }
+        }
+        if (feature_flags.white_balance) {
+            cv::Mat balanced = rkapp::preprocess::Preprocess::whiteBalanceGrayWorld(
+                working, config.white_balance_clip_percent);
+            if (!balanced.empty()) {
+                working = std::move(balanced);
+            }
+        }
+        if (feature_flags.gamma) {
+            cv::Mat gamma_corrected =
+                rkapp::preprocess::Preprocess::applyGammaLut(working, config.gamma_value);
+            if (!gamma_corrected.empty()) {
+                working = std::move(gamma_corrected);
+            }
+        }
+
+        out.infer_frame = working;
+        return out;
+    };
     
     // Create source
     std::unique_ptr<rkapp::capture::ISource> source;
@@ -328,6 +652,13 @@ int main(int argc, char* argv[]) {
         source = std::make_unique<rkapp::capture::GigeSource>();
 #else
         LOGE("GigE source requested but not built. Rebuild with -DENABLE_GIGE=ON and Aravis installed.");
+        return 1;
+#endif
+    } else if (config.source_type == "csi") {
+#ifdef RKAPP_WITH_CSI
+        source = std::make_unique<rkapp::capture::CsiSource>();
+#else
+        LOGE("CSI source requested but not built. Rebuild with -DENABLE_CSI=ON and GStreamer installed.");
         return 1;
 #endif
     } else {
@@ -432,9 +763,18 @@ int main(int argc, char* argv[]) {
         }
         read_failures = 0;
         auto start_time = std::chrono::high_resolution_clock::now();
-        
+
+        PreprocessedFrame preprocessed = preprocess_frame(frame);
+        if (preprocessed.infer_frame.empty() || preprocessed.coord_frame.empty()) {
+          LOGW("Frame preprocessing failed, skipping frame ", frame_id);
+          continue;
+        }
+
         // Inference (engine handles its own letterbox consistently)
-        std::vector<rkapp::infer::Detection> detections = engine->infer(frame);
+        std::vector<rkapp::infer::Detection> detections = engine->infer(preprocessed.infer_frame);
+        if (preprocessed.roi_applied) {
+            applyRoiOffsetAndClip(detections, preprocessed.roi_rect, preprocessed.coord_frame.size());
+        }
         
         // Postprocess (class-name mapping only; NMS is handled inside the engine)
         rkapp::post::Postprocess::mapClassNames(detections, class_names);
@@ -447,7 +787,7 @@ int main(int argc, char* argv[]) {
         
         // Save visualization
         if (!save_vis_dir.empty()) {
-            cv::Mat vis_frame = frame.clone();
+            cv::Mat vis_frame = preprocessed.coord_frame.clone();
             drawDetections(vis_frame, detections);
             std::string vis_path = save_vis_dir + "/frame_" + std::to_string(frame_id) + ".jpg";
             cv::imwrite(vis_path, vis_frame);
@@ -459,8 +799,8 @@ int main(int argc, char* argv[]) {
             result.frame_id = frame_id;
             result.timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
                 std::chrono::system_clock::now().time_since_epoch()).count();
-            result.width = frame.cols;
-            result.height = frame.rows;
+            result.width = preprocessed.coord_frame.cols;
+            result.height = preprocessed.coord_frame.rows;
             result.detections = detections;
             result.source_uri = config.source_uri;
             output->send(result);
@@ -559,8 +899,23 @@ int main(int argc, char* argv[]) {
         }
         if (!has) break;
 
+        PreprocessedFrame preprocessed = preprocess_frame(it.img);
+        if (preprocessed.infer_frame.empty() || preprocessed.coord_frame.empty()) {
+          LOGW("Frame preprocessing failed, skipping frame ", it.id);
+          {
+            std::lock_guard<std::mutex> plk(state->pool_mtx);
+            if (state->mat_pool.size() < QMAX + 1) {
+              state->mat_pool.push_back(std::move(it.img));
+            }
+          }
+          continue;
+        }
+
         auto start_time = std::chrono::high_resolution_clock::now();
-        std::vector<rkapp::infer::Detection> detections = engine->infer(it.img);
+        std::vector<rkapp::infer::Detection> detections = engine->infer(preprocessed.infer_frame);
+        if (preprocessed.roi_applied) {
+            applyRoiOffsetAndClip(detections, preprocessed.roi_rect, preprocessed.coord_frame.size());
+        }
         rkapp::post::Postprocess::mapClassNames(detections, class_names);
         auto end_time = std::chrono::high_resolution_clock::now();
         auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time);
@@ -568,7 +923,7 @@ int main(int argc, char* argv[]) {
              " detections (", duration.count(), "ms)");
 
         if (!save_vis_dir.empty()) {
-            cv::Mat vis_frame = it.img.clone();
+            cv::Mat vis_frame = preprocessed.coord_frame.clone();
             drawDetections(vis_frame, detections);
             std::string vis_path = save_vis_dir + "/frame_" + std::to_string(it.id) + ".jpg";
             cv::imwrite(vis_path, vis_frame);
@@ -579,8 +934,8 @@ int main(int argc, char* argv[]) {
             result.frame_id = it.id;
             result.timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
                 std::chrono::system_clock::now().time_since_epoch()).count();
-            result.width = it.img.cols;
-            result.height = it.img.rows;
+            result.width = preprocessed.coord_frame.cols;
+            result.height = preprocessed.coord_frame.rows;
             result.detections = detections;
             result.source_uri = config.source_uri;
             output->send(result);

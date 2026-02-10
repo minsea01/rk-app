@@ -107,3 +107,4 @@ artifacts/onnx_optimized/
 *.onnx
 .mcp.json
 cloud_training/test_citypersons/images/
+.cache/

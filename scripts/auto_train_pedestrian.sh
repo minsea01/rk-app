@@ -3,7 +3,7 @@
 # 功能：自动下载数据、训练、导出、转换RKNN
 # 可后台运行，支持断点续传
 
-set -e
+set -euo pipefail
 
 # ============ 配置参数 ============
 LOG_FILE="logs/auto_train_$(date +%Y%m%d_%H%M%S).log"
@@ -109,7 +109,8 @@ else
     log "开始处理Person子集..."
     python tools/prepare_coco_person.py \
         --coco-dir "$COCO_DIR" \
-        --output-dir "$DATASET_DIR" 2>&1 | \
+        --output-dir "$DATASET_DIR" \
+        --copy-images 2>&1 | \
         while read line; do log "$line"; done
     log "✓ Person数据集处理完成"
 fi

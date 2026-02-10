@@ -2,6 +2,7 @@
 #pragma once
 
 #include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 #include <opencv2/opencv.hpp>
@@ -77,13 +78,13 @@ public:
       const cv::Size& original_size,
       const struct rkapp::preprocess::LetterboxInfo& letterbox_info);
 
-  // 可选：设置NPU核心掩码（例如：1<<0, 1<<1, 1<<2）。若运行库不支持，将被忽略。
-  void setCoreMask(uint32_t core_mask) { core_mask_ = core_mask; }
+  // Optional: set NPU core mask (e.g. 1<<0, 1<<1, 1<<2).
+  void setCoreMask(uint32_t core_mask);
   void setDecodeParams(const DecodeParams& params) override;
 
-  // 添加类别数访问接口
-  int num_classes() const { return num_classes_; }
-  bool has_objness() const { return has_objness_; }
+  // Thread-safe accessors for inferred decode metadata.
+  int num_classes() const;
+  bool has_objness() const;
   const std::vector<std::string>& class_names() const { return class_names_; }
 
   int getInputWidth() const override;
@@ -91,7 +92,8 @@ public:
 
 private:
   struct Impl;
-  std::unique_ptr<Impl> impl_;
+  mutable std::mutex state_mutex_;
+  std::shared_ptr<Impl> impl_;
   std::string model_path_;
   int input_size_ = 640;
   bool is_initialized_ = false;

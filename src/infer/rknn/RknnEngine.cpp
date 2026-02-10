@@ -7,8 +7,10 @@
 #include "log.hpp"
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cmath>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <iomanip>
 #include <mutex>
@@ -29,6 +31,8 @@
 namespace rkapp::infer {
 
 struct RknnEngine::Impl {
+  std::mutex infer_mutex;
+  std::atomic<bool> shutting_down{false};
 #if RKNN_PLATFORM
   rknn_context ctx = 0;
   rknn_input_output_num io_num{};
@@ -40,11 +44,12 @@ struct RknnEngine::Impl {
   int out_c = 0, out_n = 0; // C (8), N (8400) or transposed
 
   AnchorLayout dfl_layout;
-  std::mutex infer_mutex;
 #endif
 };
 
 namespace {
+
+constexpr int kMaxSupportedRegMax = 32;
 
 struct ScopedFd {
   int fd = -1;
@@ -76,9 +81,23 @@ struct ScopedFd {
   bool valid() const { return fd >= 0; }
 };
 
-std::vector<uint8_t> read_file(const std::string& p){
+bool read_file(const std::string& p, std::vector<uint8_t>& out, std::string& err){
+  out.clear();
+  err.clear();
+
   std::ifstream ifs(p, std::ios::binary);
-  return std::vector<uint8_t>((std::istreambuf_iterator<char>(ifs)), {});
+  if (!ifs.is_open()) {
+    err = "open failed";
+    return false;
+  }
+
+  out.assign(std::istreambuf_iterator<char>(ifs), std::istreambuf_iterator<char>());
+  if (ifs.bad()) {
+    out.clear();
+    err = "read failed";
+    return false;
+  }
+  return true;
 }
 
 std::string strip_comments(const std::string& content) {
@@ -302,10 +321,9 @@ std::vector<Detection> decode_and_postprocess(
     }
   }
 
-  // CRITICAL: Guard against reg_max > 32 buffer overflow
-  constexpr int MAX_REG_MAX = 32;
-  if (use_dfl && reg_max > MAX_REG_MAX) {
-    LOGE(log_tag, ": reg_max=", reg_max, " exceeds buffer size (", MAX_REG_MAX, ")");
+  // Guard against reg_max overflow in fixed-size decode buffer.
+  if (use_dfl && reg_max > kMaxSupportedRegMax) {
+    LOGE(log_tag, ": reg_max=", reg_max, " exceeds buffer size (", kMaxSupportedRegMax, ")");
     return {};
   }
 
@@ -394,7 +412,7 @@ std::vector<Detection> decode_and_postprocess(
     }
 
     const AnchorLayout& layout = *dfl_layout;
-    std::array<float, MAX_REG_MAX> probs_buf{};
+    std::array<float, kMaxSupportedRegMax> probs_buf{};
     for (int i = 0; i < N; ++i) {
       auto dfl = dfl_decode_4sides_optimized(logits, i, N, reg_max, probs_buf.data());
       float s = layout.stride_map[i];
@@ -473,31 +491,60 @@ inline const float* maybe_transpose_output(const float* logits_data, int out_n, 
   return logits_data;
 }
 
+std::vector<Detection> decode_output_and_nms(
+    const float* logits_data,
+    int out_n,
+    int out_c,
+    int out_elems,
+    int out_n_dims,
+    int out_dim1,
+    int out_dim2,
+    int& num_classes,
+    const ModelMeta& model_meta,
+    const DecodeParams& decode_params,
+    const cv::Size& original_size,
+    const rkapp::preprocess::LetterboxInfo& letterbox_info,
+    const AnchorLayout* dfl_layout,
+    const char* log_tag) {
+  thread_local std::vector<float> transpose_local;
+  const float* logits =
+      maybe_transpose_output(logits_data, out_n, out_c, out_n_dims, out_dim1, out_dim2,
+                             transpose_local);
+  return decode_and_postprocess(
+      logits, out_n, out_c, out_elems, num_classes, model_meta, decode_params, original_size,
+      letterbox_info, dfl_layout, log_tag);
+}
+
 } // namespace
 
 RknnEngine::RknnEngine() = default;
 RknnEngine::~RknnEngine(){ release(); }
 
 bool RknnEngine::init(const std::string& model_path, int img_size){
-  if (impl_ || is_initialized_) {
-    release();
-  }
-  model_path_ = model_path;
-  input_size_ = img_size;
-  impl_ = std::make_unique<Impl>();
-  model_meta_ = load_model_meta(model_path);
+  release();
+
+  auto new_impl = std::make_shared<Impl>();
+  ModelMeta model_meta = load_model_meta(model_path);
+  int inferred_num_classes = -1;
+  bool inferred_has_objness = true;
+
 #if RKNN_PLATFORM
   bool ctx_ready = false;
   auto cleanup = [&]() {
-    if (ctx_ready && impl_ && impl_->ctx) {
-      rknn_destroy(impl_->ctx);
-      impl_->ctx = 0;
+    if (ctx_ready && new_impl && new_impl->ctx) {
+      rknn_destroy(new_impl->ctx);
+      new_impl->ctx = 0;
     }
-    impl_.reset();
-    is_initialized_ = false;
   };
 
-  auto blob = read_file(model_path);
+  std::vector<uint8_t> blob;
+  std::string read_err;
+  if (!read_file(model_path, blob, read_err)) {
+    LOGE("RknnEngine: failed to read model file: ", model_path,
+         " (exists=", std::filesystem::exists(model_path), ", reason=", read_err, ")");
+    cleanup();
+    return false;
+  }
   if(blob.empty()){
     LOGE("RknnEngine: model file empty: ", model_path);
     cleanup();
@@ -505,7 +552,7 @@ bool RknnEngine::init(const std::string& model_path, int img_size){
   }
 
   // Step 1: Initialize RKNN context
-  int ret = rknn_init(&impl_->ctx, blob.data(), blob.size(), 0, nullptr);
+  int ret = rknn_init(&new_impl->ctx, blob.data(), blob.size(), 0, nullptr);
   if(ret != RKNN_SUCC){
     LOGE("RknnEngine: rknn_init failed with code ", ret);
     cleanup();
@@ -527,10 +574,15 @@ bool RknnEngine::init(const std::string& model_path, int img_size){
   //
   // Note: Multi-core mode accelerates: Conv, DepthwiseConv, Add, Concat, Relu, Clip, Relu6,
   //       ThresholdedRelu, Prelu, LeakyRelu. Other ops fallback to Core0.
-  if (core_mask_ != 0) {
+  uint32_t core_mask_snapshot = 0;
+  {
+    std::lock_guard<std::mutex> state_lock(state_mutex_);
+    core_mask_snapshot = core_mask_;
+  }
+  if (core_mask_snapshot != 0) {
     // Map our core_mask_ to rknn_core_mask enum
     rknn_core_mask npu_core_mask = RKNN_NPU_CORE_AUTO;
-    switch (core_mask_) {
+    switch (core_mask_snapshot) {
       case 0x1: npu_core_mask = RKNN_NPU_CORE_0; break;
       case 0x2: npu_core_mask = RKNN_NPU_CORE_1; break;
       case 0x4: npu_core_mask = RKNN_NPU_CORE_2; break;
@@ -538,13 +590,13 @@ bool RknnEngine::init(const std::string& model_path, int img_size){
       case 0x7: npu_core_mask = RKNN_NPU_CORE_0_1_2; break;
       default:
         // For any other mask, use all three cores for maximum throughput
-        LOGW("RknnEngine: Unknown core_mask 0x", std::hex, core_mask_, std::dec,
+        LOGW("RknnEngine: Unknown core_mask 0x", std::hex, core_mask_snapshot, std::dec,
              ", defaulting to RKNN_NPU_CORE_0_1_2 (6 TOPS)");
         npu_core_mask = RKNN_NPU_CORE_0_1_2;
         break;
     }
 
-    int mask_ret = rknn_set_core_mask(impl_->ctx, npu_core_mask);
+    int mask_ret = rknn_set_core_mask(new_impl->ctx, npu_core_mask);
     if (mask_ret != RKNN_SUCC) {
       // Non-fatal: log warning but continue (single-core fallback)
       LOGW("RknnEngine: rknn_set_core_mask failed (code ", mask_ret,
@@ -565,37 +617,37 @@ bool RknnEngine::init(const std::string& model_path, int img_size){
     LOGI("RknnEngine: NPU core_mask=0, using RKNN_NPU_CORE_AUTO mode");
   }
 
-  ret = rknn_query(impl_->ctx, RKNN_QUERY_IN_OUT_NUM, &impl_->io_num, sizeof(impl_->io_num));
+  ret = rknn_query(new_impl->ctx, RKNN_QUERY_IN_OUT_NUM, &new_impl->io_num, sizeof(new_impl->io_num));
   if(ret != RKNN_SUCC){
     LOGE("RknnEngine: RKNN_QUERY_IN_OUT_NUM failed: ", ret);
     cleanup();
     return false;
   }
 
-  if (impl_->io_num.n_input == 0) {
-    LOGE("RknnEngine: No inputs detected (n_input=", impl_->io_num.n_input, ")");
+  if (new_impl->io_num.n_input == 0) {
+    LOGE("RknnEngine: No inputs detected (n_input=", new_impl->io_num.n_input, ")");
     cleanup();
     return false;
   }
 
-  std::memset(&impl_->in_attr, 0, sizeof(impl_->in_attr));
-  impl_->in_attr.index = 0;
-  ret = rknn_query(impl_->ctx, RKNN_QUERY_INPUT_ATTR, &impl_->in_attr, sizeof(impl_->in_attr));
+  std::memset(&new_impl->in_attr, 0, sizeof(new_impl->in_attr));
+  new_impl->in_attr.index = 0;
+  ret = rknn_query(new_impl->ctx, RKNN_QUERY_INPUT_ATTR, &new_impl->in_attr, sizeof(new_impl->in_attr));
   if (ret != RKNN_SUCC) {
     LOGE("RknnEngine: RKNN_QUERY_INPUT_ATTR failed: ", ret);
     cleanup();
     return false;
   }
 
-  impl_->input_fmt = impl_->in_attr.fmt;
-  impl_->input_type = impl_->in_attr.type;
-  if (impl_->input_fmt != RKNN_TENSOR_NHWC && impl_->input_fmt != RKNN_TENSOR_NCHW) {
-    LOGE("RknnEngine: Unsupported input format (fmt=", impl_->input_fmt, ")");
+  new_impl->input_fmt = new_impl->in_attr.fmt;
+  new_impl->input_type = new_impl->in_attr.type;
+  if (new_impl->input_fmt != RKNN_TENSOR_NHWC && new_impl->input_fmt != RKNN_TENSOR_NCHW) {
+    LOGE("RknnEngine: Unsupported input format (fmt=", new_impl->input_fmt, ")");
     cleanup();
     return false;
   }
-  if (impl_->input_type != RKNN_TENSOR_UINT8) {
-    LOGE("RknnEngine: Unsupported input type (type=", impl_->input_type, ")");
+  if (new_impl->input_type != RKNN_TENSOR_UINT8) {
+    LOGE("RknnEngine: Unsupported input type (type=", new_impl->input_type, ")");
     cleanup();
     return false;
   }
@@ -603,25 +655,25 @@ bool RknnEngine::init(const std::string& model_path, int img_size){
   int input_c = 0;
   int input_h = 0;
   int input_w = 0;
-  if (impl_->input_fmt == RKNN_TENSOR_NHWC) {
-    if (impl_->in_attr.n_dims == 4) {
-      input_h = static_cast<int>(impl_->in_attr.dims[1]);
-      input_w = static_cast<int>(impl_->in_attr.dims[2]);
-      input_c = static_cast<int>(impl_->in_attr.dims[3]);
-    } else if (impl_->in_attr.n_dims == 3) {
-      input_h = static_cast<int>(impl_->in_attr.dims[0]);
-      input_w = static_cast<int>(impl_->in_attr.dims[1]);
-      input_c = static_cast<int>(impl_->in_attr.dims[2]);
+  if (new_impl->input_fmt == RKNN_TENSOR_NHWC) {
+    if (new_impl->in_attr.n_dims == 4) {
+      input_h = static_cast<int>(new_impl->in_attr.dims[1]);
+      input_w = static_cast<int>(new_impl->in_attr.dims[2]);
+      input_c = static_cast<int>(new_impl->in_attr.dims[3]);
+    } else if (new_impl->in_attr.n_dims == 3) {
+      input_h = static_cast<int>(new_impl->in_attr.dims[0]);
+      input_w = static_cast<int>(new_impl->in_attr.dims[1]);
+      input_c = static_cast<int>(new_impl->in_attr.dims[2]);
     }
-  } else if (impl_->input_fmt == RKNN_TENSOR_NCHW) {
-    if (impl_->in_attr.n_dims == 4) {
-      input_c = static_cast<int>(impl_->in_attr.dims[1]);
-      input_h = static_cast<int>(impl_->in_attr.dims[2]);
-      input_w = static_cast<int>(impl_->in_attr.dims[3]);
-    } else if (impl_->in_attr.n_dims == 3) {
-      input_c = static_cast<int>(impl_->in_attr.dims[0]);
-      input_h = static_cast<int>(impl_->in_attr.dims[1]);
-      input_w = static_cast<int>(impl_->in_attr.dims[2]);
+  } else if (new_impl->input_fmt == RKNN_TENSOR_NCHW) {
+    if (new_impl->in_attr.n_dims == 4) {
+      input_c = static_cast<int>(new_impl->in_attr.dims[1]);
+      input_h = static_cast<int>(new_impl->in_attr.dims[2]);
+      input_w = static_cast<int>(new_impl->in_attr.dims[3]);
+    } else if (new_impl->in_attr.n_dims == 3) {
+      input_c = static_cast<int>(new_impl->in_attr.dims[0]);
+      input_h = static_cast<int>(new_impl->in_attr.dims[1]);
+      input_w = static_cast<int>(new_impl->in_attr.dims[2]);
     }
   }
 
@@ -631,9 +683,9 @@ bool RknnEngine::init(const std::string& model_path, int img_size){
     return false;
   }
   if (input_h > 0 && input_w > 0 &&
-      (input_h != input_size_ || input_w != input_size_)) {
+      (input_h != img_size || input_w != img_size)) {
     LOGW("RknnEngine: Input size mismatch with model (model=", input_w, "x",
-         input_h, ", cfg=", input_size_, "x", input_size_, ")");
+         input_h, ", cfg=", img_size, "x", img_size, ")");
   }
 
   // Select output tensor (metadata required for multi-output models)
@@ -643,93 +695,93 @@ bool RknnEngine::init(const std::string& model_path, int img_size){
   auto query_output_attr = [&](uint32_t idx, rknn_tensor_attr& attr) -> bool {
     std::memset(&attr, 0, sizeof(attr));
     attr.index = idx;
-    if (rknn_query(impl_->ctx, RKNN_QUERY_OUTPUT_ATTR, &attr, sizeof(attr)) != RKNN_SUCC) {
+    if (rknn_query(new_impl->ctx, RKNN_QUERY_OUTPUT_ATTR, &attr, sizeof(attr)) != RKNN_SUCC) {
       LOGW("RknnEngine: RKNN_QUERY_OUTPUT_ATTR failed for output ", idx);
       return false;
     }
     return true;
   };
 
-  if (impl_->io_num.n_output == 1) {
+  if (new_impl->io_num.n_output == 1) {
     best_output_idx = 0;
     if (!query_output_attr(0, best_attr)) {
       cleanup();
       return false;
     }
     LOGI("RknnEngine: Single output detected, using index 0");
-  } else if (impl_->io_num.n_output > 1) {
-    if (model_meta_.output_index < 0) {
+  } else if (new_impl->io_num.n_output > 1) {
+    if (model_meta.output_index < 0) {
       LOGE("RknnEngine: Multiple outputs require metadata output_index");
       cleanup();
       return false;
     }
-    if (model_meta_.output_index >= static_cast<int>(impl_->io_num.n_output)) {
-      LOGE("RknnEngine: output_index out of range (", model_meta_.output_index,
-           "), n_output=", impl_->io_num.n_output);
+    if (model_meta.output_index >= static_cast<int>(new_impl->io_num.n_output)) {
+      LOGE("RknnEngine: output_index out of range (", model_meta.output_index,
+           "), n_output=", new_impl->io_num.n_output);
       cleanup();
       return false;
     }
-    best_output_idx = model_meta_.output_index;
+    best_output_idx = model_meta.output_index;
     if (!query_output_attr(best_output_idx, best_attr)) {
       cleanup();
       return false;
     }
     LOGI("RknnEngine: Using output index from metadata: ", best_output_idx);
   } else {
-    LOGE("RknnEngine: No outputs detected (n_output=", impl_->io_num.n_output, ")");
+    LOGE("RknnEngine: No outputs detected (n_output=", new_impl->io_num.n_output, ")");
     cleanup();
     return false;
   }
 
-  impl_->out_attr = best_attr;
+  new_impl->out_attr = best_attr;
 
   // Auto-infer classes from output tensor dimensions
-  impl_->out_elems = 1;
-  for(uint32_t i=0;i<impl_->out_attr.n_dims;i++) impl_->out_elems *= impl_->out_attr.dims[i];
+  new_impl->out_elems = 1;
+  for(uint32_t i=0;i<new_impl->out_attr.n_dims;i++) new_impl->out_elems *= new_impl->out_attr.dims[i];
   
-  if (model_meta_.head != "raw" && model_meta_.head != "dfl") {
+  if (model_meta.head != "raw" && model_meta.head != "dfl") {
     LOGE("RknnEngine: Missing or invalid head metadata (expected raw/dfl)");
     cleanup();
     return false;
   }
-  if (model_meta_.num_classes <= 0) {
+  if (model_meta.num_classes <= 0) {
     LOGE("RknnEngine: Missing or invalid num_classes metadata");
     cleanup();
     return false;
   }
 
   int expected_c = 0;
-  if (model_meta_.head == "dfl") {
-    if (model_meta_.reg_max <= 0 || model_meta_.strides.empty()) {
+  if (model_meta.head == "dfl") {
+    if (model_meta.reg_max <= 0 || model_meta.strides.empty()) {
       LOGE("RknnEngine: DFL decode requires reg_max and strides metadata");
       cleanup();
       return false;
     }
-    expected_c = 4 * model_meta_.reg_max + model_meta_.num_classes;
+    expected_c = 4 * model_meta.reg_max + model_meta.num_classes;
   } else {
-    if (model_meta_.has_objectness < 0) {
+    if (model_meta.has_objectness < 0) {
       LOGE("RknnEngine: RAW decode requires has_objectness metadata");
       cleanup();
       return false;
     }
-    expected_c = 4 + model_meta_.num_classes + (model_meta_.has_objectness == 1 ? 1 : 0);
+    expected_c = 4 + model_meta.num_classes + (model_meta.has_objectness == 1 ? 1 : 0);
   }
 
-  if (impl_->out_attr.n_dims != 3) {
-    LOGE("RknnEngine: Unsupported output dimensions: n_dims=", impl_->out_attr.n_dims);
+  if (new_impl->out_attr.n_dims != 3) {
+    LOGE("RknnEngine: Unsupported output dimensions: n_dims=", new_impl->out_attr.n_dims);
     cleanup();
     return false;
   }
 
-  int64_t d1 = impl_->out_attr.dims[1];
-  int64_t d2 = impl_->out_attr.dims[2];
+  int64_t d1 = new_impl->out_attr.dims[1];
+  int64_t d2 = new_impl->out_attr.dims[2];
   if (d1 == expected_c && d2 != expected_c) {
-    impl_->out_c = expected_c;
-    impl_->out_n = static_cast<int>(d2);
+    new_impl->out_c = expected_c;
+    new_impl->out_n = static_cast<int>(d2);
     LOGI("RknnEngine: Detected channels_first layout [1, ", d1, ", ", d2, "]");
   } else if (d2 == expected_c && d1 != expected_c) {
-    impl_->out_c = expected_c;
-    impl_->out_n = static_cast<int>(d1);
+    new_impl->out_c = expected_c;
+    new_impl->out_n = static_cast<int>(d1);
     LOGI("RknnEngine: Detected channels_last layout [1, ", d1, ", ", d2, "], will transpose");
   } else {
     LOGE("RknnEngine: Output layout mismatch (dims=[1,", d1, ",", d2,
@@ -738,39 +790,46 @@ bool RknnEngine::init(const std::string& model_path, int img_size){
     return false;
   }
 
-  // Seed num_classes_ from metadata when provided
-  num_classes_ = (model_meta_.num_classes > 0) ? model_meta_.num_classes : -1;
-  if (model_meta_.has_objectness >= 0) {
-    has_objness_ = (model_meta_.has_objectness == 1);
+  inferred_num_classes = (model_meta.num_classes > 0) ? model_meta.num_classes : -1;
+  if (model_meta.has_objectness >= 0) {
+    inferred_has_objness = (model_meta.has_objectness == 1);
   }
 
-  const bool expect_dfl = (model_meta_.head == "dfl");
+  const bool expect_dfl = (model_meta.head == "dfl");
   if (expect_dfl) {
-    if (model_meta_.reg_max <= 0 || model_meta_.strides.empty()) {
+    if (model_meta.reg_max <= 0 || model_meta.strides.empty()) {
       LOGE("RknnEngine: DFL decode requires reg_max and strides metadata");
       cleanup();
       return false;
     }
-    constexpr int kMaxRegMax = 32;
-    if (model_meta_.reg_max > kMaxRegMax) {
-      LOGE("RknnEngine: reg_max=", model_meta_.reg_max, " exceeds max (", kMaxRegMax, ")");
+    if (model_meta.reg_max > kMaxSupportedRegMax) {
+      LOGE("RknnEngine: reg_max=", model_meta.reg_max, " exceeds max (", kMaxSupportedRegMax, ")");
       cleanup();
       return false;
     }
-    AnchorLayout layout = build_anchor_layout(input_size_, impl_->out_n, model_meta_.strides);
+    AnchorLayout layout = build_anchor_layout(img_size, new_impl->out_n, model_meta.strides);
     if (!layout.valid) {
       LOGE("RknnEngine: anchor layout invalid for provided strides");
       cleanup();
       return false;
     }
-    impl_->dfl_layout = std::move(layout);
+    new_impl->dfl_layout = std::move(layout);
   }
 
-  LOGI("RknnEngine: Output elements per inference: ", impl_->out_elems);
+  LOGI("RknnEngine: Output elements per inference: ", new_impl->out_elems);
 #else
   LOGW("RknnEngine: RKNN platform not enabled at build time");
 #endif
-  is_initialized_ = true;
+  {
+    std::lock_guard<std::mutex> state_lock(state_mutex_);
+    model_path_ = model_path;
+    input_size_ = img_size;
+    model_meta_ = std::move(model_meta);
+    impl_ = std::move(new_impl);
+    num_classes_ = inferred_num_classes;
+    has_objness_ = inferred_has_objness;
+    is_initialized_ = true;
+  }
   LOGI("RknnEngine: Initialized");
   return true;
 }
@@ -780,20 +839,33 @@ std::vector<Detection> RknnEngine::inferPreprocessed(
     const cv::Size& original_size,
     const rkapp::preprocess::LetterboxInfo& letterbox_info) {
 
-  if (!is_initialized_) {
-    LOGE("RknnEngine::inferPreprocessed: Not initialized!");
-    return {};
+#if RKNN_PLATFORM
+  std::shared_ptr<Impl> impl;
+  int input_size_snapshot = 0;
+  ModelMeta model_meta_snapshot;
+  DecodeParams decode_params_snapshot;
+  int num_classes_snapshot = -1;
+  {
+    std::lock_guard<std::mutex> state_lock(state_mutex_);
+    if (!is_initialized_) {
+      LOGE("RknnEngine::inferPreprocessed: Not initialized!");
+      return {};
+    }
+    if (!impl_) {
+      LOGE("RknnEngine::inferPreprocessed: Missing implementation state");
+      return {};
+    }
+    impl = impl_;
+    input_size_snapshot = input_size_;
+    model_meta_snapshot = model_meta_;
+    decode_params_snapshot = decode_params_;
+    num_classes_snapshot = num_classes_;
   }
 
-#if RKNN_PLATFORM
-  if (!impl_) {
-    LOGE("RknnEngine::inferPreprocessed: Missing implementation state");
-    return {};
-  }
   // Validate input is already preprocessed
-  if (preprocessed_image.cols != input_size_ || preprocessed_image.rows != input_size_) {
-    LOGE("RknnEngine::inferPreprocessed: Input size mismatch. Expected ", input_size_, "x",
-         input_size_, ", got ", preprocessed_image.cols, "x", preprocessed_image.rows);
+  if (preprocessed_image.cols != input_size_snapshot || preprocessed_image.rows != input_size_snapshot) {
+    LOGE("RknnEngine::inferPreprocessed: Input size mismatch. Expected ", input_size_snapshot, "x",
+         input_size_snapshot, ", got ", preprocessed_image.cols, "x", preprocessed_image.rows);
     return {};
   }
 
@@ -805,9 +877,9 @@ std::vector<Detection> RknnEngine::inferPreprocessed(
 
   rknn_input in{};
   in.index = 0;
-  in.type = impl_->input_type;
-  in.fmt = impl_->input_fmt;
-  if (impl_->input_fmt == RKNN_TENSOR_NCHW) {
+  in.type = impl->input_type;
+  in.fmt = impl->input_fmt;
+  if (impl->input_fmt == RKNN_TENSOR_NCHW) {
     const int h = rgb.rows;
     const int w = rgb.cols;
     const int c = rgb.channels();
@@ -828,20 +900,26 @@ std::vector<Detection> RknnEngine::inferPreprocessed(
     in.size = static_cast<uint32_t>(rgb.total() * rgb.elemSize());
     in.buf = (void*)rgb.data;
   }
-  std::unique_lock<std::mutex> lock(impl_->infer_mutex);
-  int ret = rknn_inputs_set(impl_->ctx, 1, &in);
+
+  std::unique_lock<std::mutex> lock(impl->infer_mutex);
+  if (impl->shutting_down.load(std::memory_order_acquire)) {
+    LOGW("RknnEngine::inferPreprocessed: Engine is shutting down");
+    return {};
+  }
+
+  int ret = rknn_inputs_set(impl->ctx, 1, &in);
   if(ret != RKNN_SUCC){
     LOGE("RknnEngine: rknn_inputs_set failed: ", ret);
     return {};
   }
 
-  ret = rknn_run(impl_->ctx, nullptr);
+  ret = rknn_run(impl->ctx, nullptr);
   if(ret != RKNN_SUCC){
     LOGE("RknnEngine: rknn_run failed: ", ret);
     return {};
   }
 
-  const size_t logits_elems = static_cast<size_t>(impl_->out_elems);
+  const size_t logits_elems = static_cast<size_t>(impl->out_elems);
   thread_local std::vector<float> logits_local;
   logits_local.resize(logits_elems);
 
@@ -850,34 +928,37 @@ std::vector<Detection> RknnEngine::inferPreprocessed(
   out.is_prealloc = 1;
   out.buf = logits_local.data();
   out.size = logits_local.size() * sizeof(float);
-  out.index = impl_->out_attr.index;  // Use the selected best output index
-  ret = rknn_outputs_get(impl_->ctx, 1, &out, nullptr);
+  out.index = impl->out_attr.index;  // Use the selected best output index
+  ret = rknn_outputs_get(impl->ctx, 1, &out, nullptr);
   if(ret != RKNN_SUCC){
     LOGE("RknnEngine: rknn_outputs_get failed: ", ret);
     return {};
   }
 
-  DecodeParams decode_params = decode_params_;
-  int num_classes = num_classes_;
-  rknn_outputs_release(impl_->ctx, 1, &out);
+  int num_classes = num_classes_snapshot;
+  rknn_outputs_release(impl->ctx, 1, &out);
   lock.unlock();
 
-  thread_local std::vector<float> transpose_local;
-  const float* logits = maybe_transpose_output(
-      logits_local.data(), impl_->out_n, impl_->out_c,
-      impl_->out_attr.n_dims, impl_->out_attr.dims[1], impl_->out_attr.dims[2],
-      transpose_local);
+  auto nms_result = decode_output_and_nms(
+      logits_local.data(), impl->out_n, impl->out_c, impl->out_elems, impl->out_attr.n_dims,
+      impl->out_attr.dims[1], impl->out_attr.dims[2], num_classes, model_meta_snapshot,
+      decode_params_snapshot, original_size, letterbox_info, &impl->dfl_layout, "RknnEngine");
 
-  auto nms_result = decode_and_postprocess(
-      logits, impl_->out_n, impl_->out_c, impl_->out_elems, num_classes, model_meta_,
-      decode_params, original_size, letterbox_info, &impl_->dfl_layout, "RknnEngine");
-
-  if (num_classes > 0) {
-    std::lock_guard<std::mutex> update_lock(impl_->infer_mutex);
-    if (num_classes_ < 0) num_classes_ = num_classes;
+  {
+    std::lock_guard<std::mutex> state_lock(state_mutex_);
+    if (num_classes > 0 && num_classes_ < 0) {
+      num_classes_ = num_classes;
+    }
   }
   return nms_result;
 #else
+  {
+    std::lock_guard<std::mutex> state_lock(state_mutex_);
+    if (!is_initialized_) {
+      LOGE("RknnEngine::inferPreprocessed: Not initialized!");
+      return {};
+    }
+  }
   // Non-RKNN build: return empty
   (void)original_size;  // suppress unused warning
   (void)letterbox_info;
@@ -886,17 +967,23 @@ std::vector<Detection> RknnEngine::inferPreprocessed(
 }
 
 std::vector<Detection> RknnEngine::infer(const cv::Mat& image){
-  if(!is_initialized_) {
-    LOGE("RknnEngine: Not initialized!");
-    return {};
+#if RKNN_PLATFORM
+  int input_size_snapshot = 0;
+  {
+    std::lock_guard<std::mutex> state_lock(state_mutex_);
+    if(!is_initialized_) {
+      LOGE("RknnEngine: Not initialized!");
+      return {};
+    }
+    input_size_snapshot = input_size_;
   }
 
-#if RKNN_PLATFORM
   // Letterbox + BGR->RGB conversion
   // Uses RGA hardware acceleration when available (AUTO backend)
   // Performance: ~0.3ms RGA vs ~3ms OpenCV for 1080p->640x640
   rkapp::preprocess::LetterboxInfo letterbox_info;
-  cv::Mat letter = rkapp::preprocess::Preprocess::letterbox(image, input_size_, letterbox_info);
+  cv::Mat letter =
+      rkapp::preprocess::Preprocess::letterbox(image, input_size_snapshot, letterbox_info);
   if (letter.empty()) {
     LOGE("RknnEngine: Preprocess failed (empty output). Input may be invalid.");
     return {};
@@ -905,14 +992,29 @@ std::vector<Detection> RknnEngine::infer(const cv::Mat& image){
   // Delegate to inferPreprocessed to avoid code duplication
   return inferPreprocessed(letter, image.size(), letterbox_info);
 #else
+  {
+    std::lock_guard<std::mutex> state_lock(state_mutex_);
+    if(!is_initialized_) {
+      LOGE("RknnEngine: Not initialized!");
+      return {};
+    }
+  }
   // Non-RKNN build: return empty
   return {};
 #endif
 }
 
 void RknnEngine::warmup(){
-  if(!is_initialized_) { LOGW("RknnEngine: Cannot warmup - not initialized!"); return; }
-  cv::Mat dummy(input_size_, input_size_, CV_8UC3, cv::Scalar(128,128,128));
+  int input_size_snapshot = 0;
+  {
+    std::lock_guard<std::mutex> state_lock(state_mutex_);
+    if(!is_initialized_) {
+      LOGW("RknnEngine: Cannot warmup - not initialized!");
+      return;
+    }
+    input_size_snapshot = input_size_;
+  }
+  cv::Mat dummy(input_size_snapshot, input_size_snapshot, CV_8UC3, cv::Scalar(128,128,128));
   (void)infer(dummy);
 }
 
@@ -921,15 +1023,27 @@ std::vector<Detection> RknnEngine::inferDmaBuf(
     const cv::Size& original_size,
     const rkapp::preprocess::LetterboxInfo& letterbox_info) {
 
-  if (!is_initialized_) {
-    LOGE("RknnEngine::inferDmaBuf: Not initialized!");
-    return {};
-  }
-
 #if RKNN_PLATFORM
-  if (!impl_) {
-    LOGE("RknnEngine::inferDmaBuf: Missing implementation state");
-    return {};
+  std::shared_ptr<Impl> impl;
+  int input_size_snapshot = 0;
+  ModelMeta model_meta_snapshot;
+  DecodeParams decode_params_snapshot;
+  int num_classes_snapshot = -1;
+  {
+    std::lock_guard<std::mutex> state_lock(state_mutex_);
+    if (!is_initialized_) {
+      LOGE("RknnEngine::inferDmaBuf: Not initialized!");
+      return {};
+    }
+    if (!impl_) {
+      LOGE("RknnEngine::inferDmaBuf: Missing implementation state");
+      return {};
+    }
+    impl = impl_;
+    input_size_snapshot = input_size_;
+    model_meta_snapshot = model_meta_;
+    decode_params_snapshot = decode_params_;
+    num_classes_snapshot = num_classes_;
   }
 
   auto fallback_to_copy = [&]() -> std::vector<Detection> {
@@ -971,7 +1085,12 @@ std::vector<Detection> RknnEngine::inferDmaBuf(
       LOGE("RknnEngine::inferDmaBuf: Fallback conversion produced empty image");
       return {};
     }
-    return inferPreprocessed(bgr, original_size, letterbox_info);
+    if (bgr.cols == input_size_snapshot && bgr.rows == input_size_snapshot) {
+      return inferPreprocessed(bgr, original_size, letterbox_info);
+    }
+    LOGW("RknnEngine::inferDmaBuf: Fallback frame is not letterboxed (",
+         bgr.cols, "x", bgr.rows, "), running full infer()");
+    return infer(bgr);
   };
 
 #if !defined(RKAPP_RKNN_DMA_FD_INPUT)
@@ -983,13 +1102,13 @@ std::vector<Detection> RknnEngine::inferDmaBuf(
 #endif
 
   // Validate input dimensions
-  if (input.width() != input_size_ || input.height() != input_size_) {
-    LOGE("RknnEngine::inferDmaBuf: Input size mismatch. Expected ", input_size_, "x",
-         input_size_, ", got ", input.width(), "x", input.height());
+  if (input.width() != input_size_snapshot || input.height() != input_size_snapshot) {
+    LOGE("RknnEngine::inferDmaBuf: Input size mismatch. Expected ", input_size_snapshot, "x",
+         input_size_snapshot, ", got ", input.width(), "x", input.height());
     return {};
   }
 
-  if (impl_->input_fmt != RKNN_TENSOR_NHWC || impl_->input_type != RKNN_TENSOR_UINT8) {
+  if (impl->input_fmt != RKNN_TENSOR_NHWC || impl->input_type != RKNN_TENSOR_UINT8) {
     LOGW("RknnEngine::inferDmaBuf: Zero-copy requires NHWC UINT8, falling back to copy");
     return fallback_to_copy();
   }
@@ -1005,7 +1124,11 @@ std::vector<Detection> RknnEngine::inferDmaBuf(
     return fallback_to_copy();
   }
 
-  std::unique_lock<std::mutex> lock(impl_->infer_mutex);
+  std::unique_lock<std::mutex> lock(impl->infer_mutex);
+  if (impl->shutting_down.load(std::memory_order_acquire)) {
+    LOGW("RknnEngine::inferDmaBuf: Engine is shutting down");
+    return {};
+  }
 
   int ret = RKNN_SUCC;
 #if defined(RKAPP_RKNN_IO_MEM)
@@ -1014,7 +1137,7 @@ std::vector<Detection> RknnEngine::inferDmaBuf(
   mem_info.fd = dma_fd.get();
   mem_info.offset = 0;
   mem_info.size = input.size();
-  input_mem = rknn_create_mem_from_fd(impl_->ctx, &mem_info);
+  input_mem = rknn_create_mem_from_fd(impl->ctx, &mem_info);
   if (!input_mem) {
     LOGW("RknnEngine::inferDmaBuf: rknn_create_mem_from_fd failed, falling back to copy path");
     dma_fd.reset();
@@ -1022,9 +1145,9 @@ std::vector<Detection> RknnEngine::inferDmaBuf(
     return fallback_to_copy();
   }
 
-  ret = rknn_set_io_mem(impl_->ctx, input_mem, &impl_->in_attr);
+  ret = rknn_set_io_mem(impl->ctx, input_mem, &impl->in_attr);
   if (ret != RKNN_SUCC) {
-    rknn_destroy_mem(impl_->ctx, input_mem);
+    rknn_destroy_mem(impl->ctx, input_mem);
     LOGW("RknnEngine::inferDmaBuf: rknn_set_io_mem failed (code ", ret,
          "), falling back to copy path");
     dma_fd.reset();
@@ -1036,8 +1159,8 @@ std::vector<Detection> RknnEngine::inferDmaBuf(
   // RKNN SDK 1.5.0+ supports rknn_inputs_set with fd parameter
   rknn_input in{};
   in.index = 0;
-  in.type = impl_->input_type;
-  in.fmt = impl_->input_fmt;
+  in.type = impl->input_type;
+  in.fmt = impl->input_fmt;
   in.size = static_cast<uint32_t>(input.size());
 
   // Use pass_through mode for DMA-BUF input (zero-copy)
@@ -1045,7 +1168,7 @@ std::vector<Detection> RknnEngine::inferDmaBuf(
   in.pass_through = 1;  // Enable direct buffer access
   in.buf = reinterpret_cast<void*>(static_cast<intptr_t>(dma_fd.get()));
 
-  ret = rknn_inputs_set(impl_->ctx, 1, &in);
+  ret = rknn_inputs_set(impl->ctx, 1, &in);
 
   if (ret != RKNN_SUCC) {
     LOGW("RknnEngine::inferDmaBuf: rknn_inputs_set failed (code ", ret,
@@ -1057,11 +1180,11 @@ std::vector<Detection> RknnEngine::inferDmaBuf(
 #endif
 
   // Run inference (fd must remain valid during this call)
-  ret = rknn_run(impl_->ctx, nullptr);
+  ret = rknn_run(impl->ctx, nullptr);
   if (ret != RKNN_SUCC) {
 #if defined(RKAPP_RKNN_IO_MEM)
     if (input_mem) {
-      rknn_destroy_mem(impl_->ctx, input_mem);
+      rknn_destroy_mem(impl->ctx, input_mem);
     }
 #endif
     LOGE("RknnEngine::inferDmaBuf: rknn_run failed: ", ret);
@@ -1069,7 +1192,7 @@ std::vector<Detection> RknnEngine::inferDmaBuf(
   }
 
   // Get output and decode via the shared postprocess path
-  const size_t logits_elems = static_cast<size_t>(impl_->out_elems);
+  const size_t logits_elems = static_cast<size_t>(impl->out_elems);
   thread_local std::vector<float> logits_local;
   logits_local.resize(logits_elems);
 
@@ -1078,12 +1201,12 @@ std::vector<Detection> RknnEngine::inferDmaBuf(
   out.is_prealloc = 1;  // Use preallocated buffer
   out.buf = logits_local.data();
   out.size = logits_local.size() * sizeof(float);
-  out.index = impl_->out_attr.index;  // Use the selected best output index
-  ret = rknn_outputs_get(impl_->ctx, 1, &out, nullptr);
+  out.index = impl->out_attr.index;  // Use the selected best output index
+  ret = rknn_outputs_get(impl->ctx, 1, &out, nullptr);
 
 #if defined(RKAPP_RKNN_IO_MEM)
   if (input_mem) {
-    rknn_destroy_mem(impl_->ctx, input_mem);
+    rknn_destroy_mem(impl->ctx, input_mem);
   }
 #endif
 
@@ -1095,29 +1218,32 @@ std::vector<Detection> RknnEngine::inferDmaBuf(
     return {};
   }
 
-  DecodeParams decode_params = decode_params_;
-  int num_classes = num_classes_;
-  rknn_outputs_release(impl_->ctx, 1, &out);
+  int num_classes = num_classes_snapshot;
+  rknn_outputs_release(impl->ctx, 1, &out);
   lock.unlock();
 
-  thread_local std::vector<float> transpose_local;
-  const float* logits = maybe_transpose_output(
-      logits_local.data(), impl_->out_n, impl_->out_c,
-      impl_->out_attr.n_dims, impl_->out_attr.dims[1], impl_->out_attr.dims[2],
-      transpose_local);
-
-  auto nms_result = decode_and_postprocess(
-      logits, impl_->out_n, impl_->out_c, impl_->out_elems, num_classes, model_meta_,
-      decode_params, original_size, letterbox_info, &impl_->dfl_layout,
+  auto nms_result = decode_output_and_nms(
+      logits_local.data(), impl->out_n, impl->out_c, impl->out_elems, impl->out_attr.n_dims,
+      impl->out_attr.dims[1], impl->out_attr.dims[2], num_classes, model_meta_snapshot,
+      decode_params_snapshot, original_size, letterbox_info, &impl->dfl_layout,
       "RknnEngine::inferDmaBuf");
 
-  if (num_classes > 0) {
-    std::lock_guard<std::mutex> update_lock(impl_->infer_mutex);
-    if (num_classes_ < 0) num_classes_ = num_classes;
+  {
+    std::lock_guard<std::mutex> state_lock(state_mutex_);
+    if (num_classes > 0 && num_classes_ < 0) {
+      num_classes_ = num_classes;
+    }
   }
   return nms_result;
 
 #else
+  {
+    std::lock_guard<std::mutex> state_lock(state_mutex_);
+    if (!is_initialized_) {
+      LOGE("RknnEngine::inferDmaBuf: Not initialized!");
+      return {};
+    }
+  }
   // Non-RKNN build: fallback to copy
   cv::Mat mat;
   if (!input.copyTo(mat)) {
@@ -1130,27 +1256,53 @@ std::vector<Detection> RknnEngine::inferDmaBuf(
 }
 
 void RknnEngine::release(){
+  std::shared_ptr<Impl> impl;
+  {
+    std::lock_guard<std::mutex> state_lock(state_mutex_);
+    impl = std::move(impl_);
+    is_initialized_ = false;
+  }
+
 #if RKNN_PLATFORM
-  if(impl_ && impl_->ctx){
-    rknn_destroy(impl_->ctx);
+  if (impl) {
+    impl->shutting_down.store(true, std::memory_order_release);
+    std::lock_guard<std::mutex> lock(impl->infer_mutex);
+    if (impl->ctx) {
+      rknn_destroy(impl->ctx);
+      impl->ctx = 0;
+    }
   }
 #endif
-  impl_.reset();
-  is_initialized_ = false;
 }
 
-int RknnEngine::getInputWidth() const { return input_size_; }
-int RknnEngine::getInputHeight() const { return input_size_; }
+int RknnEngine::getInputWidth() const {
+  std::lock_guard<std::mutex> state_lock(state_mutex_);
+  return input_size_;
+}
+
+int RknnEngine::getInputHeight() const {
+  std::lock_guard<std::mutex> state_lock(state_mutex_);
+  return input_size_;
+}
+
+void RknnEngine::setCoreMask(uint32_t core_mask) {
+  std::lock_guard<std::mutex> state_lock(state_mutex_);
+  core_mask_ = core_mask;
+}
 
 void RknnEngine::setDecodeParams(const DecodeParams& params) {
-#if RKNN_PLATFORM
-  if (impl_) {
-    std::lock_guard<std::mutex> lock(impl_->infer_mutex);
-    decode_params_ = params;
-    return;
-  }
-#endif
+  std::lock_guard<std::mutex> state_lock(state_mutex_);
   decode_params_ = params;
+}
+
+int RknnEngine::num_classes() const {
+  std::lock_guard<std::mutex> state_lock(state_mutex_);
+  return num_classes_;
+}
+
+bool RknnEngine::has_objness() const {
+  std::lock_guard<std::mutex> state_lock(state_mutex_);
+  return has_objness_;
 }
 
 } // namespace rkapp::infer

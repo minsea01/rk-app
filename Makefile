@@ -1,15 +1,16 @@
 # Simple orchestration for training, export, conversion, and evidence collection
 
 # Defaults (override with env, e.g., make DATA_YAML=...)
-DATA_YAML ?= $(shell yq -r '.dataset_yaml' configs/exp.yaml 2>/dev/null || echo $(HOME)/datasets/coco80_yolo/data.yaml)
-RUN_NAME  ?= $(shell yq -r '.run_name' configs/exp.yaml 2>/dev/null || echo coco80_y8s)
-IMG_SIZE  ?= $(shell yq -r '.imgsz' configs/exp.yaml 2>/dev/null || echo 640)
-EPOCHS    ?= $(shell yq -r '.epochs' configs/exp.yaml 2>/dev/null || echo 100)
-BATCH     ?= $(shell yq -r '.batch' configs/exp.yaml 2>/dev/null || echo auto)
-DEVICE    ?= $(shell yq -r '.device' configs/exp.yaml 2>/dev/null || echo 0)
-WORKERS   ?= $(shell yq -r '.workers' configs/exp.yaml 2>/dev/null || echo 8)
-OPSET     ?= $(shell yq -r '.opset' configs/exp.yaml 2>/dev/null || echo 12)
-CALIB_DIR ?= $(shell yq -r '.calib_dir' configs/exp.yaml 2>/dev/null || echo datasets/calib)
+EXP_YAML  ?= configs/experiments/exp.yaml
+DATA_YAML ?= $(shell yq -r '.dataset_yaml' $(EXP_YAML) 2>/dev/null || echo $(HOME)/datasets/coco80_yolo/data.yaml)
+RUN_NAME  ?= $(shell yq -r '.run_name' $(EXP_YAML) 2>/dev/null || echo coco80_y8s)
+IMG_SIZE  ?= $(shell yq -r '.imgsz' $(EXP_YAML) 2>/dev/null || echo 640)
+EPOCHS    ?= $(shell yq -r '.epochs' $(EXP_YAML) 2>/dev/null || echo 100)
+BATCH     ?= $(shell yq -r '.batch' $(EXP_YAML) 2>/dev/null || echo auto)
+DEVICE    ?= $(shell yq -r '.device' $(EXP_YAML) 2>/dev/null || echo 0)
+WORKERS   ?= $(shell yq -r '.workers' $(EXP_YAML) 2>/dev/null || echo 8)
+OPSET     ?= $(shell yq -r '.opset' $(EXP_YAML) 2>/dev/null || echo 12)
+CALIB_DIR ?= $(shell yq -r '.calib_dir' $(EXP_YAML) 2>/dev/null || echo datasets/calib)
 
 # Containers
 TRAIN_IMG ?= yolov8-train:cu121
@@ -67,10 +68,11 @@ validate:
 
 .PHONY: calib
 CALIB_SRC ?=
+CALIB_OUT ?= datasets/calib
 CALIB_N ?= 300
 calib:
-	@if [ -z "$(CALIB_SRC)" ]; then echo "Usage: make calib CALIB_SRC=/path/to/dataset.yaml [CALIB_N=300]"; exit 1; fi
-	python tools/make_calib_set.py --src $(CALIB_SRC) --out datasets/calib --num $(CALIB_N)
+	@if [ -z "$(CALIB_SRC)" ]; then echo "Usage: make calib CALIB_SRC=/path/to/data.yaml [CALIB_OUT=datasets/calib] [CALIB_N=300]"; exit 1; fi
+	python tools/make_calib_set.py --data $(CALIB_SRC) --output $(CALIB_OUT) --num $(CALIB_N)
 
 .PHONY: vis
 IMG ?=

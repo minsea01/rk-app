@@ -11,7 +11,8 @@ enum class SourceType {
     VIDEO,
     RTSP,
     GIGE,
-    MPP     // Hardware-accelerated video via RK3588 MPP
+    MPP,    // Hardware-accelerated video via RK3588 MPP
+    CSI     // MIPI CSI camera via GStreamer v4l2src
 };
 
 struct CaptureFrame {

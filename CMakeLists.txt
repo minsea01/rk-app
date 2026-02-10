@@ -136,12 +136,15 @@ if(HAVE_YAML_CPP)
   add_compile_definitions(RKAPP_HAVE_YAMLCPP=1)
 endif()
 option(ENABLE_GIGE "Enable GigE Vision (Aravis) source" OFF)
-if (ENABLE_GIGE)
-  # Aravis（可选，用于未来直接使用Aravis API）；当前GigeSource仅依赖GStreamer
-  pkg_check_modules(ARAVIS aravis-0.8)
+option(ENABLE_CSI "Enable MIPI CSI camera source (v4l2src)" OFF)
+if (ENABLE_GIGE OR ENABLE_CSI)
   # GStreamer 与 appsink 为必需
   pkg_check_modules(GST REQUIRED gstreamer-1.0)
   pkg_check_modules(GST_APP REQUIRED gstreamer-app-1.0)
+endif()
+if (ENABLE_GIGE)
+  # Aravis（可选，用于未来直接使用Aravis API）；当前GigeSource仅依赖GStreamer
+  pkg_check_modules(ARAVIS aravis-0.8)
 endif()
 
 # Core detection pipeline library
@@ -150,6 +153,7 @@ add_library(rkapp_core
     src/capture/VideoSource.cpp
     src/capture/MppSource.cpp
     $<$<AND:$<BOOL:${ENABLE_GIGE}>,$<BOOL:${GST_FOUND}>>:src/capture/GigeSource.cpp>
+    $<$<AND:$<BOOL:${ENABLE_CSI}>,$<BOOL:${GST_FOUND}>>:src/capture/CsiSource.cpp>
     src/preprocess/Preprocess.cpp
     src/post/Postprocess.cpp
     src/output/TcpOutput.cpp
@@ -193,14 +197,21 @@ if(YAML_CPP_FOUND)
     target_link_libraries(rkapp_core PUBLIC ${YAML_CPP_LIBRARIES})
     target_include_directories(rkapp_core PUBLIC ${YAML_CPP_INCLUDE_DIRS})
 endif()
-if(ENABLE_GIGE AND GST_FOUND AND GST_APP_FOUND)
-    target_compile_definitions(rkapp_core PUBLIC RKAPP_WITH_GIGE=1)
+if((ENABLE_GIGE OR ENABLE_CSI) AND GST_FOUND AND GST_APP_FOUND)
     target_link_libraries(rkapp_core PUBLIC ${GST_LIBRARIES} ${GST_APP_LIBRARIES})
     target_include_directories(rkapp_core PUBLIC ${GST_INCLUDE_DIRS} ${GST_APP_INCLUDE_DIRS})
+endif()
+
+if(ENABLE_GIGE AND GST_FOUND AND GST_APP_FOUND)
+    target_compile_definitions(rkapp_core PUBLIC RKAPP_WITH_GIGE=1)
     if(ARAVIS_FOUND)
         target_link_libraries(rkapp_core PUBLIC ${ARAVIS_LIBRARIES})
         target_include_directories(rkapp_core PUBLIC ${ARAVIS_INCLUDE_DIRS})
     endif()
+endif()
+
+if(ENABLE_CSI AND GST_FOUND AND GST_APP_FOUND)
+    target_compile_definitions(rkapp_core PUBLIC RKAPP_WITH_CSI=1)
 endif()
 
 # MPP hardware video decoding (RK3588)

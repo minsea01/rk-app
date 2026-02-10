@@ -6,6 +6,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <array>
 #include <vector>
 #include <opencv2/opencv.hpp>
 
@@ -21,7 +22,7 @@ namespace rkapp::pipeline {
  */
 struct PipelineConfig {
     // Input source configuration
-    std::string source_uri;          // Video/image path or RTSP URL
+    std::string source_uri;          // Video/image path, RTSP URL, or CSI URI string
     capture::SourceType source_type = capture::SourceType::VIDEO;
 
     // Model configuration
@@ -38,6 +39,26 @@ struct PipelineConfig {
     bool use_rga_preprocess = true;  // Enable RGA hardware preprocessing
     bool use_mpp_decode = true;      // Enable MPP hardware video decode
     bool use_zero_copy = true;       // Enable DMA-BUF zero-copy
+
+    // Camera preprocessing options
+    bool enable_undistort = false;   // Enable lens undistortion (cv::remap)
+    std::string calibration_file;    // OpenCV calibration YAML/XML file path
+    std::string preprocess_profile = "speed";  // speed|balanced|quality
+    bool roi_enable = false;
+    std::string roi_mode = "normalized";  // normalized|pixel
+    std::array<float, 4> roi_normalized_xywh{0.0f, 0.0f, 1.0f, 1.0f};
+    std::array<int, 4> roi_pixel_xywh{0, 0, 0, 0};
+    bool roi_clamp = true;
+    int roi_min_size = 8;
+    std::optional<bool> gamma_enable;
+    float gamma_value = 1.0f;
+    std::optional<bool> white_balance_enable;
+    float white_balance_clip_percent = 0.0f;
+    std::optional<bool> denoise_enable;
+    std::string denoise_method = "bilateral";
+    int denoise_d = 5;
+    float denoise_sigma_color = 35.0f;
+    float denoise_sigma_space = 35.0f;
 
     // Performance tuning
     int buffer_pool_size = 4;        // Number of pre-allocated DMA buffers
