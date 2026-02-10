@@ -3,6 +3,10 @@
 # Target: >= 90% mAP@0.5 on COCO person validation set
 
 set -e
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+source "$REPO_ROOT/scripts/lib/deprecation.sh"
+warn_deprecated "scripts/train/train_citypersons.sh" "scripts/train.sh"
 
 echo "============================================="
 echo "YOLO11n CityPersons Fine-tuning"
@@ -50,23 +54,23 @@ echo "Starting training..."
 echo ""
 
 # Train with Ultralytics YOLO
-yolo train \
-    model=$MODEL \
-    data=$DATA \
-    epochs=$EPOCHS \
-    imgsz=$IMGSZ \
-    batch=$BATCH \
-    device=$DEVICE \
-    project=$PROJECT \
-    name=$NAME \
-    patience=$PATIENCE \
-    lr0=$LR0 \
-    warmup_epochs=$WARMUP_EPOCHS \
-    save=True \
-    save_period=5 \
-    plots=True \
-    verbose=True \
-    exist_ok=False
+bash "$REPO_ROOT/scripts/train.sh" \
+    --profile none \
+    --model "$MODEL" \
+    --data "$DATA" \
+    --epochs "$EPOCHS" \
+    --imgsz "$IMGSZ" \
+    --batch "$BATCH" \
+    --device "$DEVICE" \
+    --project "$PROJECT" \
+    --name "$NAME" \
+    --patience "$PATIENCE" \
+    --lr0 "$LR0" \
+    --warmup-epochs "$WARMUP_EPOCHS" \
+    --save-period 5 \
+    --exist-ok False \
+    --extra verbose=True \
+    --no-export
 
 echo ""
 echo "============================================="

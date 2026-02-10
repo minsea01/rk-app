@@ -20,6 +20,8 @@ echo ""
 source ~/yolo_env/bin/activate
 PROJECT_ROOT=$(cd "$(dirname "$0")/.." && pwd)
 cd "$PROJECT_ROOT"
+source "$PROJECT_ROOT/scripts/lib/deprecation.sh"
+warn_deprecated "scripts/train_person_detector.sh" "scripts/train.sh"
 
 # 第一步: 准备数据集
 echo "第一步: 准备 COCO 行人子集..."
@@ -32,21 +34,21 @@ fi
 # 第二步: 训练模型
 echo ""
 echo "第二步: 开始训练 $MODEL 模型..."
-yolo detect train \
-    model=$MODEL.pt \
-    data=datasets/coco_person/data.yaml \
-    epochs=$EPOCHS \
-    imgsz=$IMGSZ \
-    batch=$BATCH \
-    patience=20 \
-    save=True \
-    project=runs/detect \
-    name=person_${MODEL}_${IMGSZ} \
-    exist_ok=False \
-    pretrained=True \
-    optimizer=auto \
-    verbose=True \
-    device=0
+bash scripts/train.sh \
+    --profile none \
+    --model "$MODEL.pt" \
+    --data datasets/coco_person/data.yaml \
+    --epochs "$EPOCHS" \
+    --imgsz "$IMGSZ" \
+    --batch "$BATCH" \
+    --device 0 \
+    --project runs/detect \
+    --name person_${MODEL}_${IMGSZ} \
+    --patience 20 \
+    --optimizer auto \
+    --exist-ok False \
+    --extra verbose=True \
+    --no-export
 
 # 第三步: 验证模型
 echo ""
@@ -93,4 +95,3 @@ echo "1. 检查 runs/detect/person_${MODEL}_${IMGSZ}/results.csv 查看训练曲
 echo "2. 用 PC 测试 ONNX 性能"
 echo "3. 用 RKNN 模拟器测试精度"
 echo "4. 更新 artifacts/models/best.* 链接到新模型"
-

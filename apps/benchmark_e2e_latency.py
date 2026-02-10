@@ -68,6 +68,18 @@ def benchmark_e2e(args):
     print(f"Pipeline: 1080P({orig_w}×{orig_h}) → Preprocess → RKNN({args.imgsz}×{args.imgsz}) → Postprocess → Encode")
     print("-" * 80)
 
+    postprocess_fn = postprocess_yolov8
+    if args.optimized:
+        try:
+            from apps.utils.yolo_post_optimized import NUMBA_AVAILABLE, postprocess_yolov8_optimized
+
+            postprocess_fn = postprocess_yolov8_optimized
+            print(f"Postprocess mode: optimized (NUMBA_AVAILABLE={NUMBA_AVAILABLE})")
+        except ImportError:
+            print("Postprocess mode: optimized requested but unavailable, fallback to standard")
+    else:
+        print("Postprocess mode: standard")
+
     timings = {
         'capture': [],      # 模拟相机采集
         'preprocess': [],   # letterbox resize
@@ -106,7 +118,7 @@ def benchmark_e2e(args):
         if pred.shape[1] < pred.shape[2]:
             pred = pred.transpose(0, 2, 1)
 
-        boxes, confs, cls_ids = postprocess_yolov8(
+        boxes, confs, cls_ids = postprocess_fn(
             pred, args.imgsz, (args.imgsz, args.imgsz),
             (ratio, (dw, dh)), args.conf, args.iou
         )
@@ -220,7 +232,7 @@ def benchmark_e2e(args):
     return 0
 
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser(
         description='端到端延时基准测试（1080P工业相机模拟）'
     )
@@ -244,8 +256,10 @@ def main():
                         help='预热次数 (default: 10)')
     parser.add_argument('--output', type=Path, default=None,
                         help='保存详细结果到JSON文件')
+    parser.add_argument('--optimized', action='store_true',
+                        help='启用优化后处理实现（如果可用）')
 
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     return benchmark_e2e(args)
 
 

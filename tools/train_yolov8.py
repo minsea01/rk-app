@@ -1,98 +1,102 @@
 #!/usr/bin/env python3
-"""YOLOv8 training script using Ultralytics."""
+"""Deprecated wrapper for scripts/train.sh."""
+
+from __future__ import annotations
+
 import argparse
-import logging
+import subprocess
+import sys
 from pathlib import Path
+from typing import List, Union
 
-# Setup logging
-logging.basicConfig(level=logging.INFO, format='%(message)s')
-logger = logging.getLogger(__name__)
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from apps.deprecation import warn_deprecated
 
 
-def parse_batch(value):
-    """Parse Ultralytics batch argument.
-
-    Supports:
-      - integer batch size, e.g. 16
-      - fractional auto-batch, e.g. 0.7
-      - "auto" (mapped to -1)
-    """
+def parse_batch(value: Union[str, int, float]) -> Union[int, float]:
+    """Parse Ultralytics batch argument (int/float/auto)."""
     if isinstance(value, (int, float)):
         return value
-
-    s = str(value).strip().lower()
-    if s == 'auto':
+    text = str(value).strip().lower()
+    if text == "auto":
         return -1
-
     try:
-        return int(s)
+        return int(text)
     except ValueError:
-        pass
+        try:
+            return float(text)
+        except ValueError as exc:
+            raise argparse.ArgumentTypeError(
+                f"invalid --batch value '{value}', expected int/float/auto"
+            ) from exc
 
-    try:
-        return float(s)
-    except ValueError as e:
-        raise argparse.ArgumentTypeError(
-            f"invalid --batch value '{value}', expected int/float/auto"
-        ) from e
+
+def build_arg_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Deprecated: use scripts/train.sh")
+    parser.add_argument("--data", type=str, required=True)
+    parser.add_argument("--model", type=str, default="yolov8s.pt")
+    parser.add_argument("--imgsz", type=int, default=640)
+    parser.add_argument("--epochs", type=int, default=100)
+    parser.add_argument("--batch", type=parse_batch, default=16)
+    parser.add_argument("--device", type=str, default="0")
+    parser.add_argument("--workers", type=int, default=8)
+    parser.add_argument("--project", type=str, default="runs/train")
+    parser.add_argument("--name", type=str, default="exp")
+    parser.add_argument("--lr0", type=float, default=None)
+    parser.add_argument("--lrf", type=float, default=None)
+    parser.add_argument("--patience", type=int, default=50)
+    parser.add_argument("--seed", type=int, default=0)
+    return parser
+
+
+def _build_train_cmd(args: argparse.Namespace) -> List[str]:
+    repo_root = Path(__file__).resolve().parents[1]
+    cmd = [
+        "bash",
+        str(repo_root / "scripts" / "train.sh"),
+        "--profile",
+        "none",
+        "--model",
+        args.model,
+        "--data",
+        args.data,
+        "--epochs",
+        str(args.epochs),
+        "--imgsz",
+        str(args.imgsz),
+        "--batch",
+        str(args.batch),
+        "--device",
+        str(args.device),
+        "--workers",
+        str(args.workers),
+        "--project",
+        args.project,
+        "--name",
+        args.name,
+        "--patience",
+        str(args.patience),
+        "--extra",
+        f"seed={args.seed}",
+        "--no-export",
+        "--no-summary",
+    ]
+    if args.lr0 is not None:
+        cmd.extend(["--lr0", str(args.lr0)])
+    if args.lrf is not None:
+        cmd.extend(["--lrf", str(args.lrf)])
+    return cmd
 
 
 def main() -> int:
-    """Main training entry point.
-    
-    Returns:
-        Exit code (0 for success, non-zero for failure)
-    """
-    ap = argparse.ArgumentParser(description='Train YOLOv8 (Ultralytics) for detection')
-    ap.add_argument('--data', type=str, required=True, help='dataset YAML (Ultralytics/YOLO format)')
-    ap.add_argument('--model', type=str, default='yolov8s.pt', help='initial weights or model yaml (e.g., yolov8s.yaml)')
-    ap.add_argument('--imgsz', type=int, default=640)
-    ap.add_argument('--epochs', type=int, default=100)
-    ap.add_argument('--batch', type=parse_batch, default=16, help='batch size (e.g. 16), fraction (e.g. 0.7), or auto')
-    ap.add_argument('--device', type=str, default='0', help='GPU id, e.g., 0; use cpu for CPU')
-    ap.add_argument('--workers', type=int, default=8)
-    ap.add_argument('--project', type=str, default='runs/train')
-    ap.add_argument('--name', type=str, default='exp')
-    ap.add_argument('--lr0', type=float, default=None)
-    ap.add_argument('--lrf', type=float, default=None)
-    ap.add_argument('--patience', type=int, default=50)
-    ap.add_argument('--seed', type=int, default=0)
-    args = ap.parse_args()
+    args = build_arg_parser().parse_args()
+    warn_deprecated("tools/train_yolov8.py", "scripts/train.sh", once=True)
 
-    try:
-        from ultralytics import YOLO
-    except ImportError as e:
-        logger.error(f'Ultralytics not installed. pip install ultralytics. Error: {e}')
-        return 2
-
-    model = YOLO(args.model)
-
-    train_args = {
-        'data': args.data,
-        'imgsz': args.imgsz,
-        'epochs': args.epochs,
-        'batch': args.batch,
-        'device': args.device,
-        'workers': args.workers,
-        'project': args.project,
-        'name': args.name,
-        'patience': args.patience,
-        'seed': args.seed,
-    }
-    # Optional hyper-params
-    if args.lr0 is not None:
-        train_args['lr0'] = args.lr0
-    if args.lrf is not None:
-        train_args['lrf'] = args.lrf
-
-    logger.info(f'Training args: {train_args}')
-    res = model.train(**train_args)
-    logger.info(str(res))
-    # Export best weights path
-    best = Path(res.save_dir) / 'weights' / 'best.pt'
-    logger.info(f'Best weights: {best} (exists={best.exists()})')
-    return 0
+    cmd = _build_train_cmd(args)
+    result = subprocess.run(cmd, check=False)
+    return int(result.returncode)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     raise SystemExit(main())

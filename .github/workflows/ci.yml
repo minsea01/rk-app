@@ -97,6 +97,22 @@ jobs:
             shellcheck "$script" || echo "Warning: shellcheck found issues in $script"
           done
 
+  redundancy-check:
+    name: Redundancy Guardrails
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Install ripgrep
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ripgrep
+
+      - name: Run redundancy checks
+        run: |
+          chmod +x scripts/check_redundancy.sh
+          ./scripts/check_redundancy.sh
+
   cpp-build-tests:
     name: C++ Build and Tests
     runs-on: ubuntu-latest
@@ -195,7 +211,7 @@ jobs:
   # CI Success
   ci-success:
     name: CI Pipeline Complete
-    needs: [python-quality, python-tests, file-validation, model-validation, docs-check, project-stats, cpp-build-tests]
+    needs: [python-quality, python-tests, file-validation, redundancy-check, model-validation, docs-check, project-stats, cpp-build-tests]
     runs-on: ubuntu-latest
     if: always()
     steps:
