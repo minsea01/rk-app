@@ -1,0 +1,16 @@
+# Generated runtime outputs
+vis/
+test_train/
+*.log
+*.mp4
+*.jpg
+pcap/
+
+# Generated validation and benchmark exports
+onnx_gpu_test2/
+onnx_optimized/
+onnx_val/
+yolov8s_test/
+test_train/
+
+# Keep curated artifacts and reports tracked explicitly when needed.

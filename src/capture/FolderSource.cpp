@@ -1,7 +1,8 @@
 #include "rkapp/capture/FolderSource.hpp"
 #include <filesystem>
 #include <algorithm>
-#include <iostream>
+
+#include "rkapp/common/log.hpp"
 
 namespace rkapp::capture {
 
@@ -12,7 +13,7 @@ bool FolderSource::open(const std::string& folder_path) {
   namespace fs = std::filesystem;
 
   if (!fs::exists(folder_path) || !fs::is_directory(folder_path)) {
-    std::cerr << "Folder does not exist: " << folder_path << std::endl;
+    LOGE("Folder does not exist: ", folder_path);
     return false;
   }
 
@@ -37,10 +38,10 @@ bool FolderSource::open(const std::string& folder_path) {
   is_opened_ = !image_files_.empty();
 
   if (image_files_.empty()) {
-    std::cerr << "No image files found in folder: " << folder_path << std::endl;
+    LOGW("No image files found in folder: ", folder_path);
     cached_size_ = cv::Size(0, 0);
   } else {
-    std::cout << "Found " << image_files_.size() << " images in folder" << std::endl;
+    LOGI("Found ", image_files_.size(), " images in folder");
     // 缓存第一张图片的尺寸，避免 getSize() 每次都读取
     cv::Mat sample = cv::imread(image_files_[0], cv::IMREAD_COLOR);
     cached_size_ = sample.empty() ? cv::Size(0, 0) : sample.size();
@@ -58,7 +59,7 @@ bool FolderSource::read(cv::Mat& frame) {
     if (!frame.empty()) {
       return true;
     }
-    std::cerr << "Failed to read image: " << current_file << " (skipping)" << std::endl;
+    LOGW("Failed to read image: ", current_file, " (skipping)");
   }
   return false;
 }

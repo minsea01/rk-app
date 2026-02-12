@@ -7,6 +7,9 @@
 
 BOARD_IP="192.168.137.226"
 BOARD_USER="root"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+LOCAL_BIN="${ROOT_DIR}/artifacts/bin/bench_dfl_opt"
+REMOTE_BIN_DIR="~/rk-app/artifacts/bin"
 
 set -e
 
@@ -22,13 +25,14 @@ bash scripts/build_dfl_bench_cross.sh
 # 步骤2: 传输到板端
 echo ""
 echo "[2/3] 传输到板端 (${BOARD_USER}@${BOARD_IP})..."
-scp bench_dfl_opt ${BOARD_USER}@${BOARD_IP}:~/rk-app/
+ssh ${BOARD_USER}@${BOARD_IP} "mkdir -p ${REMOTE_BIN_DIR}"
+scp "${LOCAL_BIN}" ${BOARD_USER}@${BOARD_IP}:${REMOTE_BIN_DIR}/
 
 # 步骤3: 板端运行
 echo ""
 echo "[3/3] 板端执行测试..."
 echo "=================================================="
-ssh ${BOARD_USER}@${BOARD_IP} "cd ~/rk-app && ./bench_dfl_opt"
+ssh ${BOARD_USER}@${BOARD_IP} "cd ~/rk-app && ./artifacts/bin/bench_dfl_opt"
 
 echo ""
 echo "=================================================="

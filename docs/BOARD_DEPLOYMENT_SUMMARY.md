@@ -11,7 +11,7 @@
 
 | 方案 | 优点 | 缺点 | 适用场景 | 文档 |
 |------|------|------|----------|------|
-| **原生部署** ✅ | 性能最优<br>NPU直接访问<br>部署包小 | 依赖手动安装 | **毕设答辩**<br>追求极致性能 | `BOARD_QUICKSTART.md` |
+| **原生部署** ✅ | 性能最优<br>NPU直接访问<br>部署包小 | 依赖手动安装 | **毕设答辩**<br>追求极致性能 | `docs/guides/BOARD_QUICKSTART.md` |
 | **Docker部署** | 环境隔离<br>依赖打包<br>一键部署 | 镜像体积大<br>NPU配置复杂 | 多环境部署<br>快速迭代 | `DOCKER_DEPLOYMENT_GUIDE.md` |
 
 **推荐**: 对于毕设答辩，使用**原生部署**（性能最优，演示最稳定）
@@ -21,7 +21,7 @@
 ## 📚 新增文档（共5个）
 
 ### 1. 快速入门指南
-**文件**: `BOARD_QUICKSTART.md` (项目根目录)
+**文件**: `docs/guides/BOARD_QUICKSTART.md`
 **用途**: 4步骤、30分钟完成首次推理的快速指南（原生部署）
 **关键内容**:
 - WSL打包传输流程
@@ -449,11 +449,11 @@ artifacts/
 
 | 问题 | 解决方法 | 文档位置 |
 |------|---------|---------|
-| NPU初始化失败 | `sudo modprobe rknpu` | BOARD_QUICKSTART.md |
+| NPU初始化失败 | `sudo modprobe rknpu` | docs/guides/BOARD_QUICKSTART.md |
 | rknn-toolkit-lite2安装失败 | 手动下载wheel | RK3588_DEPLOYMENT_CHECKLIST.md |
-| 网口不识别 | 检查dmesg和设备树 | BOARD_QUICKSTART.md |
-| 推理速度慢 | 使用416×416模型 | BOARD_QUICKSTART.md |
-| OpenCV导入错误 | 安装libgl1-mesa-glx | BOARD_QUICKSTART.md |
+| 网口不识别 | 检查dmesg和设备树 | docs/guides/BOARD_QUICKSTART.md |
+| 推理速度慢 | 使用416×416模型 | docs/guides/BOARD_QUICKSTART.md |
+| OpenCV导入错误 | 安装libgl1-mesa-glx | docs/guides/BOARD_QUICKSTART.md |
 
 ---
 
@@ -475,7 +475,7 @@ artifacts/
 ## 📚 参考资料
 
 ### 项目文档
-- **快速入门**: `BOARD_QUICKSTART.md`
+- **快速入门**: `docs/guides/BOARD_QUICKSTART.md`
 - **完整清单**: `docs/deployment/RK3588_DEPLOYMENT_CHECKLIST.md`
 - **部署指南**: `docs/deployment/BOARD_DEPLOYMENT_QUICKSTART.md`
 - **RGMII网络**: `docs/docs/RGMII_NETWORK_GUIDE.md`
@@ -495,10 +495,10 @@ artifacts/
 1. ✅ 代码已完全ready，可以先做其他工作
 2. ✅ WSL环境的所有开发工作已完成
 3. ✅ 文档和脚本都已准备好
-4. ⏸️ 等板子到货后，按照BOARD_QUICKSTART.md执行即可
+4. ⏸️ 等板子到货后，按照 `docs/guides/BOARD_QUICKSTART.md` 执行即可
 
 ### 如果板子已到手
-1. 📖 阅读 `BOARD_QUICKSTART.md`（5分钟）
+1. 📖 阅读 `docs/guides/BOARD_QUICKSTART.md`（5分钟）
 2. 🔌 连接板子网络，获取IP
 3. 📦 运行 `scripts/deploy/pack_for_board.sh`打包
 4. ⬆️ SCP传输到板子

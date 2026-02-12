@@ -81,14 +81,17 @@ git clone <repo-url> .
 python3 -m venv venv
 source venv/bin/activate
 
-# 2. 安装依赖
+# 2. 安装基础运行时依赖（轻量）
 pip install --upgrade pip
 pip install -r requirements.txt
 
-# 3. 验证RKNN工具包
-python3 -c "from rknn.api import RKNN; print('RKNN OK')"
+# 3. 安装板端依赖（含 RKNN Lite）
+pip install -r requirements_board.txt
 
-# 4. 设置PYTHONPATH
+# 4. 验证RKNN工具包（Lite）
+python3 -c "from rknnlite.api import RKNNLite; print('RKNN Lite OK')"
+
+# 5. 设置PYTHONPATH
 export PYTHONPATH=/opt/rk-detection:$PYTHONPATH
 ```
 
@@ -664,4 +667,3 @@ tcpdump -i eth0 -c 100 | grep -E "error|drop"
 **版本:** 1.0
 **最后更新:** 2025-10-30
 **状态:** Phase 1完成，待硬件到达
-

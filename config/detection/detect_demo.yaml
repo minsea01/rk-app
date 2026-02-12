@@ -17,7 +17,7 @@ perf:
   async: false
 
 output:
-  type: tcp                  # tcp|udp|file
+  type: tcp                  # tcp
   ip: "127.0.0.1"
   port: 9000
 

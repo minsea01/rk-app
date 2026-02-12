@@ -390,13 +390,13 @@ docker-compose -f docker-compose.rk3588.yml down
     ├─ YES ─▶ 是否追求极致性能？
     │           │
     │           ├─ YES ─▶ 使用原生部署 ✅ (推荐)
-    │           │          参考: BOARD_QUICKSTART.md
+    │           │          参考: docs/guides/BOARD_QUICKSTART.md
     │           │
     │           └─ NO ──▶ 使用Docker部署
     │                     参考: 本文档
     │
     └─ NO ──▶ 使用原生部署 ✅ (推荐)
-              参考: BOARD_QUICKSTART.md
+              参考: docs/guides/BOARD_QUICKSTART.md
 ```
 
 **最终建议**: 对于毕设答辩，**原生部署**是最佳选择！性能最优，演示最稳定。

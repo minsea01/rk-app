@@ -46,7 +46,7 @@
 - ✅ Moved `diagnosis_results/` (9.2MB)
 - ✅ Moved `temp_data/` (1.5KB)
 - ✅ Moved `achievement_report/` (13KB)
-- ✅ Removed empty MCP stub packages (`mcp_dev/`, `mcp_docker/`, `mcp_git_summary/`)
+- ✅ Consolidated MCP helper packages under `tools/mcp/` (`mcp_dev`, `mcp_docker`, `mcp_git_summary`)
 
 **Impact**:
 - ✅ Cleaner project structure
