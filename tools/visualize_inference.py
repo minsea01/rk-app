@@ -43,7 +43,10 @@ def decode_raw(pred_nc, imgsz, conf_thres=0.25, iou_thres=0.45):
         return np.empty((0, 4)), np.array([]), np.array([])
     scale_needed = (np.percentile(w[m], 95) < 1.0) or (np.percentile(h[m], 95) < 1.0)
     s = float(imgsz) if scale_needed else 1.0
-    cx *= s; cy *= s; w *= s; h *= s
+    cx *= s
+    cy *= s
+    w *= s
+    h *= s
     x1 = cx - w / 2.0
     y1 = cy - h / 2.0
     x2 = cx + w / 2.0
@@ -66,14 +69,16 @@ def annotate(img, boxes, confs, cls_ids, names=None):
 
 
 def main():
-    ap = argparse.ArgumentParser(description='Visualize ONNX inference and save annotated image')
-    ap.add_argument('--onnx', type=Path, required=True, help='path to ONNX')
-    ap.add_argument('--img', type=Path, required=False, default=Path(''), help='input image path (optional)')
-    ap.add_argument('--imgsz', type=int, default=640)
-    ap.add_argument('--conf', type=float, default=0.25)
-    ap.add_argument('--iou', type=float, default=0.45)
-    ap.add_argument('--names', type=Path, default=None, help='names file (optional)')
-    ap.add_argument('--out', type=Path, default=Path('artifacts/vis/out.jpg'))
+    ap = argparse.ArgumentParser(description="Visualize ONNX inference and save annotated image")
+    ap.add_argument("--onnx", type=Path, required=True, help="path to ONNX")
+    ap.add_argument(
+        "--img", type=Path, required=False, default=Path(""), help="input image path (optional)"
+    )
+    ap.add_argument("--imgsz", type=int, default=640)
+    ap.add_argument("--conf", type=float, default=0.25)
+    ap.add_argument("--iou", type=float, default=0.45)
+    ap.add_argument("--names", type=Path, default=None, help="names file (optional)")
+    ap.add_argument("--out", type=Path, default=Path("artifacts/vis/out.jpg"))
     args = ap.parse_args()
 
     import onnxruntime as ort
@@ -89,16 +94,21 @@ def main():
         # build a synthetic image if not provided
         sz = args.imgsz
         img0 = (np.random.RandomState(0).rand(sz, sz, 3) * 255).astype(np.uint8)
-        cv2.putText(img0, 'SYNTH', (10, sz//2), cv2.FONT_HERSHEY_SIMPLEX, 2.0, (0,255,0), 3)
+        cv2.putText(img0, "SYNTH", (10, sz // 2), cv2.FONT_HERSHEY_SIMPLEX, 2.0, (0, 255, 0), 3)
     img, r, d = letterbox(img0, args.imgsz)
 
-    sess = ort.InferenceSession(str(args.onnx), providers=['CPUExecutionProvider'])
-    y = sess.run([sess.get_outputs()[0].name], {sess.get_inputs()[0].name: img.transpose(2, 0, 1)[None].astype(np.float32) / 255.0})[0]
+    sess = ort.InferenceSession(str(args.onnx), providers=["CPUExecutionProvider"])
+    y = sess.run(
+        [sess.get_outputs()[0].name],
+        {sess.get_inputs()[0].name: img.transpose(2, 0, 1)[None].astype(np.float32) / 255.0},
+    )[0]
     pred = unify_pred(y)
     C = pred.shape[2]
 
     if C >= 64:
-        boxes, confs, cls_ids = postprocess_yolov8(pred, args.imgsz, img0.shape[:2], (r, d), args.conf, args.iou)
+        boxes, confs, cls_ids = postprocess_yolov8(
+            pred, args.imgsz, img0.shape[:2], (r, d), args.conf, args.iou
+        )
     else:
         boxes, confs, cls_ids = decode_raw(pred, args.imgsz, args.conf, args.iou)
         # scale back to original
@@ -111,8 +121,8 @@ def main():
     args.out.parent.mkdir(parents=True, exist_ok=True)
     vis = annotate(img0.copy(), boxes, confs, cls_ids, names)
     cv2.imwrite(str(args.out), vis)
-    print(f'Saved visualization: {args.out}')
+    print(f"Saved visualization: {args.out}")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

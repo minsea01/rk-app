@@ -109,16 +109,14 @@ def sigmoid(x: Union[float, np.ndarray]) -> Union[float, np.ndarray]:
     # For x >= 0: use standard formula to avoid exp overflow
     # For x < 0: use exp(x) / (1 + exp(x)) to avoid division issues
     return np.where(
-        x_clipped >= 0,
-        1 / (1 + np.exp(-x_clipped)),
-        np.exp(x_clipped) / (1 + np.exp(x_clipped))
+        x_clipped >= 0, 1 / (1 + np.exp(-x_clipped)), np.exp(x_clipped) / (1 + np.exp(x_clipped))
     )
 
 
 def letterbox(
     im: np.ndarray,
     new_shape: Union[int, Tuple[int, int]] = 640,
-    color: Tuple[int, int, int] = (114, 114, 114)
+    color: Tuple[int, int, int] = (114, 114, 114),
 ) -> Tuple[np.ndarray, float, Tuple[float, float]]:
     """Resize and pad image while meeting stride-multiple constraints.
 
@@ -178,6 +176,7 @@ def letterbox(
 _anchor_cache: Dict[Tuple[int, Tuple[int, ...]], np.ndarray] = {}
 _anchor_cache_lock = threading.Lock()
 
+
 def make_anchors(strides: List[int], img_size: int) -> np.ndarray:
     """Generate anchor grid points for YOLO detection layers.
 
@@ -203,7 +202,7 @@ def make_anchors(strides: List[int], img_size: int) -> np.ndarray:
     anchors: List[np.ndarray] = []
     for s in strides:
         fm = img_size // s  # Feature map size
-        grid_y, grid_x = np.meshgrid(np.arange(fm), np.arange(fm), indexing='ij')
+        grid_y, grid_x = np.meshgrid(np.arange(fm), np.arange(fm), indexing="ij")
         # Calculate center coordinates: (grid_idx + 0.5) * stride
         cx = (grid_x.ravel() + 0.5) * s
         cy = (grid_y.ravel() + 0.5) * s
@@ -269,10 +268,7 @@ def dfl_decode(d: np.ndarray, reg_max: int = 16) -> np.ndarray:
 
 
 def nms(
-    boxes: np.ndarray,
-    scores: np.ndarray,
-    iou_thres: float = 0.45,
-    topk: Optional[int] = 300
+    boxes: np.ndarray, scores: np.ndarray, iou_thres: float = 0.45, topk: Optional[int] = 300
 ) -> List[int]:
     """Non-Maximum Suppression for object detection.
 
@@ -301,9 +297,7 @@ def nms(
         raise ValueError(f"Expected boxes shape (M, 4), got {boxes.shape}")
 
     if len(scores) != len(boxes):
-        raise ValueError(
-            f"Boxes and scores length mismatch: {len(boxes)} vs {len(scores)}"
-        )
+        raise ValueError(f"Boxes and scores length mismatch: {len(boxes)} vs {len(scores)}")
 
     # boxes: (M, 4) xyxy, scores: (M,)
     x1 = boxes[:, 0]
@@ -342,12 +336,14 @@ def nms(
         order = order[inds + 1]
     return keep
 
+
 # Expose sigmoid for reuse by app
-__all__ = ['letterbox', 'postprocess_yolov8', 'nms', 'sigmoid']
+__all__ = ["letterbox", "postprocess_yolov8", "nms", "sigmoid"]
 
 # Thread-safe cache for stride maps to avoid recomputation
 _stride_map_cache: Dict[Tuple[int, Tuple[int, ...], int], np.ndarray] = {}
 _stride_map_cache_lock = threading.Lock()
+
 
 def _get_stride_map(n: int, strides: Tuple[int, ...], img_size: int) -> np.ndarray:
     """Get or create cached stride map.
@@ -395,9 +391,8 @@ def _get_stride_map(n: int, strides: Tuple[int, ...], img_size: int) -> np.ndarr
     else:
         # Mismatch, don't cache (fallback to uniform stride)
         warnings.warn(
-            f"Stride map mismatch: expected {n} anchors, got {idx}. "
-            f"Using fallback stride=1.0",
-            RuntimeWarning
+            f"Stride map mismatch: expected {n} anchors, got {idx}. " f"Using fallback stride=1.0",
+            RuntimeWarning,
         )
         return np.ones(n, dtype=np.float32)
 
@@ -442,7 +437,7 @@ def postprocess_yolov8(
     pred = preds[0]
     n, c = pred.shape
     if c < 64:
-        raise ValueError(f'Unexpected YOLOv8 head dims: {pred.shape}. Need (N, 64+nc)')
+        raise ValueError(f"Unexpected YOLOv8 head dims: {pred.shape}. Need (N, 64+nc)")
     nc = c - 4 * reg_max
     # Split
     raw_box = pred[:, : 4 * reg_max]
@@ -511,16 +506,13 @@ def postprocess_yolov8(
 
     # Validate ratio to prevent division by near-zero
     if scale_ratio < MIN_VALID_RATIO:
-        raise ValueError(
-            f"Invalid scale ratio {scale_ratio}. Check letterbox output."
-        )
+        raise ValueError(f"Invalid scale ratio {scale_ratio}. Check letterbox output.")
 
     # Validate original shape
     h0, w0 = orig_shape
     if h0 < MIN_VALID_DIMENSION or w0 < MIN_VALID_DIMENSION:
         raise ValueError(
-            f"Invalid original shape {orig_shape}. "
-            f"Dimensions must be >= {MIN_VALID_DIMENSION}"
+            f"Invalid original shape {orig_shape}. " f"Dimensions must be >= {MIN_VALID_DIMENSION}"
         )
 
     # Remove padding and scale to original coordinates

@@ -14,6 +14,7 @@ Usage:
     # Safe imshow that automatically falls back to file saving
     safe_imshow('window_name', image, fallback_path='output.jpg')
 """
+
 import importlib
 import os
 import sys
@@ -32,6 +33,7 @@ def _get_cv2():
     if _cv2 is None:
         try:
             import cv2
+
             _cv2 = cv2
         except ImportError:
             _cv2 = False  # Mark as unavailable
@@ -42,12 +44,13 @@ def _cv2_error_type(cv2_module):
     """Return a safe cv2 error type for exception handling."""
     if cv2_module is None:
         return Exception
-    err_type = getattr(cv2_module, 'error', Exception)
+    err_type = getattr(cv2_module, "error", Exception)
     if isinstance(err_type, type) and issubclass(err_type, BaseException):
         return err_type
     return Exception
 
-logger = setup_logger(__name__, level='INFO')
+
+logger = setup_logger(__name__, level="INFO")
 
 # Cache headless detection result
 _is_headless_cached = None
@@ -80,19 +83,19 @@ def is_headless() -> bool:
         return _is_headless_cached
 
     # Check 1: DISPLAY environment variable (Linux/X11)
-    if 'DISPLAY' not in os.environ:
+    if "DISPLAY" not in os.environ:
         logger.debug("Headless detected: No DISPLAY environment variable")
         _is_headless_cached = True
         return True
 
     # Check 2: SSH_CONNECTION indicates remote session (likely headless)
-    if 'SSH_CONNECTION' in os.environ or 'SSH_CLIENT' in os.environ:
+    if "SSH_CONNECTION" in os.environ or "SSH_CLIENT" in os.environ:
         logger.debug("Headless detected: SSH session")
         _is_headless_cached = True
         return True
 
     # Check 3: RK_HEADLESS environment variable (manual override)
-    if os.environ.get('RK_HEADLESS', '').lower() in ('1', 'true', 'yes'):
+    if os.environ.get("RK_HEADLESS", "").lower() in ("1", "true", "yes"):
         logger.debug("Headless detected: RK_HEADLESS environment variable")
         _is_headless_cached = True
         return True
@@ -102,7 +105,7 @@ def is_headless() -> bool:
     if cv2 is not None:
         try:
             # If cv2 was built without highgui, it's headless
-            if not hasattr(cv2, 'namedWindow'):
+            if not hasattr(cv2, "namedWindow"):
                 logger.debug("Headless detected: OpenCV built without highgui")
                 _is_headless_cached = True
                 return True
@@ -112,19 +115,22 @@ def is_headless() -> bool:
 
     # Check 5: Platform detection (embedded systems often headless)
     # This is a heuristic - not 100% reliable
-    if sys.platform.startswith('linux'):
+    if sys.platform.startswith("linux"):
         # Check if running on embedded ARM board (heuristic)
         try:
-            with open('/proc/cpuinfo', 'r') as f:
+            with open("/proc/cpuinfo", "r") as f:
                 cpuinfo = f.read()
                 # Common ARM SoC identifiers
-                if any(marker in cpuinfo.lower() for marker in [
-                    'rockchip',  # RK3588
-                    'raspberry pi',
-                    'jetson',
-                    'armv7',
-                    'armv8',
-                ]):
+                if any(
+                    marker in cpuinfo.lower()
+                    for marker in [
+                        "rockchip",  # RK3588
+                        "raspberry pi",
+                        "jetson",
+                        "armv7",
+                        "armv8",
+                    ]
+                ):
                     # Likely embedded board - check if X server is actually running
                     if not _is_x_server_running():
                         logger.debug("Headless detected: ARM board without X server")
@@ -149,11 +155,9 @@ def _is_x_server_running() -> bool:
     try:
         # Check if DISPLAY is set and X server responds
         import subprocess
+
         result = subprocess.run(
-            ['xdpyinfo'],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            timeout=1
+            ["xdpyinfo"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=1
         )
         return result.returncode == 0
     except (FileNotFoundError, subprocess.TimeoutExpired):
@@ -161,10 +165,7 @@ def _is_x_server_running() -> bool:
 
 
 def safe_imshow(
-    window_name: str,
-    image,
-    fallback_path: Optional[str] = None,
-    wait_key: int = 0
+    window_name: str, image, fallback_path: Optional[str] = None, wait_key: int = 0
 ) -> bool:
     """Safe imshow that automatically handles headless environments.
 
@@ -195,7 +196,7 @@ def safe_imshow(
     if cv2 is None:
         # cv2 not available - must save to file
         if fallback_path is None:
-            safe_name = "".join(c if c.isalnum() or c in ('_', '-') else '_' for c in window_name)
+            safe_name = "".join(c if c.isalnum() or c in ("_", "-") else "_" for c in window_name)
             fallback_path = f"{safe_name}.jpg"
 
         fallback_path = Path(fallback_path)
@@ -204,7 +205,7 @@ def safe_imshow(
         # Use PIL as fallback if available
         Image = None
         try:
-            Image = importlib.import_module('PIL.Image')  # type: ignore
+            Image = importlib.import_module("PIL.Image")  # type: ignore
         except (ImportError, AttributeError):
             try:
                 from PIL import Image as Image  # type: ignore
@@ -213,7 +214,7 @@ def safe_imshow(
                 return False
 
         try:
-            if hasattr(image, 'shape'):  # numpy array
+            if hasattr(image, "shape"):  # numpy array
                 # Convert BGR to RGB if needed
                 if len(image.shape) == 3 and image.shape[2] == 3:
                     image = image[:, :, ::-1]
@@ -229,7 +230,7 @@ def safe_imshow(
         # Generate fallback path if not provided
         if fallback_path is None:
             # Use window_name as filename
-            safe_name = "".join(c if c.isalnum() or c in ('_', '-') else '_' for c in window_name)
+            safe_name = "".join(c if c.isalnum() or c in ("_", "-") else "_" for c in window_name)
             fallback_path = f"{safe_name}.jpg"
 
         # Ensure parent directory exists
@@ -285,7 +286,7 @@ def force_headless_mode():
     Sets RK_HEADLESS environment variable and clears cache.
     """
     global _is_headless_cached
-    os.environ['RK_HEADLESS'] = '1'
+    os.environ["RK_HEADLESS"] = "1"
     _is_headless_cached = None
     logger.info("Forced headless mode via RK_HEADLESS=1")
 
@@ -296,7 +297,7 @@ def force_gui_mode():
     Clears RK_HEADLESS environment variable and cache.
     """
     global _is_headless_cached
-    os.environ.pop('RK_HEADLESS', None)
+    os.environ.pop("RK_HEADLESS", None)
     _is_headless_cached = None
     logger.info("Forced GUI mode - cleared RK_HEADLESS")
 

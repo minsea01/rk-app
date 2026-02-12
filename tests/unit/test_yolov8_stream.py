@@ -3,6 +3,7 @@
 
 Tests high-performance streaming RKNN inference pipeline.
 """
+
 import pytest
 
 from apps.yolov8_stream import parse_source, StageStats
@@ -13,59 +14,59 @@ class TestParseSource:
 
     def test_parses_digit_string_as_camera_index(self):
         """Test that digit strings are converted to camera indices."""
-        assert parse_source('0') == 0
-        assert parse_source('1') == 1
-        assert parse_source('2') == 2
+        assert parse_source("0") == 0
+        assert parse_source("1") == 1
+        assert parse_source("2") == 2
 
     def test_parses_multi_digit_camera_index(self):
         """Test that multi-digit strings are converted correctly."""
-        assert parse_source('10') == 10
-        assert parse_source('99') == 99
+        assert parse_source("10") == 10
+        assert parse_source("99") == 99
 
     def test_returns_string_for_rtsp_urls(self):
         """Test that RTSP URLs are returned as strings."""
-        rtsp_url = 'rtsp://192.168.1.100:554/stream'
+        rtsp_url = "rtsp://192.168.1.100:554/stream"
         result = parse_source(rtsp_url)
         assert result == rtsp_url
         assert isinstance(result, str)
 
     def test_returns_string_for_file_paths(self):
         """Test that file paths are returned as strings."""
-        file_path = '/path/to/video.mp4'
+        file_path = "/path/to/video.mp4"
         result = parse_source(file_path)
         assert result == file_path
         assert isinstance(result, str)
 
     def test_returns_string_for_gstreamer_pipelines(self):
         """Test that GStreamer pipelines are returned as strings."""
-        gst_pipeline = 'v4l2src device=/dev/video0 ! videoconvert ! appsink'
+        gst_pipeline = "v4l2src device=/dev/video0 ! videoconvert ! appsink"
         result = parse_source(gst_pipeline)
         assert result == gst_pipeline
         assert isinstance(result, str)
 
     def test_handles_http_urls(self):
         """Test that HTTP URLs are returned as strings."""
-        http_url = 'http://example.com/stream.mjpg'
+        http_url = "http://example.com/stream.mjpg"
         result = parse_source(http_url)
         assert result == http_url
         assert isinstance(result, str)
 
     def test_handles_empty_string(self):
         """Test that empty strings are handled gracefully."""
-        result = parse_source('')
-        assert result == ''
+        result = parse_source("")
+        assert result == ""
         assert isinstance(result, str)
 
     def test_handles_string_with_spaces(self):
         """Test that strings with spaces are not parsed as integers."""
-        result = parse_source('test video.mp4')
-        assert result == 'test video.mp4'
+        result = parse_source("test video.mp4")
+        assert result == "test video.mp4"
         assert isinstance(result, str)
 
     def test_handles_negative_numbers(self):
         """Test that negative number strings are returned as strings."""
         # Negative camera indices are invalid, should be returned as string
-        result = parse_source('-1')
+        result = parse_source("-1")
         # Should be treated as string since it's not a valid camera index
         assert isinstance(result, (int, str))
 
@@ -126,8 +127,8 @@ class TestStageStats:
         summary = stats.summary()
 
         # Average should be (0.1 + 0.2 + 0.3) / 3 = 0.2
-        assert summary['n'] == 3
-        assert abs(summary['avg_ms'] - 200.0) < 0.01  # 0.2s = 200ms
+        assert summary["n"] == 3
+        assert abs(summary["avg_ms"] - 200.0) < 0.01  # 0.2s = 200ms
 
     def test_summary_returns_correct_format(self):
         """Test that summary returns expected dictionary format."""
@@ -138,15 +139,15 @@ class TestStageStats:
 
         summary = stats.summary()
 
-        assert 'n' in summary
-        assert 'avg_ms' in summary
-        assert 'min_ms' in summary
-        assert 'max_ms' in summary
+        assert "n" in summary
+        assert "avg_ms" in summary
+        assert "min_ms" in summary
+        assert "max_ms" in summary
 
-        assert isinstance(summary['n'], int)
-        assert isinstance(summary['avg_ms'], float)
-        assert isinstance(summary['min_ms'], float)
-        assert isinstance(summary['max_ms'], float)
+        assert isinstance(summary["n"], int)
+        assert isinstance(summary["avg_ms"], float)
+        assert isinstance(summary["min_ms"], float)
+        assert isinstance(summary["max_ms"], float)
 
     def test_summary_converts_to_milliseconds(self):
         """Test that times are converted from seconds to milliseconds."""
@@ -158,9 +159,9 @@ class TestStageStats:
 
         summary = stats.summary()
 
-        assert abs(summary['avg_ms'] - 2.0) < 0.01
-        assert abs(summary['min_ms'] - 1.0) < 0.01
-        assert abs(summary['max_ms'] - 3.0) < 0.01
+        assert abs(summary["avg_ms"] - 2.0) < 0.01
+        assert abs(summary["min_ms"] - 1.0) < 0.01
+        assert abs(summary["max_ms"] - 3.0) < 0.01
 
     def test_handles_zero_samples_gracefully(self):
         """Test that summary works with zero samples (no division by zero)."""
@@ -169,10 +170,10 @@ class TestStageStats:
         summary = stats.summary()
 
         # With 0 samples, average should be 0
-        assert summary['n'] == 0
-        assert summary['avg_ms'] == 0.0
-        assert summary['min_ms'] == 1e9 * 1000  # Still initial value
-        assert summary['max_ms'] == 0.0
+        assert summary["n"] == 0
+        assert summary["avg_ms"] == 0.0
+        assert summary["min_ms"] == 1e9 * 1000  # Still initial value
+        assert summary["max_ms"] == 0.0
 
     def test_reset_clears_all_stats(self):
         """Test that reset() clears all statistics."""
@@ -202,8 +203,8 @@ class TestStageStats:
         summary = stats.summary()
 
         # Should handle microsecond precision
-        assert summary['avg_ms'] > 0
-        assert summary['min_ms'] > 0
+        assert summary["avg_ms"] > 0
+        assert summary["min_ms"] > 0
 
     def test_handles_large_number_of_samples(self):
         """Test that large number of samples doesn't overflow."""
@@ -215,8 +216,8 @@ class TestStageStats:
 
         summary = stats.summary()
 
-        assert summary['n'] == 10000
-        assert abs(summary['avg_ms'] - 1.0) < 0.01
+        assert summary["n"] == 10000
+        assert abs(summary["avg_ms"] - 1.0) < 0.01
 
     def test_summary_preserves_original_data(self):
         """Test that calling summary() doesn't modify the stats."""
@@ -247,9 +248,7 @@ class TestDecodePredictons:
         # Create 2D prediction (N, C)
         pred = np.random.randn(8400, 84)
 
-        boxes, confs, cls_ids = decode_predictions(
-            pred, imgsz=640, conf_thres=0.5, iou_thres=0.45
-        )
+        boxes, confs, cls_ids = decode_predictions(pred, imgsz=640, conf_thres=0.5, iou_thres=0.45)
 
         # Should handle without error
         assert isinstance(boxes, np.ndarray)
@@ -264,9 +263,7 @@ class TestDecodePredictons:
         # Create prediction in (1, C, N) format (needs transpose)
         pred = np.random.randn(1, 84, 8400)
 
-        boxes, confs, cls_ids = decode_predictions(
-            pred, imgsz=640, conf_thres=0.5, iou_thres=0.45
-        )
+        boxes, confs, cls_ids = decode_predictions(pred, imgsz=640, conf_thres=0.5, iou_thres=0.45)
 
         # Should handle without error
         assert isinstance(boxes, np.ndarray)
@@ -280,7 +277,7 @@ class TestDecodePredictons:
         pred = np.random.randn(1, 8400, 84)
 
         boxes, confs, cls_ids = decode_predictions(
-            pred, imgsz=640, conf_thres=0.9, iou_thres=0.45, head='auto'
+            pred, imgsz=640, conf_thres=0.9, iou_thres=0.45, head="auto"
         )
 
         # Should use DFL decoder
@@ -295,7 +292,7 @@ class TestDecodePredictons:
         pred = np.random.randn(1, 100, 6)  # [cx, cy, w, h, obj, cls]
 
         boxes, confs, cls_ids = decode_predictions(
-            pred, imgsz=640, conf_thres=0.5, iou_thres=0.45, head='auto'
+            pred, imgsz=640, conf_thres=0.5, iou_thres=0.45, head="auto"
         )
 
         # Should use raw decoder
@@ -311,9 +308,7 @@ class TestDecodePredictons:
         N = 8400  # (640/8)^2 + (640/16)^2 + (640/32)^2
         pred = np.random.randn(1, N, 84) * 0.001  # Very small values
 
-        boxes, confs, cls_ids = decode_predictions(
-            pred, imgsz=640, conf_thres=0.9, iou_thres=0.45
-        )
+        boxes, confs, cls_ids = decode_predictions(pred, imgsz=640, conf_thres=0.9, iou_thres=0.45)
 
         # Should return empty arrays
         assert len(boxes) == 0
@@ -330,7 +325,7 @@ class TestDecodePredictons:
         pred[0, 0, :] = [320, 240, 100, 100, 5.0, 5.0]  # High obj and cls scores
 
         boxes, confs, cls_ids = decode_predictions(
-            pred, imgsz=640, conf_thres=0.5, iou_thres=0.45, head='raw'
+            pred, imgsz=640, conf_thres=0.5, iou_thres=0.45, head="raw"
         )
 
         # Should have at least one detection
@@ -347,7 +342,7 @@ class TestDecodePredictons:
         pred[0, 1, :] = [325, 245, 100, 100, 5.0, 5.0]  # Box 2 (overlapping)
 
         boxes, confs, cls_ids = decode_predictions(
-            pred, imgsz=640, conf_thres=0.5, iou_thres=0.3, head='raw'
+            pred, imgsz=640, conf_thres=0.5, iou_thres=0.3, head="raw"
         )
 
         # NMS should reduce overlapping detections
@@ -361,37 +356,47 @@ class TestArgumentParser:
         from apps.yolov8_stream import build_arg_parser
 
         parser = build_arg_parser()
-        args = parser.parse_args([
-            '--model', 'dummy.rknn',
-            '--cfg', 'config/detect.yaml',
-            '--pp-profile', 'balanced',
-            '--undistort-enable',
-            '--undistort-calib', 'calib.yaml',
-            '--roi-enable',
-            '--roi-mode', 'normalized',
-            '--roi-norm', '0.1,0.2,0.5,0.6',
-            '--gamma-enable',
-            '--white-balance-enable',
-            '--denoise-enable',
-            '--denoise-method', 'bilateral',
-            '--input-format', 'bayer_rg',
-        ])
+        args = parser.parse_args(
+            [
+                "--model",
+                "dummy.rknn",
+                "--cfg",
+                "config/detect.yaml",
+                "--pp-profile",
+                "balanced",
+                "--undistort-enable",
+                "--undistort-calib",
+                "calib.yaml",
+                "--roi-enable",
+                "--roi-mode",
+                "normalized",
+                "--roi-norm",
+                "0.1,0.2,0.5,0.6",
+                "--gamma-enable",
+                "--white-balance-enable",
+                "--denoise-enable",
+                "--denoise-method",
+                "bilateral",
+                "--input-format",
+                "bayer_rg",
+            ]
+        )
 
-        assert str(args.cfg) == 'config/detect.yaml'
-        assert args.pp_profile == 'balanced'
+        assert str(args.cfg) == "config/detect.yaml"
+        assert args.pp_profile == "balanced"
         assert args.undistort_enable is True
         assert args.roi_enable is True
-        assert args.roi_norm == '0.1,0.2,0.5,0.6'
+        assert args.roi_norm == "0.1,0.2,0.5,0.6"
         assert args.gamma_enable is True
         assert args.white_balance_enable is True
         assert args.denoise_enable is True
-        assert args.input_format == 'bayer_rg'
+        assert args.input_format == "bayer_rg"
 
     def test_parser_keeps_backward_compatible_defaults(self):
         from apps.yolov8_stream import build_arg_parser
 
         parser = build_arg_parser()
-        args = parser.parse_args(['--model', 'dummy.rknn'])
+        args = parser.parse_args(["--model", "dummy.rknn"])
 
         assert args.cfg is None
         assert args.pp_profile is None

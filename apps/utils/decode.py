@@ -97,7 +97,7 @@ def decode_predictions(
     obj = sigmoid(p[:, 4]) if has_objness else np.ones_like(cx, dtype=np.float32)
     cls_offset = 5 if has_objness else 4
     if num_classes > 0:
-        cls_scores = sigmoid(p[:, cls_offset:cls_offset + num_classes])
+        cls_scores = sigmoid(p[:, cls_offset : cls_offset + num_classes])
         cls_ids = cls_scores.argmax(axis=1)
         cls_conf = cls_scores.max(axis=1)
     else:
@@ -143,4 +143,3 @@ def decode_predictions(
             boxes[:, 1::2] = boxes[:, 1::2].clip(0, h0 - 1)
 
     return boxes, conf, cls_ids
-

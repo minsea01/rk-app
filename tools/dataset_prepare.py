@@ -161,7 +161,9 @@ def prepare_coco_person_from_yolo_labels(coco_root: Path, output_dir: Path, copy
     return total
 
 
-def make_calib_from_data_yaml(data_yaml: Path, output_dir: Path, num_samples: int, seed: int) -> int:
+def make_calib_from_data_yaml(
+    data_yaml: Path, output_dir: Path, num_samples: int, seed: int
+) -> int:
     cfg = yaml.safe_load(data_yaml.read_text(encoding="utf-8")) or {}
     dataset_root = Path(cfg["path"])
     train_path = dataset_root / cfg["train"]
@@ -228,7 +230,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Unified dataset preparation tool")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    coco_json = sub.add_parser("coco-json", help="Prepare COCO person dataset from COCO JSON annotations")
+    coco_json = sub.add_parser(
+        "coco-json", help="Prepare COCO person dataset from COCO JSON annotations"
+    )
     coco_json.add_argument("--coco-dir", type=Path, required=True)
     coco_json.add_argument("--output-dir", type=Path, default=Path("datasets/coco_person"))
     coco_json.add_argument("--copy-images", action="store_true")
@@ -238,13 +242,17 @@ def build_arg_parser() -> argparse.ArgumentParser:
     coco_yolo.add_argument("--output", type=Path, default=Path("datasets/coco_person"))
     coco_yolo.add_argument("--copy", action="store_true")
 
-    calib_yaml = sub.add_parser("calib-from-data", help="Build calib.txt by sampling dataset yaml train split")
+    calib_yaml = sub.add_parser(
+        "calib-from-data", help="Build calib.txt by sampling dataset yaml train split"
+    )
     calib_yaml.add_argument("--data", type=Path, required=True)
     calib_yaml.add_argument("--output", type=Path, required=True)
     calib_yaml.add_argument("--num", type=int, default=300)
     calib_yaml.add_argument("--seed", type=int, default=42)
 
-    calib_dir = sub.add_parser("calib-from-dir", help="Build quant dataset list from image directory")
+    calib_dir = sub.add_parser(
+        "calib-from-dir", help="Build quant dataset list from image directory"
+    )
     calib_dir.add_argument("data_dir", type=Path)
     calib_dir.add_argument("-o", "--output", type=Path, default=Path("config/quant_dataset.txt"))
     calib_dir.add_argument("-n", "--num-samples", type=int, default=300)
@@ -270,7 +278,9 @@ def main(argv=None) -> int:
 
     if args.command == "calib-from-data":
         count = make_calib_from_data_yaml(args.data, args.output, args.num, args.seed)
-        print(f"Generated calibration list from data.yaml: {count} images -> {args.output / 'calib.txt'}")
+        print(
+            f"Generated calibration list from data.yaml: {count} images -> {args.output / 'calib.txt'}"
+        )
         return 0
 
     if args.command == "calib-from-dir":
@@ -292,4 +302,3 @@ def main(argv=None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

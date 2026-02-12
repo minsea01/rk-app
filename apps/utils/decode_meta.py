@@ -8,7 +8,6 @@ import re
 from pathlib import Path
 from typing import Any, Dict, Mapping, Optional, Tuple
 
-
 DecodeMeta = Dict[str, Any]
 
 
@@ -100,7 +99,10 @@ def normalize_decode_meta(meta: Optional[Mapping[str, Any]]) -> DecodeMeta:
 
 
 def _has_any(meta: DecodeMeta) -> bool:
-    return any(meta.get(k) is not None for k in ("head", "reg_max", "strides", "num_classes", "has_objectness"))
+    return any(
+        meta.get(k) is not None
+        for k in ("head", "reg_max", "strides", "num_classes", "has_objectness")
+    )
 
 
 def _parse_text_meta(content: str) -> DecodeMeta:
@@ -170,7 +172,9 @@ def _parse_text_meta(content: str) -> DecodeMeta:
     return normalize_decode_meta(raw)
 
 
-def load_decode_meta(model_path: Optional[Path], logger: Optional[logging.Logger] = None) -> DecodeMeta:
+def load_decode_meta(
+    model_path: Optional[Path], logger: Optional[logging.Logger] = None
+) -> DecodeMeta:
     """Load decode metadata from model sidecars or project-level fallback."""
     candidates = []
     if model_path is not None:
@@ -210,7 +214,9 @@ def load_decode_meta(model_path: Optional[Path], logger: Optional[logging.Logger
     return merged
 
 
-def resolve_head(requested_head: str, channels: int, decode_meta: Optional[Mapping[str, Any]]) -> Optional[str]:
+def resolve_head(
+    requested_head: str, channels: int, decode_meta: Optional[Mapping[str, Any]]
+) -> Optional[str]:
     """Resolve decode head for current tensor channels."""
     if requested_head in {"dfl", "raw"}:
         return requested_head
@@ -243,7 +249,9 @@ def resolve_head(requested_head: str, channels: int, decode_meta: Optional[Mappi
     return "dfl" if dfl_candidate else "raw"
 
 
-def resolve_dfl_layout(channels: int, decode_meta: Optional[Mapping[str, Any]]) -> Optional[Tuple[int, Tuple[int, ...]]]:
+def resolve_dfl_layout(
+    channels: int, decode_meta: Optional[Mapping[str, Any]]
+) -> Optional[Tuple[int, Tuple[int, ...]]]:
     """Resolve (reg_max, strides) for DFL decode."""
     meta = normalize_decode_meta(decode_meta)
     reg_max = meta["reg_max"]
@@ -268,7 +276,9 @@ def resolve_dfl_layout(channels: int, decode_meta: Optional[Mapping[str, Any]]) 
     return reg_max, tuple(strides)
 
 
-def resolve_raw_layout(channels: int, decode_meta: Optional[Mapping[str, Any]]) -> Optional[Tuple[bool, int]]:
+def resolve_raw_layout(
+    channels: int, decode_meta: Optional[Mapping[str, Any]]
+) -> Optional[Tuple[bool, int]]:
     """Resolve (has_objectness, num_classes) for RAW decode."""
     meta = normalize_decode_meta(decode_meta)
     num_classes = meta["num_classes"]

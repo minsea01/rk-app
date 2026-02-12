@@ -18,13 +18,13 @@ class ModelConfig:
     # Confidence threshold: 0.5 recommended for production
     # - conf=0.25: 3135ms postprocessing (NMS bottleneck) → 0.3 FPS
     # - conf=0.5:  5.2ms postprocessing → 60+ FPS
-    CONF_THRESHOLD_DEFAULT = 0.5   # Confidence threshold for object detection
-    IOU_THRESHOLD_DEFAULT = 0.45   # IOU threshold for NMS
-    NMS_IOU = 0.45                 # NMS IOU threshold
+    CONF_THRESHOLD_DEFAULT = 0.5  # Confidence threshold for object detection
+    IOU_THRESHOLD_DEFAULT = 0.45  # IOU threshold for NMS
+    NMS_IOU = 0.45  # NMS IOU threshold
 
     # Detection limits
-    MAX_DETECTIONS_640 = 8400      # Max detections for 640×640 input
-    MAX_DETECTIONS_416 = 3549      # Max detections for 416×416 input
+    MAX_DETECTIONS_640 = 8400  # Max detections for 640×640 input
+    MAX_DETECTIONS_416 = 3549  # Max detections for 416×416 input
 
     # Pixel value ranges
     PIXEL_MIN = 0
@@ -32,9 +32,9 @@ class ModelConfig:
     PIXEL_SCALE = 255.0
 
     # YOLO head parameters
-    HEAD_AUTO = 'auto'
-    HEAD_DFL = 'dfl'
-    HEAD_RAW = 'raw'
+    HEAD_AUTO = "auto"
+    HEAD_DFL = "dfl"
+    HEAD_RAW = "raw"
     DFL_THRESHOLD = 64  # If C >= 64, use DFL decoder
 
 
@@ -42,34 +42,34 @@ class RKNNConfig:
     """RKNN runtime configuration."""
 
     # Target platform
-    TARGET_PLATFORM = 'rk3588'
+    TARGET_PLATFORM = "rk3588"
 
     # Optimization level
     OPTIMIZATION_LEVEL = 3  # 0-3, higher means more aggressive optimization
 
     # NPU core masks
-    CORE_MASK_ALL = 0x7      # Use all 3 NPU cores
-    CORE_MASK_CORE0 = 0x1    # Use only core 0
-    CORE_MASK_CORE1 = 0x2    # Use only core 1
-    CORE_MASK_CORE2 = 0x4    # Use only core 2
+    CORE_MASK_ALL = 0x7  # Use all 3 NPU cores
+    CORE_MASK_CORE0 = 0x1  # Use only core 0
+    CORE_MASK_CORE1 = 0x2  # Use only core 1
+    CORE_MASK_CORE2 = 0x4  # Use only core 2
 
     # Quantization
-    QUANTIZED_DTYPE_W8A8 = 'w8a8'  # INT8 weights and activations (rknn-toolkit2 >=2.x)
-    QUANTIZED_DTYPE_U8 = 'asymmetric_quantized-u8'  # rknn-toolkit2 1.x
+    QUANTIZED_DTYPE_W8A8 = "w8a8"  # INT8 weights and activations (rknn-toolkit2 >=2.x)
+    QUANTIZED_DTYPE_U8 = "asymmetric_quantized-u8"  # rknn-toolkit2 1.x
 
 
 class PreprocessConfig:
     """Image preprocessing configuration."""
 
     # Mean and std values for normalization
-    MEAN_BGR = [0, 0, 0]       # Default: no mean subtraction
+    MEAN_BGR = [0, 0, 0]  # Default: no mean subtraction
     STD_BGR = [255, 255, 255]  # Default: scale by 1/255
 
     MEAN_RGB = [0, 0, 0]
     STD_RGB = [255, 255, 255]
 
     # Color channel reordering
-    REORDER_BGR_TO_RGB = '2 1 0'  # BGR -> RGB channel reordering
+    REORDER_BGR_TO_RGB = "2 1 0"  # BGR -> RGB channel reordering
 
 
 class VideoConfig:
@@ -107,47 +107,47 @@ class PathConfig:
     """
 
     # Project structure
-    PROJECT_ROOT = '.'  # Will be resolved at runtime
+    PROJECT_ROOT = "."  # Will be resolved at runtime
 
     # Model paths
-    MODELS_DIR = 'artifacts/models'
-    DEFAULT_ONNX_MODEL = 'artifacts/models/yolo11n_416.onnx'
-    DEFAULT_RKNN_MODEL = 'artifacts/models/yolo11n.rknn'
+    MODELS_DIR = "artifacts/models"
+    DEFAULT_ONNX_MODEL = "artifacts/models/yolo11n_416.onnx"
+    DEFAULT_RKNN_MODEL = "artifacts/models/yolo11n.rknn"
 
     # Common model names
-    YOLO11N_ONNX_416 = 'artifacts/models/yolo11n_416.onnx'
-    YOLO11N_ONNX_640 = 'artifacts/models/yolo11n_640.onnx'
-    YOLO11N_RKNN = 'artifacts/models/yolo11n.rknn'
-    BEST_ONNX = 'artifacts/models/best.onnx'
-    BEST_RKNN = 'artifacts/models/best.rknn'
+    YOLO11N_ONNX_416 = "artifacts/models/yolo11n_416.onnx"
+    YOLO11N_ONNX_640 = "artifacts/models/yolo11n_640.onnx"
+    YOLO11N_RKNN = "artifacts/models/yolo11n.rknn"
+    BEST_ONNX = "artifacts/models/best.onnx"
+    BEST_RKNN = "artifacts/models/best.rknn"
 
     # Dataset paths
-    DATASETS_DIR = 'datasets'
-    COCO_DIR = 'datasets/coco'
-    COCO_CALIB_DIR = 'datasets/coco/calib_images'
-    COCO_CALIB_FILE = 'datasets/coco/calib_images/calib.txt'
-    COCO_PERSON_DIR = 'datasets/coco_person'
+    DATASETS_DIR = "datasets"
+    COCO_DIR = "datasets/coco"
+    COCO_CALIB_DIR = "datasets/coco/calib_images"
+    COCO_CALIB_FILE = "datasets/coco/calib_images/calib.txt"
+    COCO_PERSON_DIR = "datasets/coco_person"
 
     # CityPersons dataset
-    CITYPERSONS_DIR = 'datasets/CityPersons'
-    CITYPERSONS_IMAGES = 'datasets/CityPersons/images'
-    CITYPERSONS_LABELS = 'datasets/CityPersons/labels'
+    CITYPERSONS_DIR = "datasets/CityPersons"
+    CITYPERSONS_IMAGES = "datasets/CityPersons/images"
+    CITYPERSONS_LABELS = "datasets/CityPersons/labels"
 
     # Output paths
-    ARTIFACTS_DIR = 'artifacts'
-    LOGS_DIR = 'logs'
+    ARTIFACTS_DIR = "artifacts"
+    LOGS_DIR = "logs"
 
     # Visualization outputs
-    VISUALIZATIONS_DIR = 'artifacts/visualizations'
+    VISUALIZATIONS_DIR = "artifacts/visualizations"
 
     # Test assets
-    ASSETS_DIR = 'assets'
-    TEST_IMAGE = 'assets/test.jpg'
+    ASSETS_DIR = "assets"
+    TEST_IMAGE = "assets/test.jpg"
 
     # Config files
-    CONFIG_DIR = 'config'
-    APP_CONFIG = 'config/app.yaml'
-    DETECTION_CONFIG_DIR = 'config/detection'
+    CONFIG_DIR = "config"
+    APP_CONFIG = "config/app.yaml"
+    DETECTION_CONFIG_DIR = "config/detection"
 
 
 class CalibrationConfig:
@@ -188,13 +188,15 @@ def get_detection_config(size=416):
         ModelConfig.TARGET_SIZE_640: ModelConfig.MAX_DETECTIONS_640,
     }
     if size not in supported_sizes:
-        raise ValueError(f"Unsupported detection size: {size}. Supported sizes: {list(supported_sizes.keys())}")
+        raise ValueError(
+            f"Unsupported detection size: {size}. Supported sizes: {list(supported_sizes.keys())}"
+        )
 
     return {
-        'size': size,
-        'conf_threshold': ModelConfig.CONF_THRESHOLD_DEFAULT,
-        'iou_threshold': ModelConfig.IOU_THRESHOLD_DEFAULT,
-        'max_detections': supported_sizes[size],
+        "size": size,
+        "conf_threshold": ModelConfig.CONF_THRESHOLD_DEFAULT,
+        "iou_threshold": ModelConfig.IOU_THRESHOLD_DEFAULT,
+        "max_detections": supported_sizes[size],
     }
 
 
@@ -205,8 +207,8 @@ def get_rknn_config():
         dict: RKNN configuration dictionary
     """
     return {
-        'target_platform': RKNNConfig.TARGET_PLATFORM,
-        'optimization_level': RKNNConfig.OPTIMIZATION_LEVEL,
-        'core_mask': RKNNConfig.CORE_MASK_ALL,
-        'quantized_dtype': RKNNConfig.QUANTIZED_DTYPE_W8A8,
+        "target_platform": RKNNConfig.TARGET_PLATFORM,
+        "optimization_level": RKNNConfig.OPTIMIZATION_LEVEL,
+        "core_mask": RKNNConfig.CORE_MASK_ALL,
+        "quantized_dtype": RKNNConfig.QUANTIZED_DTYPE_W8A8,
     }

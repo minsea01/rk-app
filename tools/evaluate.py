@@ -147,7 +147,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Unified evaluation tool")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    onnx = sub.add_parser("onnx-stats", help="Evaluate ONNX model detection statistics on image folder")
+    onnx = sub.add_parser(
+        "onnx-stats", help="Evaluate ONNX model detection statistics on image folder"
+    )
     onnx.add_argument("--onnx", type=Path, required=True)
     onnx.add_argument("--dataset", type=Path, required=True)
     onnx.add_argument("--imgsz", type=int, default=416)

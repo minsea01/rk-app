@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Unit tests for custom exceptions."""
+
 import pytest
 from apps.exceptions import (
     RKAppException,
@@ -8,7 +9,7 @@ from apps.exceptions import (
     InferenceError,
     ValidationError,
     ModelLoadError,
-    ConfigurationError
+    ConfigurationError,
 )
 
 

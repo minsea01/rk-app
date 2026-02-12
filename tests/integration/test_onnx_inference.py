@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Integration tests for ONNX inference pipeline."""
+
 import pytest
 import numpy as np
 from pathlib import Path
@@ -19,7 +20,7 @@ class TestOnnxInferencePipeline:
     def sample_image(self):
         """Create a sample test image."""
         img = np.random.randint(0, 255, (480, 640, 3), dtype=np.uint8)
-        with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as f:
+        with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as f:
             cv2.imwrite(f.name, img)
             yield Path(f.name)
             Path(f.name).unlink()
@@ -44,11 +45,7 @@ class TestOnnxInferencePipeline:
 
         # Decode predictions
         boxes, confs, cls_ids = decode_predictions(
-            mock_output,
-            imgsz=640,
-            conf_thres=0.5,
-            iou_thres=0.45,
-            head='dfl'
+            mock_output, imgsz=640, conf_thres=0.5, iou_thres=0.45, head="dfl"
         )
 
         # Validate outputs
@@ -72,11 +69,7 @@ class TestOnnxInferencePipeline:
 
         # Decode
         boxes, confs, cls_ids = decode_predictions(
-            mock_output,
-            imgsz=416,
-            conf_thres=0.25,
-            iou_thres=0.45,
-            head='dfl'
+            mock_output, imgsz=416, conf_thres=0.25, iou_thres=0.45, head="dfl"
         )
 
         assert len(boxes) == len(confs)
@@ -94,11 +87,7 @@ class TestOnnxInferencePipeline:
 
             # Decode
             boxes, confs, cls_ids = decode_predictions(
-                mock_output,
-                imgsz=size,
-                conf_thres=0.5,
-                iou_thres=0.45,
-                head='dfl'
+                mock_output, imgsz=size, conf_thres=0.5, iou_thres=0.45, head="dfl"
             )
 
             # Should not crash
@@ -129,11 +118,7 @@ class TestOnnxInferencePipeline:
         for tensor in tensors:
             mock_output = np.random.randn(1, 3549, 84).astype(np.float32)  # 3549 for 416
             boxes, confs, cls_ids = decode_predictions(
-                mock_output,
-                imgsz=416,
-                conf_thres=0.25,
-                iou_thres=0.45,
-                head='dfl'
+                mock_output, imgsz=416, conf_thres=0.25, iou_thres=0.45, head="dfl"
             )
             assert len(boxes) == len(confs) == len(cls_ids)
 
@@ -144,20 +129,20 @@ class TestOnnxInferencePipeline:
         config = get_detection_config(size=416)
 
         # Use config values
-        input_tensor = preprocess_onnx(sample_image, target_size=config['size'])
+        input_tensor = preprocess_onnx(sample_image, target_size=config["size"])
 
         assert input_tensor.shape == (1, 3, 416, 416)
 
         # Mock inference
-        mock_output = np.random.randn(1, config['max_detections'], 84).astype(np.float32)
+        mock_output = np.random.randn(1, config["max_detections"], 84).astype(np.float32)
 
         # Decode with config thresholds
         boxes, confs, cls_ids = decode_predictions(
             mock_output,
-            imgsz=config['size'],
-            conf_thres=config['conf_threshold'],
-            iou_thres=config['iou_threshold'],
-            head='dfl'
+            imgsz=config["size"],
+            conf_thres=config["conf_threshold"],
+            iou_thres=config["iou_threshold"],
+            head="dfl",
         )
 
         # Validate
@@ -169,7 +154,7 @@ class TestOnnxInferencePipeline:
 
         # Test invalid image path
         with pytest.raises(PreprocessError):
-            preprocess_onnx('/nonexistent/image.jpg', target_size=640)
+            preprocess_onnx("/nonexistent/image.jpg", target_size=640)
 
 
 @pytest.mark.integration
@@ -179,19 +164,19 @@ class TestOnnxModelInference:
 
     def test_real_onnx_inference(self):
         """Test with real ONNX model if available."""
-        model_path = Path('artifacts/models/best.onnx')
+        model_path = Path("artifacts/models/best.onnx")
 
         if not model_path.exists():
-            pytest.skip('ONNX model not found, skipping real inference test')
+            pytest.skip("ONNX model not found, skipping real inference test")
 
         try:
             import onnxruntime as ort
         except ImportError:
-            pytest.skip('onnxruntime not installed')
+            pytest.skip("onnxruntime not installed")
 
         # Create test image
         img = np.random.randint(0, 255, (480, 640, 3), dtype=np.uint8)
-        with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as f:
+        with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as f:
             cv2.imwrite(f.name, img)
             img_path = Path(f.name)
 
@@ -207,11 +192,7 @@ class TestOnnxModelInference:
 
             # Decode predictions
             boxes, confs, cls_ids = decode_predictions(
-                outputs[0],
-                imgsz=input_size,
-                conf_thres=0.25,
-                iou_thres=0.45,
-                head='dfl'
+                outputs[0], imgsz=input_size, conf_thres=0.25, iou_thres=0.45, head="dfl"
             )
 
             # Validate outputs

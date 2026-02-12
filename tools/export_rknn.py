@@ -19,7 +19,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
         description="Deprecated: use tools/convert_onnx_to_rknn.py --onnx ... --out ..."
     )
     parser.add_argument("onnx_model", type=Path, help="Path to ONNX model file")
-    parser.add_argument("-d", "--dataset", type=Path, default=None, help="Calibration dataset (file or dir)")
+    parser.add_argument(
+        "-d", "--dataset", type=Path, default=None, help="Calibration dataset (file or dir)"
+    )
     parser.add_argument("-o", "--output", type=Path, default=None, help="Output RKNN model path")
     parser.add_argument("--target", type=str, default="rk3588", help="Target platform")
     return parser

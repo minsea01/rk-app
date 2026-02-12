@@ -294,7 +294,9 @@ def _ensure_bgr8(frame: np.ndarray, input_format: str) -> np.ndarray:
     raise ValueError(f"Unsupported input format: {input_format}")
 
 
-def _resolve_roi(config: PreprocessConfig, shape: Tuple[int, int]) -> Tuple[int, int, int, int, bool]:
+def _resolve_roi(
+    config: PreprocessConfig, shape: Tuple[int, int]
+) -> Tuple[int, int, int, int, bool]:
     h, w = shape
     full = (0, 0, w, h, False)
     if not config.roi_enable:
@@ -373,7 +375,11 @@ def run_preprocess(
     coord_frame = bgr
     if config.undistort_enable and state.calibration_loaded:
         h, w = bgr.shape[:2]
-        if state.undistort_size != (w, h) or state.undistort_map1 is None or state.undistort_map2 is None:
+        if (
+            state.undistort_size != (w, h)
+            or state.undistort_map1 is None
+            or state.undistort_map2 is None
+        ):
             new_camera, _ = cv2.getOptimalNewCameraMatrix(
                 state.camera_matrix, state.dist_coeffs, (w, h), 0.0, (w, h)
             )
@@ -399,11 +405,17 @@ def run_preprocess(
     roi_x, roi_y, roi_w, roi_h, roi_applied = _resolve_roi(config, coord_frame.shape[:2])
     if config.roi_enable and not roi_applied and not state.warned_invalid_roi:
         if (roi_x, roi_y, roi_w, roi_h) == (0, 0, coord_frame.shape[1], coord_frame.shape[0]):
-            if logger is not None and (config.roi_mode == "pixel" or config.roi_normalized_xywh != (0.0, 0.0, 1.0, 1.0)):
+            if logger is not None and (
+                config.roi_mode == "pixel" or config.roi_normalized_xywh != (0.0, 0.0, 1.0, 1.0)
+            ):
                 logger.warning("ROI config invalid or degenerate, fallback to full frame")
                 state.warned_invalid_roi = True
 
-    stage = coord_frame if not roi_applied else coord_frame[roi_y : roi_y + roi_h, roi_x : roi_x + roi_w]
+    stage = (
+        coord_frame
+        if not roi_applied
+        else coord_frame[roi_y : roi_y + roi_h, roi_x : roi_x + roi_w]
+    )
 
     wb_enabled, gamma_enabled, denoise_enabled = _effective_flags(config)
     if denoise_enabled:
@@ -451,4 +463,3 @@ def map_boxes_back(boxes: np.ndarray, meta: FrameMeta) -> np.ndarray:
     mapped[:, 0::2] = mapped[:, 0::2].clip(0, max(0, w - 1))
     mapped[:, 1::2] = mapped[:, 1::2].clip(0, max(0, h - 1))
     return mapped
-
