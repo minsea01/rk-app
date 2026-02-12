@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Unit tests for decode_predictions function."""
+
 import pytest
 import numpy as np
 from apps.yolov8_rknn_infer import decode_predictions, load_labels, draw_boxes
@@ -19,7 +20,7 @@ class TestDecodePredictions:
         pred = np.random.randn(1, N, C).astype(np.float32)
 
         boxes, confs, cls_ids = decode_predictions(
-            pred, imgsz=640, conf_thres=0.5, iou_thres=0.45, head='auto'
+            pred, imgsz=640, conf_thres=0.5, iou_thres=0.45, head="auto"
         )
 
         # Should return valid outputs
@@ -35,7 +36,7 @@ class TestDecodePredictions:
         pred = np.random.randn(1, N, C).astype(np.float32)
 
         boxes, confs, cls_ids = decode_predictions(
-            pred, imgsz=640, conf_thres=0.5, iou_thres=0.45, head='auto'
+            pred, imgsz=640, conf_thres=0.5, iou_thres=0.45, head="auto"
         )
 
         assert isinstance(boxes, np.ndarray)
@@ -49,7 +50,7 @@ class TestDecodePredictions:
         pred = np.random.randn(N, C).astype(np.float32)
 
         boxes, confs, cls_ids = decode_predictions(
-            pred, imgsz=640, conf_thres=0.5, iou_thres=0.45, head='dfl'
+            pred, imgsz=640, conf_thres=0.5, iou_thres=0.45, head="dfl"
         )
 
         # Should handle 2D input by adding batch dimension
@@ -63,7 +64,7 @@ class TestDecodePredictions:
         pred = np.random.randn(1, C, N).astype(np.float32)
 
         boxes, confs, cls_ids = decode_predictions(
-            pred, imgsz=640, conf_thres=0.5, iou_thres=0.45, head='dfl'
+            pred, imgsz=640, conf_thres=0.5, iou_thres=0.45, head="dfl"
         )
 
         # Should correctly transpose to (1, N, C)
@@ -76,7 +77,7 @@ class TestDecodePredictions:
         pred = np.random.randn(1, N, C).astype(np.float32)
 
         boxes, confs, cls_ids = decode_predictions(
-            pred, imgsz=640, conf_thres=0.5, iou_thres=0.45, head='dfl'
+            pred, imgsz=640, conf_thres=0.5, iou_thres=0.45, head="dfl"
         )
 
         if len(boxes) > 0:
@@ -89,7 +90,7 @@ class TestDecodePredictions:
         pred = np.random.randn(1, N, C).astype(np.float32)
 
         boxes, confs, cls_ids = decode_predictions(
-            pred, imgsz=640, conf_thres=0.5, iou_thres=0.45, head='raw'
+            pred, imgsz=640, conf_thres=0.5, iou_thres=0.45, head="raw"
         )
 
         if len(boxes) > 0:
@@ -103,7 +104,7 @@ class TestDecodePredictions:
         pred = np.random.randn(1, N, C).astype(np.float32) - 10
 
         boxes, confs, cls_ids = decode_predictions(
-            pred, imgsz=640, conf_thres=0.95, iou_thres=0.45, head='dfl'
+            pred, imgsz=640, conf_thres=0.95, iou_thres=0.45, head="dfl"
         )
 
         # Should filter out most/all low-confidence detections
@@ -119,8 +120,13 @@ class TestDecodePredictions:
         orig_shape = (480, 640)
 
         boxes, confs, cls_ids = decode_predictions(
-            pred, imgsz=640, conf_thres=0.25, iou_thres=0.45,
-            head='dfl', ratio_pad=ratio_pad, orig_shape=orig_shape
+            pred,
+            imgsz=640,
+            conf_thres=0.25,
+            iou_thres=0.45,
+            head="dfl",
+            ratio_pad=ratio_pad,
+            orig_shape=orig_shape,
         )
 
         # Boxes should be scaled to original image coordinates
@@ -135,7 +141,7 @@ class TestDecodePredictions:
         pred = np.random.randn(1, N, C).astype(np.float32)
 
         boxes, confs, cls_ids = decode_predictions(
-            pred, imgsz=640, conf_thres=0.25, iou_thres=0.45, head='raw'
+            pred, imgsz=640, conf_thres=0.25, iou_thres=0.45, head="raw"
         )
 
         # Should handle case with no class scores
@@ -151,7 +157,7 @@ class TestDecodePredictions:
         pred = np.random.randn(1, N, C).astype(np.float32)
 
         boxes, confs, cls_ids = decode_predictions(
-            pred, imgsz=640, conf_thres=0.25, iou_thres=0.45, head='raw'
+            pred, imgsz=640, conf_thres=0.25, iou_thres=0.45, head="raw"
         )
 
         # Should return empty results for invalid input
@@ -165,39 +171,39 @@ class TestLoadLabels:
 
     def test_load_labels_valid_file(self):
         """Test loading labels from valid file."""
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
-            f.write('person\n')
-            f.write('bicycle\n')
-            f.write('car\n')
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
+            f.write("person\n")
+            f.write("bicycle\n")
+            f.write("car\n")
             f.flush()
             path = Path(f.name)
 
         try:
             labels = load_labels(path)
-            assert labels == ['person', 'bicycle', 'car']
+            assert labels == ["person", "bicycle", "car"]
         finally:
             path.unlink()
 
     def test_load_labels_empty_lines(self):
         """Test load_labels skips empty lines."""
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
-            f.write('person\n')
-            f.write('\n')
-            f.write('bicycle\n')
-            f.write('  \n')
-            f.write('car\n')
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
+            f.write("person\n")
+            f.write("\n")
+            f.write("bicycle\n")
+            f.write("  \n")
+            f.write("car\n")
             f.flush()
             path = Path(f.name)
 
         try:
             labels = load_labels(path)
-            assert labels == ['person', 'bicycle', 'car']
+            assert labels == ["person", "bicycle", "car"]
         finally:
             path.unlink()
 
     def test_load_labels_nonexistent_file(self):
         """Test load_labels with nonexistent file."""
-        labels = load_labels(Path('/nonexistent/file.txt'))
+        labels = load_labels(Path("/nonexistent/file.txt"))
         assert labels is None
 
     def test_load_labels_none_path(self):
@@ -207,16 +213,16 @@ class TestLoadLabels:
 
     def test_load_labels_strips_whitespace(self):
         """Test load_labels strips whitespace."""
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
-            f.write('  person  \n')
-            f.write('\tbicycle\t\n')
-            f.write('car   \n')
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
+            f.write("  person  \n")
+            f.write("\tbicycle\t\n")
+            f.write("car   \n")
             f.flush()
             path = Path(f.name)
 
         try:
             labels = load_labels(path)
-            assert labels == ['person', 'bicycle', 'car']
+            assert labels == ["person", "bicycle", "car"]
         finally:
             path.unlink()
 
@@ -242,7 +248,7 @@ class TestDrawBoxes:
         boxes = np.array([[10, 10, 100, 100]], dtype=np.float32)
         confs = np.array([0.95])
         class_ids = np.array([0])
-        names = ['person', 'bicycle', 'car']
+        names = ["person", "bicycle", "car"]
 
         result = draw_boxes(img, boxes, confs, class_ids, names)
 
@@ -253,11 +259,9 @@ class TestDrawBoxes:
     def test_draw_boxes_multiple_detections(self):
         """Test draw_boxes with multiple detections."""
         img = np.zeros((480, 640, 3), dtype=np.uint8)
-        boxes = np.array([
-            [10, 10, 100, 100],
-            [200, 200, 300, 300],
-            [400, 50, 500, 150]
-        ], dtype=np.float32)
+        boxes = np.array(
+            [[10, 10, 100, 100], [200, 200, 300, 300], [400, 50, 500, 150]], dtype=np.float32
+        )
         confs = np.array([0.95, 0.85, 0.75])
         class_ids = np.array([0, 1, 2])
 
@@ -284,7 +288,7 @@ class TestDrawBoxes:
         boxes = np.array([[10, 10, 100, 100]], dtype=np.float32)
         confs = np.array([0.95])
         class_ids = np.array([999])  # Out of range
-        names = ['person', 'bicycle', 'car']
+        names = ["person", "bicycle", "car"]
 
         # Should not crash, falls back to numeric label
         result = draw_boxes(img, boxes, confs, class_ids, names)

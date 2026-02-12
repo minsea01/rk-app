@@ -31,6 +31,7 @@ Example:
     # - Python: DEFAULT_SIZE = 416
     # Result: imgsz=640 (CLI wins)
 """
+
 import os
 import yaml
 from pathlib import Path
@@ -50,7 +51,7 @@ from apps.logger import setup_logger
 from apps.exceptions import ConfigurationError, ValidationError
 from apps.utils.paths import get_project_root
 
-logger = setup_logger(__name__, level='INFO')
+logger = setup_logger(__name__, level="INFO")
 
 
 class ConfigLoader:
@@ -60,10 +61,10 @@ class ConfigLoader:
     """
 
     # Environment variable prefix
-    ENV_PREFIX = 'RK_'
+    ENV_PREFIX = "RK_"
 
     # Default config file
-    DEFAULT_CONFIG_FILE = 'config/app.yaml'
+    DEFAULT_CONFIG_FILE = "config/app.yaml"
 
     def __init__(self, config_file: Optional[str] = None):
         """Initialize config loader.
@@ -86,7 +87,7 @@ class ConfigLoader:
             return
 
         try:
-            with open(config_path, 'r', encoding='utf-8') as f:
+            with open(config_path, "r", encoding="utf-8") as f:
                 self._yaml_config = yaml.safe_load(f) or {}
             logger.debug(f"Loaded YAML config from: {config_path}")
         except yaml.YAMLError as e:
@@ -123,38 +124,34 @@ class ConfigLoader:
         # Priority 1: CLI argument
         if cli_value is not None:
             value = cli_value
-            source = 'CLI'
+            source = "CLI"
 
         # Priority 2: Environment variable
         elif (env_key := f"{self.ENV_PREFIX}{key.upper()}") in os.environ:
             value = os.environ[env_key]
-            source = 'ENV'
+            source = "ENV"
 
             # Auto-convert numeric strings (allow 0x.. for ints)
             if value_type is int:
                 try:
                     value = int(value, 0)
                 except ValueError as e:
-                    raise ValidationError(
-                        f"Invalid int value for {env_key}={value}: {e}"
-                    ) from e
+                    raise ValidationError(f"Invalid int value for {env_key}={value}: {e}") from e
             elif value_type is float:
                 try:
                     value = float(value)
                 except ValueError as e:
-                    raise ValidationError(
-                        f"Invalid float value for {env_key}={value}: {e}"
-                    ) from e
+                    raise ValidationError(f"Invalid float value for {env_key}={value}: {e}") from e
 
         # Priority 3: YAML config
         elif key in self._yaml_config:
             value = self._yaml_config[key]
-            source = 'YAML'
+            source = "YAML"
 
         # Priority 4: Python default
         else:
             value = default
-            source = 'DEFAULT'
+            source = "DEFAULT"
 
         # Type validation
         if value_type is not None and value is not None:
@@ -194,48 +191,44 @@ class ConfigLoader:
         """
         # Image size
         size = self.get(
-            'imgsz',
+            "imgsz",
             cli_value=imgsz,
             default=ModelConfig.DEFAULT_SIZE,
             value_type=int,
-            validate=lambda x: x in [416, 640] or (_ for _ in ()).throw(
-                ValueError(f"Image size must be 416 or 640, got {x}")
-            )
+            validate=lambda x: x in [416, 640]
+            or (_ for _ in ()).throw(ValueError(f"Image size must be 416 or 640, got {x}")),
         )
 
         # Confidence threshold
         conf = self.get(
-            'conf_threshold',
+            "conf_threshold",
             cli_value=conf_threshold,
             default=ModelConfig.CONF_THRESHOLD_DEFAULT,
             value_type=float,
-            validate=lambda x: 0.0 < x < 1.0 or (_ for _ in ()).throw(
+            validate=lambda x: 0.0 < x < 1.0
+            or (_ for _ in ()).throw(
                 ValueError(f"Confidence threshold must be in (0, 1), got {x}")
-            )
+            ),
         )
 
         # IOU threshold
         iou = self.get(
-            'iou_threshold',
+            "iou_threshold",
             cli_value=iou_threshold,
             default=ModelConfig.IOU_THRESHOLD_DEFAULT,
             value_type=float,
-            validate=lambda x: 0.0 < x < 1.0 or (_ for _ in ()).throw(
-                ValueError(f"IOU threshold must be in (0, 1), got {x}")
-            )
+            validate=lambda x: 0.0 < x < 1.0
+            or (_ for _ in ()).throw(ValueError(f"IOU threshold must be in (0, 1), got {x}")),
         )
 
         # Max detections based on size
-        max_det = (
-            ModelConfig.MAX_DETECTIONS_416 if size == 416
-            else ModelConfig.MAX_DETECTIONS_640
-        )
+        max_det = ModelConfig.MAX_DETECTIONS_416 if size == 416 else ModelConfig.MAX_DETECTIONS_640
 
         return {
-            'imgsz': size,
-            'conf_threshold': conf,
-            'iou_threshold': iou,
-            'max_detections': max_det,
+            "imgsz": size,
+            "conf_threshold": conf,
+            "iou_threshold": iou,
+            "max_detections": max_det,
         }
 
     def get_rknn_config(
@@ -255,33 +248,32 @@ class ConfigLoader:
             RKNN configuration dictionary
         """
         platform = self.get(
-            'target_platform',
+            "target_platform",
             cli_value=target_platform,
             default=RKNNConfig.TARGET_PLATFORM,
             value_type=str,
         )
 
         opt_level = self.get(
-            'optimization_level',
+            "optimization_level",
             cli_value=optimization_level,
             default=RKNNConfig.OPTIMIZATION_LEVEL,
             value_type=int,
-            validate=lambda x: 0 <= x <= 3 or (_ for _ in ()).throw(
-                ValueError(f"Optimization level must be 0-3, got {x}")
-            )
+            validate=lambda x: 0 <= x <= 3
+            or (_ for _ in ()).throw(ValueError(f"Optimization level must be 0-3, got {x}")),
         )
 
         mask = self.get(
-            'core_mask',
+            "core_mask",
             cli_value=core_mask,
             default=RKNNConfig.CORE_MASK_ALL,
             value_type=int,
         )
 
         return {
-            'target_platform': platform,
-            'optimization_level': opt_level,
-            'core_mask': mask,
+            "target_platform": platform,
+            "optimization_level": opt_level,
+            "core_mask": mask,
         }
 
     def get_log_level(self, cli_value: Optional[str] = None) -> str:
@@ -294,13 +286,12 @@ class ConfigLoader:
             Log level string (DEBUG, INFO, WARNING, ERROR, CRITICAL)
         """
         level = self.get(
-            'log_level',
+            "log_level",
             cli_value=cli_value,
-            default='INFO',
+            default="INFO",
             value_type=str,
-            validate=lambda x: x.upper() in ['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'] or (
-                _ for _ in ()
-            ).throw(ValueError(f"Invalid log level: {x}"))
+            validate=lambda x: x.upper() in ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
+            or (_ for _ in ()).throw(ValueError(f"Invalid log level: {x}")),
         )
         return level.upper()
 

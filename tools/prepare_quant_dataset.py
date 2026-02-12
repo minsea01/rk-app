@@ -14,7 +14,9 @@ from tools.dataset_prepare import main as dataset_prepare_main
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Deprecated: use tools/dataset_prepare.py calib-from-dir")
+    parser = argparse.ArgumentParser(
+        description="Deprecated: use tools/dataset_prepare.py calib-from-dir"
+    )
     parser.add_argument("data_dir", type=Path, help="Image directory")
     parser.add_argument("-o", "--output", type=Path, default=Path("config/quant_dataset.txt"))
     parser.add_argument("-n", "--num-samples", type=int, default=300)
@@ -25,7 +27,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
 def main() -> int:
     args = build_arg_parser().parse_args()
-    warn_deprecated("tools/prepare_quant_dataset.py", "tools/dataset_prepare.py calib-from-dir", once=True)
+    warn_deprecated(
+        "tools/prepare_quant_dataset.py", "tools/dataset_prepare.py calib-from-dir", once=True
+    )
     return dataset_prepare_main(
         [
             "calib-from-dir",
@@ -44,4 +48,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

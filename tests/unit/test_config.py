@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Unit tests for configuration module."""
+
 import pytest
 from apps.config import (
     ModelConfig,
@@ -11,7 +12,7 @@ from apps.config import (
     CalibrationConfig,
     PerformanceConfig,
     get_detection_config,
-    get_rknn_config
+    get_rknn_config,
 )
 
 
@@ -48,7 +49,7 @@ class TestRKNNConfig:
 
     def test_target_platform(self):
         """Test target platform setting."""
-        assert RKNNConfig.TARGET_PLATFORM == 'rk3588'
+        assert RKNNConfig.TARGET_PLATFORM == "rk3588"
 
     def test_optimization_level(self):
         """Test optimization level range."""
@@ -128,14 +129,17 @@ class TestPathConfig:
 
     def test_models_dir_path(self):
         """Test models directory path."""
-        assert 'models' in PathConfig.MODELS_DIR.lower() or 'artifacts' in PathConfig.MODELS_DIR.lower()
+        assert (
+            "models" in PathConfig.MODELS_DIR.lower()
+            or "artifacts" in PathConfig.MODELS_DIR.lower()
+        )
 
     def test_default_model_paths(self):
         """Test default model paths are defined."""
         assert PathConfig.DEFAULT_ONNX_MODEL is not None
         assert PathConfig.DEFAULT_RKNN_MODEL is not None
-        assert '.onnx' in PathConfig.DEFAULT_ONNX_MODEL
-        assert '.rknn' in PathConfig.DEFAULT_RKNN_MODEL
+        assert ".onnx" in PathConfig.DEFAULT_ONNX_MODEL
+        assert ".rknn" in PathConfig.DEFAULT_RKNN_MODEL
 
     def test_dataset_paths(self):
         """Test dataset paths are defined."""
@@ -204,15 +208,15 @@ class TestConfigHelpers:
     def test_get_detection_config_default(self):
         """Test get_detection_config with default size."""
         config = get_detection_config()
-        assert config['size'] == 416
-        assert 'conf_threshold' in config
-        assert 'iou_threshold' in config
+        assert config["size"] == 416
+        assert "conf_threshold" in config
+        assert "iou_threshold" in config
 
     def test_get_detection_config_custom_size(self):
         """Test get_detection_config with custom size."""
         config = get_detection_config(size=640)
-        assert config['size'] == 640
-        assert config['max_detections'] == ModelConfig.MAX_DETECTIONS_640
+        assert config["size"] == 640
+        assert config["max_detections"] == ModelConfig.MAX_DETECTIONS_640
 
     def test_get_detection_config_invalid_size(self):
         """Test get_detection_config with unsupported size."""
@@ -222,5 +226,5 @@ class TestConfigHelpers:
     def test_get_rknn_config(self):
         """Test get_rknn_config."""
         config = get_rknn_config()
-        assert config['target_platform'] == RKNNConfig.TARGET_PLATFORM
-        assert config['optimization_level'] == RKNNConfig.OPTIMIZATION_LEVEL
+        assert config["target_platform"] == RKNNConfig.TARGET_PLATFORM
+        assert config["optimization_level"] == RKNNConfig.OPTIMIZATION_LEVEL

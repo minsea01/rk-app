@@ -91,4 +91,3 @@ def test_multiclass_images_smoke() -> None:
             _infer_one(rknn, img_path)
     finally:
         rknn.release()
-

@@ -77,17 +77,14 @@ def summarize_recent_commits(count: int = 10, format: str = "markdown") -> Any:
         return commits
 
     lines = [
-        f"- {item['hash']} {item['date']} {item['author']}: {item['subject']}"
-        for item in commits
+        f"- {item['hash']} {item['date']} {item['author']}: {item['subject']}" for item in commits
     ]
     text = "\n".join(lines) or "No commits found."
     return text if format == "markdown" else text.replace("\n- ", "\n")
 
 
 @server.tool()
-def git_diff_range(
-    rev_range: str | None = None, since: str = "HEAD~5", pathspec: str = ""
-) -> Any:
+def git_diff_range(rev_range: str | None = None, since: str = "HEAD~5", pathspec: str = "") -> Any:
     """
     Show a short diffstat for a revision range.
 
@@ -142,4 +139,3 @@ def search_text(pattern: str, path: str = ".", max_results: int = 200) -> Any:
 
 if __name__ == "__main__":
     server.run()
-

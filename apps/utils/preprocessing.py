@@ -57,7 +57,9 @@ def preprocess_onnx(img_path: Union[str, Path], target_size: Optional[int] = Non
     return preprocess_from_array_onnx(image, target_size=target_size)
 
 
-def preprocess_rknn_sim(img_path: Union[str, Path], target_size: Optional[int] = None) -> np.ndarray:
+def preprocess_rknn_sim(
+    img_path: Union[str, Path], target_size: Optional[int] = None
+) -> np.ndarray:
     image = _load_image(img_path)
     return preprocess_from_array_rknn_sim(image, target_size=target_size)
 
@@ -75,7 +77,9 @@ def preprocess_from_array_onnx(img: np.ndarray, target_size: Optional[int] = Non
     return prepared.astype(np.float32)
 
 
-def preprocess_from_array_rknn_sim(img: np.ndarray, target_size: Optional[int] = None) -> np.ndarray:
+def preprocess_from_array_rknn_sim(
+    img: np.ndarray, target_size: Optional[int] = None
+) -> np.ndarray:
     prepared = _prepare_common(img, target_size)
     prepared = prepared[..., ::-1]  # BGR -> RGB
     prepared = np.expand_dims(prepared, axis=0)  # NHWC
@@ -86,4 +90,3 @@ def preprocess_from_array_board(img: np.ndarray, target_size: Optional[int] = No
     prepared = _prepare_common(img, target_size)
     prepared = np.expand_dims(prepared, axis=0)  # NHWC
     return np.ascontiguousarray(prepared).astype(np.uint8)
-

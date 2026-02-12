@@ -4,6 +4,7 @@
 This module provides consistent logging setup across all modules,
 making it easier to control log levels and output formats.
 """
+
 import logging
 import sys
 from pathlib import Path
@@ -11,10 +12,7 @@ from typing import Optional
 
 
 def setup_logger(
-    name: str,
-    level: int = logging.INFO,
-    log_file: Optional[Path] = None,
-    console: bool = True
+    name: str, level: int = logging.INFO, log_file: Optional[Path] = None, console: bool = True
 ) -> logging.Logger:
     """Configure and return a logger instance.
 
@@ -38,14 +36,15 @@ def setup_logger(
 
     # Create formatter shared across handlers
     formatter = logging.Formatter(
-        '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S'
+        "%(asctime)s - %(name)s - %(levelname)s - %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
     )
 
     # Manage console handler
     existing_console_handlers = [
-        handler for handler in logger.handlers
-        if isinstance(handler, logging.StreamHandler) and getattr(handler, 'stream', None) is sys.stdout
+        handler
+        for handler in logger.handlers
+        if isinstance(handler, logging.StreamHandler)
+        and getattr(handler, "stream", None) is sys.stdout
     ]
     if console:
         if not existing_console_handlers:
@@ -63,11 +62,12 @@ def setup_logger(
         log_file.parent.mkdir(parents=True, exist_ok=True)
         existing_file_handler = next(
             (
-                handler for handler in logger.handlers
+                handler
+                for handler in logger.handlers
                 if isinstance(handler, logging.FileHandler)
-                and Path(getattr(handler, 'baseFilename', '')) == log_file
+                and Path(getattr(handler, "baseFilename", "")) == log_file
             ),
-            None
+            None,
         )
         if existing_file_handler is None:
             file_handler = logging.FileHandler(log_file)
@@ -76,7 +76,10 @@ def setup_logger(
     # Ensure all handlers share the configured level and formatter
     for handler in logger.handlers:
         handler.setLevel(level)
-        if isinstance(handler, logging.StreamHandler) and getattr(handler, 'stream', None) is sys.stdout:
+        if (
+            isinstance(handler, logging.StreamHandler)
+            and getattr(handler, "stream", None) is sys.stdout
+        ):
             handler.setFormatter(formatter)
         elif isinstance(handler, logging.FileHandler):
             handler.setFormatter(formatter)

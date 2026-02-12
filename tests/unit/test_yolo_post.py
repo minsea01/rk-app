@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Unit tests for YOLO post-processing utilities."""
+
 import pytest
 import numpy as np
 from apps.utils.yolo_post import (
@@ -8,7 +9,7 @@ from apps.utils.yolo_post import (
     make_anchors,
     dfl_decode,
     nms,
-    postprocess_yolov8
+    postprocess_yolov8,
 )
 
 
@@ -158,7 +159,7 @@ class TestMakeAnchors:
         strides = [8, 16, 32]
         img_size = 640
         anchors = make_anchors(strides, img_size)
-        expected_count = (640//8)**2 + (640//16)**2 + (640//32)**2
+        expected_count = (640 // 8) ** 2 + (640 // 16) ** 2 + (640 // 32) ** 2
         assert anchors.shape == (expected_count, 2)
 
     def test_make_anchors_coordinate_range(self):
@@ -206,11 +207,14 @@ class TestNMS:
 
     def test_nms_removes_overlapping_boxes(self):
         """Test NMS removes highly overlapping boxes."""
-        boxes = np.array([
-            [0, 0, 100, 100],
-            [5, 5, 105, 105],  # High overlap with first
-            [200, 200, 300, 300]  # No overlap
-        ], dtype=np.float32)
+        boxes = np.array(
+            [
+                [0, 0, 100, 100],
+                [5, 5, 105, 105],  # High overlap with first
+                [200, 200, 300, 300],  # No overlap
+            ],
+            dtype=np.float32,
+        )
         scores = np.array([0.9, 0.8, 0.85])
         keep = nms(boxes, scores, iou_thres=0.5)
         # Should keep box 0 (highest score) and box 2 (no overlap)
@@ -220,21 +224,22 @@ class TestNMS:
 
     def test_nms_keeps_all_non_overlapping(self):
         """Test NMS keeps all boxes when no overlap."""
-        boxes = np.array([
-            [0, 0, 50, 50],
-            [100, 100, 150, 150],
-            [200, 200, 250, 250]
-        ], dtype=np.float32)
+        boxes = np.array(
+            [[0, 0, 50, 50], [100, 100, 150, 150], [200, 200, 250, 250]], dtype=np.float32
+        )
         scores = np.array([0.9, 0.8, 0.7])
         keep = nms(boxes, scores, iou_thres=0.5)
         assert len(keep) == 3
 
     def test_nms_respects_confidence_order(self):
         """Test NMS keeps highest confidence box."""
-        boxes = np.array([
-            [0, 0, 100, 100],
-            [10, 10, 110, 110],  # High overlap, higher confidence
-        ], dtype=np.float32)
+        boxes = np.array(
+            [
+                [0, 0, 100, 100],
+                [10, 10, 110, 110],  # High overlap, higher confidence
+            ],
+            dtype=np.float32,
+        )
         scores = np.array([0.7, 0.9])
         keep = nms(boxes, scores, iou_thres=0.5)
         assert len(keep) == 1
@@ -262,10 +267,7 @@ class TestNMS:
         # Intersection: [50, 0, 100, 100] - area = 5000
         # Union: 10000 + 10000 - 5000 = 15000
         # IoU = 5000 / 15000 = 0.3333
-        boxes = np.array([
-            [0.0, 0.0, 100.0, 100.0],
-            [50.0, 0.0, 150.0, 100.0]
-        ], dtype=np.float32)
+        boxes = np.array([[0.0, 0.0, 100.0, 100.0], [50.0, 0.0, 150.0, 100.0]], dtype=np.float32)
         scores = np.array([0.9, 0.8])
 
         # With IoU threshold 0.3, should suppress second box
@@ -279,10 +281,7 @@ class TestNMS:
     def test_nms_floating_point_precision(self):
         """Test NMS handles floating-point coordinates correctly."""
         # Boxes with fractional coordinates
-        boxes = np.array([
-            [10.5, 20.3, 50.7, 60.2],
-            [15.2, 25.8, 55.1, 65.9]
-        ], dtype=np.float32)
+        boxes = np.array([[10.5, 20.3, 50.7, 60.2], [15.2, 25.8, 55.1, 65.9]], dtype=np.float32)
         scores = np.array([0.9, 0.8])
 
         keep = nms(boxes, scores, iou_thres=0.5)
@@ -292,12 +291,15 @@ class TestNMS:
     def test_nms_small_boxes_not_over_suppressed(self):
         """Test NMS doesn't over-suppress small boxes due to area calculation."""
         # Small boxes where +1 correction would have significant impact
-        boxes = np.array([
-            [0.0, 0.0, 10.0, 10.0],      # Area = 100
-            [2.0, 2.0, 12.0, 12.0],      # Area = 100
-            # Intersection: [2, 2, 10, 10] = 64
-            # IoU = 64 / (100 + 100 - 64) = 64/136 = 0.47
-        ], dtype=np.float32)
+        boxes = np.array(
+            [
+                [0.0, 0.0, 10.0, 10.0],  # Area = 100
+                [2.0, 2.0, 12.0, 12.0],  # Area = 100
+                # Intersection: [2, 2, 10, 10] = 64
+                # IoU = 64 / (100 + 100 - 64) = 64/136 = 0.47
+            ],
+            dtype=np.float32,
+        )
         scores = np.array([0.9, 0.8])
 
         # With correct calculation, IoU ~ 0.47, should keep both at threshold 0.5
@@ -307,10 +309,10 @@ class TestNMS:
     def test_nms_reversed_coordinates(self):
         """Test NMS handles reversed box coordinates gracefully."""
         # Intentionally reversed coordinates (x2 < x1, y2 < y1)
-        boxes = np.array([
-            [100.0, 100.0, 0.0, 0.0],    # Reversed
-            [50.0, 50.0, 150.0, 150.0]   # Normal
-        ], dtype=np.float32)
+        boxes = np.array(
+            [[100.0, 100.0, 0.0, 0.0], [50.0, 50.0, 150.0, 150.0]],  # Reversed  # Normal
+            dtype=np.float32,
+        )
         scores = np.array([0.9, 0.8])
 
         # Should auto-correct and work without errors
@@ -345,8 +347,7 @@ class TestPostprocessYolov8:
         nc = 80  # COCO classes
         preds = np.random.randn(1, N, 64 + nc).astype(np.float32)
         boxes, confs, class_ids = postprocess_yolov8(
-            preds, 640, (480, 640), (1.0, (0, 0)),
-            conf_thres=0.5, iou_thres=0.45
+            preds, 640, (480, 640), (1.0, (0, 0)), conf_thres=0.5, iou_thres=0.45
         )
         assert isinstance(boxes, np.ndarray)
         assert isinstance(confs, np.ndarray)
@@ -358,8 +359,7 @@ class TestPostprocessYolov8:
         nc = 80
         preds = np.random.randn(1, N, 64 + nc).astype(np.float32)
         boxes, confs, class_ids = postprocess_yolov8(
-            preds, 640, (480, 640), (1.0, (0, 0)),
-            conf_thres=0.5, iou_thres=0.45
+            preds, 640, (480, 640), (1.0, (0, 0)), conf_thres=0.5, iou_thres=0.45
         )
         # All outputs should have same length
         assert len(boxes) == len(confs) == len(class_ids)
@@ -374,8 +374,7 @@ class TestPostprocessYolov8:
         # Create predictions with known low confidences
         preds = np.random.randn(1, N, 64 + nc).astype(np.float32) - 10  # Very negative = low conf
         boxes, confs, class_ids = postprocess_yolov8(
-            preds, 640, (480, 640), (1.0, (0, 0)),
-            conf_thres=0.9, iou_thres=0.45
+            preds, 640, (480, 640), (1.0, (0, 0)), conf_thres=0.9, iou_thres=0.45
         )
         # Should filter out most/all detections
         assert len(boxes) == 0 or np.all(confs >= 0.9)
@@ -387,8 +386,7 @@ class TestPostprocessYolov8:
         # postprocess_yolov8 raises ValueError for invalid shape (not AssertionError)
         with pytest.raises(ValueError, match="Expected predictions shape"):
             postprocess_yolov8(
-                preds, 640, (480, 640), (1.0, (0, 0)),
-                conf_thres=0.25, iou_thres=0.45
+                preds, 640, (480, 640), (1.0, (0, 0)), conf_thres=0.25, iou_thres=0.45
             )
 
     def test_postprocess_anchor_mismatch(self):
@@ -397,8 +395,7 @@ class TestPostprocessYolov8:
         preds = np.random.randn(1, 1000, 65).astype(np.float32)
         with pytest.raises(ValueError, match="Anchor count mismatch"):
             postprocess_yolov8(
-                preds, 640, (480, 640), (1.0, (0, 0)),
-                conf_thres=0.25, iou_thres=0.45
+                preds, 640, (480, 640), (1.0, (0, 0)), conf_thres=0.25, iou_thres=0.45
             )
 
     def test_postprocess_box_coordinates_valid(self):
@@ -408,8 +405,7 @@ class TestPostprocessYolov8:
         preds = np.random.randn(1, N, 64 + nc).astype(np.float32)
         orig_h, orig_w = 480, 640
         boxes, confs, class_ids = postprocess_yolov8(
-            preds, 640, (orig_h, orig_w), (1.0, (0, 0)),
-            conf_thres=0.25, iou_thres=0.45
+            preds, 640, (orig_h, orig_w), (1.0, (0, 0)), conf_thres=0.25, iou_thres=0.45
         )
         if len(boxes) > 0:
             # x1, y1, x2, y2 should be within original image bounds
@@ -430,8 +426,7 @@ class TestPostprocessYolov8:
         preds = np.ones((1, N, 64 + nc), dtype=np.float32) * -100
 
         boxes, confs, class_ids = postprocess_yolov8(
-            preds, 640, (480, 640), (1.0, (0, 0)),
-            conf_thres=0.9  # Very high threshold
+            preds, 640, (480, 640), (1.0, (0, 0)), conf_thres=0.9  # Very high threshold
         )
 
         # Should return empty arrays, not raise errors
@@ -448,8 +443,7 @@ class TestPostprocessYolov8:
         # Invalid ratio (too small)
         with pytest.raises(ValueError, match="Invalid scale ratio"):
             postprocess_yolov8(
-                preds, 640, (480, 640), (1e-10, (0, 0)),  # Nearly zero ratio
-                conf_thres=0.25
+                preds, 640, (480, 640), (1e-10, (0, 0)), conf_thres=0.25  # Nearly zero ratio
             )
 
     def test_postprocess_invalid_orig_shape(self):
@@ -460,10 +454,7 @@ class TestPostprocessYolov8:
 
         # Invalid original shape (zero dimension)
         with pytest.raises(ValueError, match="Invalid original shape"):
-            postprocess_yolov8(
-                preds, 640, (0, 640), (1.0, (0, 0)),  # Zero height
-                conf_thres=0.25
-            )
+            postprocess_yolov8(preds, 640, (0, 640), (1.0, (0, 0)), conf_thres=0.25)  # Zero height
 
     def test_postprocess_too_few_channels(self):
         """Test postprocess raises error for too few channels."""
@@ -471,10 +462,7 @@ class TestPostprocessYolov8:
         preds = np.random.randn(1, N, 32).astype(np.float32)  # Only 32 channels, need 64+
 
         with pytest.raises(ValueError, match="Unexpected YOLOv8 head dims"):
-            postprocess_yolov8(
-                preds, 640, (480, 640), (1.0, (0, 0)),
-                conf_thres=0.25
-            )
+            postprocess_yolov8(preds, 640, (480, 640), (1.0, (0, 0)), conf_thres=0.25)
 
 
 class TestDflDecodeEdgeCases:
@@ -619,10 +607,10 @@ class TestNMSEdgeCases:
     def test_nms_zero_area_boxes(self):
         """Test NMS handles zero-area boxes."""
         # Zero-area boxes (x1 == x2 or y1 == y2)
-        boxes = np.array([
-            [50.0, 50.0, 50.0, 100.0],   # Zero width
-            [100.0, 100.0, 200.0, 200.0]  # Normal box
-        ], dtype=np.float32)
+        boxes = np.array(
+            [[50.0, 50.0, 50.0, 100.0], [100.0, 100.0, 200.0, 200.0]],  # Zero width  # Normal box
+            dtype=np.float32,
+        )
         scores = np.array([0.9, 0.8])
 
         # Should not crash

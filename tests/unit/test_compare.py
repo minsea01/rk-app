@@ -84,4 +84,3 @@ def test_compare_onnx_rknn_default_path_adaptation():
     defaults = build_default_args(path_config_cls=DummyPathConfig, resolver=fake_resolve)
     assert defaults["onnx"] == Path("/repo/artifacts/models/dummy.onnx")
     assert defaults["calib_dir"] == Path("/repo/datasets/dummy_calib")
-

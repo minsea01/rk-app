@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Unit tests for preprocessing module."""
+
 import pytest
 import numpy as np
 from pathlib import Path
@@ -12,7 +13,7 @@ from apps.utils.preprocessing import (
     preprocess_board,
     preprocess_from_array_onnx,
     preprocess_from_array_rknn_sim,
-    preprocess_from_array_board
+    preprocess_from_array_board,
 )
 from apps.config import ModelConfig
 from apps.exceptions import PreprocessError
@@ -25,7 +26,7 @@ class TestPreprocessingFunctions:
     def test_image(self):
         """Create a temporary test image."""
         img = np.random.randint(0, 255, (480, 640, 3), dtype=np.uint8)
-        with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as f:
+        with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as f:
             cv2.imwrite(f.name, img)
             yield Path(f.name)
             Path(f.name).unlink()
@@ -79,7 +80,7 @@ class TestPreprocessingFunctions:
     def test_preprocess_invalid_image_path(self):
         """Test preprocessing with invalid image path."""
         with pytest.raises(PreprocessError):
-            preprocess_onnx('/nonexistent/path/to/image.jpg')
+            preprocess_onnx("/nonexistent/path/to/image.jpg")
 
     def test_preprocess_value_range(self, test_image):
         """Test that preprocessing maintains pixel value range."""
@@ -167,8 +168,8 @@ class TestPreprocessingEdgeCases:
         # Create image with distinct BGR channels
         img = np.zeros((100, 100, 3), dtype=np.uint8)
         img[:, :, 0] = 255  # Blue channel
-        img[:, :, 1] = 0    # Green channel
-        img[:, :, 2] = 0    # Red channel
+        img[:, :, 1] = 0  # Green channel
+        img[:, :, 2] = 0  # Red channel
 
         output = preprocess_from_array_onnx(img, target_size=100)
 

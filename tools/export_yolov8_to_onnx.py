@@ -4,6 +4,7 @@
 This script exports Ultralytics YOLO models to ONNX format for deployment
 and further conversion to RKNN format.
 """
+
 import argparse
 from pathlib import Path
 import sys
@@ -13,9 +14,19 @@ from apps.exceptions import ModelLoadError, ConfigurationError
 from apps.logger import setup_logger
 
 # Setup logger
-logger = setup_logger(__name__, level='INFO')
+logger = setup_logger(__name__, level="INFO")
 
-def export(weights: str, imgsz: int, opset: int, simplify: bool, dynamic: bool, half: bool, outdir: Path, outfile: str = None):
+
+def export(
+    weights: str,
+    imgsz: int,
+    opset: int,
+    simplify: bool,
+    dynamic: bool,
+    half: bool,
+    outdir: Path,
+    outfile: str = None,
+):
     outdir.mkdir(parents=True, exist_ok=True)
     try:
         from ultralytics import YOLO
@@ -38,7 +49,7 @@ def export(weights: str, imgsz: int, opset: int, simplify: bool, dynamic: bool, 
     logger.info(f"Exporting to ONNX (imgsz={imgsz}, opset={opset}, simplify={simplify})")
     try:
         onnx_path = model.export(
-            format='onnx',
+            format="onnx",
             imgsz=imgsz,
             opset=opset,
             simplify=simplify,
@@ -62,16 +73,18 @@ def export(weights: str, imgsz: int, opset: int, simplify: bool, dynamic: bool, 
 
 
 def main():
-    p = argparse.ArgumentParser(description='Export YOLOv8 to ONNX for RKNN conversion')
-    p.add_argument('--weights', type=str, default='yolov8s.pt', help='YOLOv8 .pt weights')
-    p.add_argument('--imgsz', type=int, default=640)
-    p.add_argument('--opset', type=int, default=12)
-    p.add_argument('--simplify', action='store_true', default=True)
-    p.add_argument('--no-simplify', dest='simplify', action='store_false')
-    p.add_argument('--dynamic', action='store_true', default=False)
-    p.add_argument('--half', action='store_true', default=False)
-    p.add_argument('--outdir', type=Path, default=Path('artifacts/models'))
-    p.add_argument('--outfile', type=str, default=None, help='output ONNX file name (e.g., best.onnx)')
+    p = argparse.ArgumentParser(description="Export YOLOv8 to ONNX for RKNN conversion")
+    p.add_argument("--weights", type=str, default="yolov8s.pt", help="YOLOv8 .pt weights")
+    p.add_argument("--imgsz", type=int, default=640)
+    p.add_argument("--opset", type=int, default=12)
+    p.add_argument("--simplify", action="store_true", default=True)
+    p.add_argument("--no-simplify", dest="simplify", action="store_false")
+    p.add_argument("--dynamic", action="store_true", default=False)
+    p.add_argument("--half", action="store_true", default=False)
+    p.add_argument("--outdir", type=Path, default=Path("artifacts/models"))
+    p.add_argument(
+        "--outfile", type=str, default=None, help="output ONNX file name (e.g., best.onnx)"
+    )
     args = p.parse_args()
 
     try:
@@ -88,5 +101,5 @@ def main():
         return 1
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     sys.exit(main())

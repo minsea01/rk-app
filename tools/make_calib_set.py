@@ -14,7 +14,9 @@ from tools.dataset_prepare import main as dataset_prepare_main
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Deprecated: use tools/dataset_prepare.py calib-from-data")
+    parser = argparse.ArgumentParser(
+        description="Deprecated: use tools/dataset_prepare.py calib-from-data"
+    )
     parser.add_argument("--data", type=Path, required=True, help="Path to YOLO data.yaml")
     parser.add_argument("--output", type=Path, required=True, help="Output directory")
     parser.add_argument("--num", type=int, default=300)
@@ -24,7 +26,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
 def main() -> int:
     args = build_arg_parser().parse_args()
-    warn_deprecated("tools/make_calib_set.py", "tools/dataset_prepare.py calib-from-data", once=True)
+    warn_deprecated(
+        "tools/make_calib_set.py", "tools/dataset_prepare.py calib-from-data", once=True
+    )
     return dataset_prepare_main(
         [
             "calib-from-data",
@@ -42,4 +46,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

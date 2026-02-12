@@ -34,4 +34,3 @@ def warn_deprecated(
     if once:
         _WARNED.add(key)
     return msg
-

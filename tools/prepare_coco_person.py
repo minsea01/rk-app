@@ -14,8 +14,12 @@ from tools.dataset_prepare import main as dataset_prepare_main
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Deprecated: use tools/dataset_prepare.py coco-json")
-    parser.add_argument("--coco-dir", type=Path, required=True, help="Path to COCO dataset directory")
+    parser = argparse.ArgumentParser(
+        description="Deprecated: use tools/dataset_prepare.py coco-json"
+    )
+    parser.add_argument(
+        "--coco-dir", type=Path, required=True, help="Path to COCO dataset directory"
+    )
     parser.add_argument(
         "--output-dir",
         type=Path,
@@ -43,4 +47,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

@@ -12,6 +12,7 @@ Usage:
 Or auto-discover latest predictions.json under runs/detect/:
   python tools/find_worst_images.py --auto --top 50
 """
+
 from __future__ import annotations
 
 import argparse
@@ -91,5 +92,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
-

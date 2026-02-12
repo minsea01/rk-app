@@ -17,6 +17,7 @@ Usage:
     # Ensure directory exists
     ensure_dir(PathConfig.MODELS_DIR)  # Creates artifacts/models if needed
 """
+
 import os
 from pathlib import Path
 from typing import Union
@@ -49,20 +50,20 @@ def get_project_root() -> Path:
     current = Path(__file__).resolve().parent
     while current != current.parent:  # Stop at filesystem root
         # Look for project markers
-        if any((current / marker).exists() for marker in ['.git', 'CLAUDE.md', 'requirements.txt']):
+        if any((current / marker).exists() for marker in [".git", "CLAUDE.md", "requirements.txt"]):
             _project_root = current
             return _project_root
         current = current.parent
 
     # Strategy 2: Use current working directory
     cwd = Path.cwd()
-    if any((cwd / marker).exists() for marker in ['.git', 'CLAUDE.md', 'requirements.txt']):
+    if any((cwd / marker).exists() for marker in [".git", "CLAUDE.md", "requirements.txt"]):
         _project_root = cwd
         return _project_root
 
     # Strategy 3: Check if we're already in project root
     # (handles case where scripts are run from project root)
-    if (cwd / 'apps').exists() and (cwd / 'tools').exists():
+    if (cwd / "apps").exists() and (cwd / "tools").exists():
         _project_root = cwd
         return _project_root
 
@@ -162,7 +163,7 @@ def get_model_path(model_name: str = None) -> Path:
     return resolve_path(model_name)
 
 
-def get_dataset_path(dataset_name: str = 'coco') -> Path:
+def get_dataset_path(dataset_name: str = "coco") -> Path:
     """Get path to dataset directory.
 
     Args:
@@ -179,9 +180,9 @@ def get_dataset_path(dataset_name: str = 'coco') -> Path:
         PosixPath('/home/user/rk-app/datasets/CityPersons')
     """
     dataset_map = {
-        'coco': PathConfig.COCO_DIR,
-        'coco_person': PathConfig.COCO_PERSON_DIR,
-        'citypersons': PathConfig.CITYPERSONS_DIR,
+        "coco": PathConfig.COCO_DIR,
+        "coco_person": PathConfig.COCO_PERSON_DIR,
+        "citypersons": PathConfig.CITYPERSONS_DIR,
     }
 
     if dataset_name.lower() in dataset_map:

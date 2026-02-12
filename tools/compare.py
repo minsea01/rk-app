@@ -21,7 +21,9 @@ def _make_synth(size: int = 640) -> np.ndarray:
     return image
 
 
-def load_and_preprocess_inputs(img_path: Optional[Path], imgsz: int) -> Tuple[np.ndarray, np.ndarray]:
+def load_and_preprocess_inputs(
+    img_path: Optional[Path], imgsz: int
+) -> Tuple[np.ndarray, np.ndarray]:
     """Return ONNX(NCHW float32) and RKNN(NHWC uint8) inputs."""
     image = None
     if img_path:
@@ -64,7 +66,7 @@ def decode_plain(
 
     bx, by, bw, bh = y[0], y[1], y[2], y[3]
     obj = y[4]
-    cls = y[5:5 + num_classes] if num_classes > 0 else y[5:]
+    cls = y[5 : 5 + num_classes] if num_classes > 0 else y[5:]
     if apply_sigmoid:
         obj = _sigmoid(obj)
         cls = _sigmoid(cls)
@@ -137,12 +139,12 @@ def compute_tensor_metrics(onnx_out: np.ndarray, rknn_out: np.ndarray) -> Dict[s
     diff = onnx_out - rknn_out
     abs_diff = np.abs(diff)
     return {
-        "mse": float(np.mean(diff ** 2)),
+        "mse": float(np.mean(diff**2)),
         "mae": float(np.mean(abs_diff)),
         "max_abs": float(abs_diff.max()),
         "mean_abs": float(abs_diff.mean()),
         "median_abs": float(np.median(abs_diff)),
-        "rms": float(np.sqrt(np.mean(diff ** 2))),
+        "rms": float(np.sqrt(np.mean(diff**2))),
     }
 
 
@@ -396,12 +398,22 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--rknn", type=Path, default=None, help="Optional RKNN model path")
     parser.add_argument("--img", type=Path, default=None, help="Optional image path")
     parser.add_argument("--imgsz", type=int, default=640, help="Input image size")
-    parser.add_argument("--metrics", type=str, default="tensor,post", help="Comma list: tensor,post")
-    parser.add_argument("--num-classes", type=int, default=0, help="0 means auto-infer from output channels")
-    parser.add_argument("--conf", type=float, default=0.1, help="Confidence threshold for post metrics")
+    parser.add_argument(
+        "--metrics", type=str, default="tensor,post", help="Comma list: tensor,post"
+    )
+    parser.add_argument(
+        "--num-classes", type=int, default=0, help="0 means auto-infer from output channels"
+    )
+    parser.add_argument(
+        "--conf", type=float, default=0.1, help="Confidence threshold for post metrics"
+    )
     parser.add_argument("--iou", type=float, default=0.7, help="IoU threshold for NMS/post metrics")
-    parser.add_argument("--quant", action="store_true", help="Build RKNN from ONNX with INT8 quantization")
-    parser.add_argument("--calib-dir", type=Path, default=None, help="Calibration image directory for --quant")
+    parser.add_argument(
+        "--quant", action="store_true", help="Build RKNN from ONNX with INT8 quantization"
+    )
+    parser.add_argument(
+        "--calib-dir", type=Path, default=None, help="Calibration image directory for --quant"
+    )
     parser.add_argument("--target", type=str, default="rk3588", help="RKNN target platform")
     parser.add_argument("--json-out", type=Path, default=None, help="Optional JSON output path")
     return parser
@@ -445,4 +457,3 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

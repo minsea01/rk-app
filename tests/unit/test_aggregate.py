@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Unit tests for aggregate module."""
+
 import pytest
 from tools.aggregate import frac_to_float
 

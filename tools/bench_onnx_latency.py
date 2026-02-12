@@ -9,6 +9,7 @@ Usage:
       --image assets/test.jpg --imgsz 640 --runs 50 --warmup 5 \
       --providers cpu,cuda --out artifacts/bench_summary.json
 """
+
 import argparse
 import json
 import statistics
@@ -49,7 +50,9 @@ def load_image(path: Path, size: int) -> np.ndarray:
     return img
 
 
-def benchmark(session: ort.InferenceSession, input_name: str, data: np.ndarray, runs: int, warmup: int):
+def benchmark(
+    session: ort.InferenceSession, input_name: str, data: np.ndarray, runs: int, warmup: int
+):
     for _ in range(max(0, warmup)):
         session.run(None, {input_name: data})
     times = []
@@ -63,11 +66,15 @@ def benchmark(session: ort.InferenceSession, input_name: str, data: np.ndarray, 
 def main():
     ap = argparse.ArgumentParser(description="ONNX latency benchmark helper")
     ap.add_argument("--model", type=Path, required=True, help="Path to ONNX model")
-    ap.add_argument("--image", type=Path, default=Path("assets/test.jpg"), help="Input image for the benchmark")
+    ap.add_argument(
+        "--image", type=Path, default=Path("assets/test.jpg"), help="Input image for the benchmark"
+    )
     ap.add_argument("--imgsz", type=int, default=640, help="Image size (square)")
     ap.add_argument("--runs", type=int, default=30, help="Timed runs")
     ap.add_argument("--warmup", type=int, default=5, help="Warmup runs")
-    ap.add_argument("--providers", type=str, default="cpu", help="Comma-separated providers, e.g., cpu,cuda")
+    ap.add_argument(
+        "--providers", type=str, default="cpu", help="Comma-separated providers, e.g., cpu,cuda"
+    )
     ap.add_argument("--out", type=Path, default=None, help="Optional JSON output path")
     args = ap.parse_args()
 

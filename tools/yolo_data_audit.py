@@ -37,6 +37,7 @@ from typing import List, Optional, Sequence, Tuple
 def _import_yaml():
     try:
         import yaml  # type: ignore
+
         return yaml
     except ImportError as exc:  # pragma: no cover - defensive
         print("[WARN] PyYAML not found. Install with: pip install pyyaml", file=sys.stderr)
@@ -158,8 +159,12 @@ def audit_split(images_dir: Path, labels_dir: Path, names: Sequence[str]) -> Lab
     images_basenames = {_strip_ext(p): p for p in images}
     labels_basenames = {_strip_ext(p): p for p in labels}
 
-    images_wo_labels = [images_basenames[b] for b in sorted(images_basenames.keys() - labels_basenames.keys())]
-    labels_wo_images = [labels_basenames[b] for b in sorted(labels_basenames.keys() - images_basenames.keys())]
+    images_wo_labels = [
+        images_basenames[b] for b in sorted(images_basenames.keys() - labels_basenames.keys())
+    ]
+    labels_wo_images = [
+        labels_basenames[b] for b in sorted(labels_basenames.keys() - images_basenames.keys())
+    ]
 
     files_empty: List[Path] = []
     id_counts: Counter = Counter()
@@ -182,7 +187,9 @@ def audit_split(images_dir: Path, labels_dir: Path, names: Sequence[str]) -> Lab
                 continue
             parts = s.split()
             if len(parts) < 5:
-                format_errors.append(f"{label_path}:{li}: expected 'cls cx cy w h [..]', got: '{line}'")
+                format_errors.append(
+                    f"{label_path}:{li}: expected 'cls cx cy w h [..]', got: '{line}'"
+                )
                 continue
             cls_token = parts[0]
             if not re.fullmatch(r"-?\d+", cls_token):
@@ -223,7 +230,9 @@ def _ensure_dir(path: Path) -> Path:
     return path
 
 
-def _xywhn_to_xyxy(px: int, py: int, cx: float, cy: float, bw: float, bh: float) -> Tuple[int, int, int, int]:
+def _xywhn_to_xyxy(
+    px: int, py: int, cx: float, cy: float, bw: float, bh: float
+) -> Tuple[int, int, int, int]:
     x = (cx - bw / 2.0) * px
     y = (cy - bh / 2.0) * py
     x2 = (cx + bw / 2.0) * px
@@ -231,19 +240,24 @@ def _xywhn_to_xyxy(px: int, py: int, cx: float, cy: float, bw: float, bh: float)
     return int(round(x)), int(round(y)), int(round(x2)), int(round(y2))
 
 
-def draw_overlays(images_dir: Path, labels_dir: Path, names: Sequence[str], out_dir: Path, max_images: int = 24) -> None:
+def draw_overlays(
+    images_dir: Path, labels_dir: Path, names: Sequence[str], out_dir: Path, max_images: int = 24
+) -> None:
     try:
         import cv2  # type: ignore
     except ImportError:  # pragma: no cover
-        print("[WARN] OpenCV not available, skipping overlays. Install opencv-python-headless.", file=sys.stderr)
+        print(
+            "[WARN] OpenCV not available, skipping overlays. Install opencv-python-headless.",
+            file=sys.stderr,
+        )
         return
 
     out_dir = _ensure_dir(out_dir)
     images = [p for p in images_dir.rglob("*") if p.is_file() and _is_image(p)]
     random.shuffle(images)
-    images = images[: max_images]
+    images = images[:max_images]
     for img_path in images:
-        label_path = (labels_dir / (_strip_ext(img_path) + ".txt"))
+        label_path = labels_dir / (_strip_ext(img_path) + ".txt")
         if not label_path.exists():
             continue
         img = cv2.imread(str(img_path))
@@ -266,18 +280,40 @@ def draw_overlays(images_dir: Path, labels_dir: Path, names: Sequence[str], out_
             color = (0, 255, 0)
             cv2.rectangle(img, (x1, y1), (x2, y2), color, 2)
             label = names[cls_id] if 0 <= cls_id < len(names) else str(cls_id)
-            cv2.putText(img, label, (x1, max(0, y1 - 5)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1, cv2.LINE_AA)
+            cv2.putText(
+                img,
+                label,
+                (x1, max(0, y1 - 5)),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.5,
+                color,
+                1,
+                cv2.LINE_AA,
+            )
         out_path = out_dir / f"{_strip_ext(img_path)}_overlay.jpg"
         out_path.parent.mkdir(parents=True, exist_ok=True)
         import cv2  # re-import to help static checkers
+
         cv2.imwrite(str(out_path), img)
 
 
-def run_yolo_val(model_path: Path, data_yaml: Path, imgsz: int, device: str, conf: float, iou: float, project: Optional[Path], name: Optional[str]) -> None:
+def run_yolo_val(
+    model_path: Path,
+    data_yaml: Path,
+    imgsz: int,
+    device: str,
+    conf: float,
+    iou: float,
+    project: Optional[Path],
+    name: Optional[str],
+) -> None:
     try:
         from ultralytics import YOLO  # type: ignore
     except ImportError:  # pragma: no cover
-        print("[WARN] ultralytics not available. Skipping val. Install with: pip install ultralytics", file=sys.stderr)
+        print(
+            "[WARN] ultralytics not available. Skipping val. Install with: pip install ultralytics",
+            file=sys.stderr,
+        )
         return
     model = YOLO(str(model_path))
     model.val(
@@ -315,8 +351,12 @@ def autodetect_defaults(project_root: Path) -> Tuple[Optional[Path], Optional[Pa
 def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = argparse.ArgumentParser(description="YOLO dataset audit and optional validation")
     parser.add_argument("--data", type=str, default=None, help="Path to dataset YAML")
-    parser.add_argument("--auto", action="store_true", help="Auto-detect dataset+weights from latest run")
-    parser.add_argument("--model", type=str, default=None, help="Path to model weights (best.pt/last.pt)")
+    parser.add_argument(
+        "--auto", action="store_true", help="Auto-detect dataset+weights from latest run"
+    )
+    parser.add_argument(
+        "--model", type=str, default=None, help="Path to model weights (best.pt/last.pt)"
+    )
     parser.add_argument("--imgsz", type=int, default=960)
     parser.add_argument("--device", type=str, default="0")
     parser.add_argument("--conf", type=float, default=0.001)
@@ -339,7 +379,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             data_yaml = auto_data
 
     if data_yaml is None:
-        print("[ERROR] Dataset YAML not provided and auto-detect failed. Use --data /path/to/data.yaml", file=sys.stderr)
+        print(
+            "[ERROR] Dataset YAML not provided and auto-detect failed. Use --data /path/to/data.yaml",
+            file=sys.stderr,
+        )
         return 2
 
     ds = load_dataset_paths(data_yaml)
@@ -367,7 +410,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             "format_errors": train_audit.format_errors,
             "invalid_ids": [(str(p), ln, tok) for p, ln, tok in train_audit.invalid_ids],
             "out_of_range_ids": [(str(p), ln, cid) for p, ln, cid in train_audit.out_of_range_ids],
-            "coords_outside_unit": [(str(p), ln, xywh) for p, ln, xywh in train_audit.coords_outside_unit],
+            "coords_outside_unit": [
+                (str(p), ln, xywh) for p, ln, xywh in train_audit.coords_outside_unit
+            ],
             "zero_area_boxes": [(str(p), ln, xywh) for p, ln, xywh in train_audit.zero_area_boxes],
         },
         "val": {
@@ -381,7 +426,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             "format_errors": val_audit.format_errors,
             "invalid_ids": [(str(p), ln, tok) for p, ln, tok in val_audit.invalid_ids],
             "out_of_range_ids": [(str(p), ln, cid) for p, ln, cid in val_audit.out_of_range_ids],
-            "coords_outside_unit": [(str(p), ln, xywh) for p, ln, xywh in val_audit.coords_outside_unit],
+            "coords_outside_unit": [
+                (str(p), ln, xywh) for p, ln, xywh in val_audit.coords_outside_unit
+            ],
             "zero_area_boxes": [(str(p), ln, xywh) for p, ln, xywh in val_audit.zero_area_boxes],
         },
     }
@@ -391,9 +438,21 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     # Overlays
     if not args.no_overlays:
         print("[INFO] Rendering overlays (train)...")
-        draw_overlays(ds.train_images, ds.train_labels, ds.names, out_dir / "overlays_train", max_images=args.overlay_samples)
+        draw_overlays(
+            ds.train_images,
+            ds.train_labels,
+            ds.names,
+            out_dir / "overlays_train",
+            max_images=args.overlay_samples,
+        )
         print("[INFO] Rendering overlays (val)...")
-        draw_overlays(ds.val_images, ds.val_labels, ds.names, out_dir / "overlays_val", max_images=args.overlay_samples)
+        draw_overlays(
+            ds.val_images,
+            ds.val_labels,
+            ds.names,
+            out_dir / "overlays_val",
+            max_images=args.overlay_samples,
+        )
 
     # Optional validation
     if args.run_val:
@@ -420,5 +479,3 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
-

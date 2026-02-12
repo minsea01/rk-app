@@ -4,6 +4,7 @@
 Tests decode_predictions, load_labels, draw_boxes, and basic main() scenarios.
 Note: Full main() testing requires rknnlite which is RK3588-specific.
 """
+
 import tempfile
 from pathlib import Path
 from unittest.mock import patch, MagicMock
@@ -28,7 +29,7 @@ class TestDecodePredictions:
         pred = np.random.randn(1, N, 64 + nc).astype(np.float32)
 
         boxes, confs, cls_ids = decode_predictions(
-            pred, imgsz=640, conf_thres=0.5, iou_thres=0.45, head='dfl'
+            pred, imgsz=640, conf_thres=0.5, iou_thres=0.45, head="dfl"
         )
 
         assert isinstance(boxes, np.ndarray)
@@ -47,7 +48,7 @@ class TestDecodePredictions:
         pred[0, :10, 4] = 5.0  # High objectness
 
         boxes, confs, cls_ids = decode_predictions(
-            pred, imgsz=640, conf_thres=0.5, iou_thres=0.45, head='raw'
+            pred, imgsz=640, conf_thres=0.5, iou_thres=0.45, head="raw"
         )
 
         assert isinstance(boxes, np.ndarray)
@@ -61,7 +62,9 @@ class TestDecodePredictions:
         # DFL format (C >= 64) with correct anchor count
         N = 8400  # Correct anchor count for 640
         pred_dfl = np.random.randn(1, N, 144).astype(np.float32)
-        boxes, _, _ = decode_predictions(pred_dfl, imgsz=640, conf_thres=0.9, iou_thres=0.45, head='auto')
+        boxes, _, _ = decode_predictions(
+            pred_dfl, imgsz=640, conf_thres=0.9, iou_thres=0.45, head="auto"
+        )
         assert isinstance(boxes, np.ndarray)
 
     def test_decode_predictions_auto_selects_raw_for_small_channels(self):
@@ -71,7 +74,9 @@ class TestDecodePredictions:
         # Raw format (C < 64) - explicit raw head to avoid anchor mismatch
         pred_raw = np.random.randn(1, 100, 85).astype(np.float32)
         pred_raw[0, :5, 4] = 5.0  # High objectness
-        boxes, _, _ = decode_predictions(pred_raw, imgsz=640, conf_thres=0.5, iou_thres=0.45, head='raw')
+        boxes, _, _ = decode_predictions(
+            pred_raw, imgsz=640, conf_thres=0.5, iou_thres=0.45, head="raw"
+        )
         assert isinstance(boxes, np.ndarray)
 
     def test_decode_predictions_handles_2d_input(self):
@@ -82,7 +87,7 @@ class TestDecodePredictions:
         pred = np.random.randn(100, 85).astype(np.float32)
         pred[:5, 4] = 5.0  # High objectness
         boxes, confs, cls_ids = decode_predictions(
-            pred, imgsz=640, conf_thres=0.5, iou_thres=0.45, head='raw'
+            pred, imgsz=640, conf_thres=0.5, iou_thres=0.45, head="raw"
         )
 
         assert isinstance(boxes, np.ndarray)
@@ -95,7 +100,7 @@ class TestDecodePredictions:
         pred = np.ones((1, 100, 85), dtype=np.float32) * -100
 
         boxes, confs, cls_ids = decode_predictions(
-            pred, imgsz=640, conf_thres=0.9, iou_thres=0.45, head='raw'
+            pred, imgsz=640, conf_thres=0.9, iou_thres=0.45, head="raw"
         )
 
         assert boxes.shape[0] == 0
@@ -111,8 +116,13 @@ class TestDecodePredictions:
         pred[0, :5, 4] = 5.0  # High objectness
 
         boxes, confs, cls_ids = decode_predictions(
-            pred, imgsz=640, conf_thres=0.5, iou_thres=0.45, head='raw',
-            ratio_pad=(0.5, (10.0, 10.0)), orig_shape=(480, 640)
+            pred,
+            imgsz=640,
+            conf_thres=0.5,
+            iou_thres=0.45,
+            head="raw",
+            ratio_pad=(0.5, (10.0, 10.0)),
+            orig_shape=(480, 640),
         )
 
         # Boxes should be clipped to original image bounds
@@ -129,7 +139,7 @@ class TestDecodePredictions:
         pred[0, 4, :10] = 5.0  # High objectness after transpose
 
         boxes, confs, cls_ids = decode_predictions(
-            pred, imgsz=640, conf_thres=0.5, iou_thres=0.45, head='raw'
+            pred, imgsz=640, conf_thres=0.5, iou_thres=0.45, head="raw"
         )
 
         assert isinstance(boxes, np.ndarray)
@@ -147,18 +157,18 @@ class TestLoadLabels:
         """Test loading labels from file."""
         from apps.yolov8_rknn_infer import load_labels
 
-        names_file = self.temp_path / 'names.txt'
-        names_file.write_text('person\ncar\nbicycle\n')
+        names_file = self.temp_path / "names.txt"
+        names_file.write_text("person\ncar\nbicycle\n")
 
         labels = load_labels(names_file)
 
-        assert labels == ['person', 'car', 'bicycle']
+        assert labels == ["person", "car", "bicycle"]
 
     def test_load_labels_returns_none_for_nonexistent_file(self):
         """Test that None is returned for nonexistent file."""
         from apps.yolov8_rknn_infer import load_labels
 
-        labels = load_labels(Path('/nonexistent/path.txt'))
+        labels = load_labels(Path("/nonexistent/path.txt"))
         assert labels is None
 
     def test_load_labels_returns_none_for_none_input(self):
@@ -172,12 +182,12 @@ class TestLoadLabels:
         """Test that empty lines are skipped."""
         from apps.yolov8_rknn_infer import load_labels
 
-        names_file = self.temp_path / 'names.txt'
-        names_file.write_text('person\n\ncar\n  \nbicycle\n')
+        names_file = self.temp_path / "names.txt"
+        names_file.write_text("person\n\ncar\n  \nbicycle\n")
 
         labels = load_labels(names_file)
 
-        assert labels == ['person', 'car', 'bicycle']
+        assert labels == ["person", "car", "bicycle"]
 
 
 class TestDrawBoxes:
@@ -191,7 +201,7 @@ class TestDrawBoxes:
         boxes = np.array([[10, 10, 100, 100]], dtype=np.float32)
         confs = np.array([0.9])
         class_ids = np.array([0])
-        names = ['person', 'car']
+        names = ["person", "car"]
 
         result = draw_boxes(img, boxes, confs, class_ids, names)
 
@@ -231,14 +241,12 @@ class TestDrawBoxes:
         from apps.yolov8_rknn_infer import draw_boxes
 
         img = np.zeros((480, 640, 3), dtype=np.uint8)
-        boxes = np.array([
-            [10, 10, 100, 100],
-            [200, 200, 300, 300],
-            [400, 100, 500, 200]
-        ], dtype=np.float32)
+        boxes = np.array(
+            [[10, 10, 100, 100], [200, 200, 300, 300], [400, 100, 500, 200]], dtype=np.float32
+        )
         confs = np.array([0.9, 0.8, 0.7])
         class_ids = np.array([0, 1, 2])
-        names = ['person', 'car', 'bicycle']
+        names = ["person", "car", "bicycle"]
 
         result = draw_boxes(img, boxes, confs, class_ids, names)
 
@@ -254,7 +262,7 @@ class TestDrawBoxes:
         boxes = np.array([[10, 10, 100, 100]], dtype=np.float32)
         confs = np.array([0.9])
         class_ids = np.array([99])  # Out of range
-        names = ['person', 'car']
+        names = ["person", "car"]
 
         # Should not crash, falls back to numeric label
         result = draw_boxes(img, boxes, confs, class_ids, names)
@@ -273,7 +281,7 @@ class TestRawDecodePath:
         pred[0, :10, 4] = 5.0  # High objectness
 
         boxes, confs, cls_ids = decode_predictions(
-            pred, imgsz=640, conf_thres=0.5, iou_thres=0.45, head='raw'
+            pred, imgsz=640, conf_thres=0.5, iou_thres=0.45, head="raw"
         )
 
         # Class IDs should all be 0 (default)
@@ -288,7 +296,7 @@ class TestRawDecodePath:
         pred = np.random.randn(1, 100, 4).astype(np.float32)
 
         boxes, confs, cls_ids = decode_predictions(
-            pred, imgsz=640, conf_thres=0.5, iou_thres=0.45, head='raw'
+            pred, imgsz=640, conf_thres=0.5, iou_thres=0.45, head="raw"
         )
 
         assert boxes.shape[0] == 0
@@ -306,7 +314,7 @@ class TestRawDecodePath:
         pred[0, 0, 4] = 5.0  # High objectness
 
         boxes, confs, cls_ids = decode_predictions(
-            pred, imgsz=640, conf_thres=0.5, iou_thres=0.45, head='raw'
+            pred, imgsz=640, conf_thres=0.5, iou_thres=0.45, head="raw"
         )
 
         # Should have detections with scaled coordinates
@@ -322,43 +330,59 @@ class TestArgumentParser:
         from apps.yolov8_rknn_infer import build_arg_parser
 
         parser = build_arg_parser()
-        args = parser.parse_args([
-            '--model', 'dummy.rknn',
-            '--cfg', 'config/detect.yaml',
-            '--pp-profile', 'quality',
-            '--undistort-enable',
-            '--undistort-calib', 'calib.yaml',
-            '--roi-enable',
-            '--roi-mode', 'pixel',
-            '--roi-px', '1,2,30,40',
-            '--roi-min-size', '12',
-            '--gamma-enable',
-            '--gamma', '0.7',
-            '--white-balance-enable',
-            '--white-balance-clip', '1.5',
-            '--denoise-enable',
-            '--denoise-method', 'bilateral',
-            '--denoise-d', '7',
-            '--denoise-sigma-color', '30',
-            '--denoise-sigma-space', '20',
-            '--input-format', 'gray',
-        ])
+        args = parser.parse_args(
+            [
+                "--model",
+                "dummy.rknn",
+                "--cfg",
+                "config/detect.yaml",
+                "--pp-profile",
+                "quality",
+                "--undistort-enable",
+                "--undistort-calib",
+                "calib.yaml",
+                "--roi-enable",
+                "--roi-mode",
+                "pixel",
+                "--roi-px",
+                "1,2,30,40",
+                "--roi-min-size",
+                "12",
+                "--gamma-enable",
+                "--gamma",
+                "0.7",
+                "--white-balance-enable",
+                "--white-balance-clip",
+                "1.5",
+                "--denoise-enable",
+                "--denoise-method",
+                "bilateral",
+                "--denoise-d",
+                "7",
+                "--denoise-sigma-color",
+                "30",
+                "--denoise-sigma-space",
+                "20",
+                "--input-format",
+                "gray",
+            ]
+        )
 
-        assert args.cfg == Path('config/detect.yaml')
-        assert args.pp_profile == 'quality'
+        assert args.cfg == Path("config/detect.yaml")
+        assert args.pp_profile == "quality"
         assert args.undistort_enable is True
         assert args.roi_enable is True
-        assert args.roi_px == '1,2,30,40'
+        assert args.roi_px == "1,2,30,40"
         assert args.gamma_enable is True
         assert args.white_balance_enable is True
         assert args.denoise_enable is True
-        assert args.input_format == 'gray'
+        assert args.input_format == "gray"
 
     def test_parser_keeps_backward_compatible_defaults(self):
         from apps.yolov8_rknn_infer import build_arg_parser
 
         parser = build_arg_parser()
-        args = parser.parse_args(['--model', 'dummy.rknn'])
+        args = parser.parse_args(["--model", "dummy.rknn"])
 
         assert args.cfg is None
         assert args.pp_profile is None

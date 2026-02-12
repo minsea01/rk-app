@@ -13,13 +13,15 @@ from apps.utils.decode_meta import (
 
 
 def test_normalize_decode_meta_alias_fields():
-    meta = normalize_decode_meta({
-        "head": "DFL",
-        "reg_max": "16",
-        "classes": "80",
-        "objectness": "false",
-        "strides": [8, 16, 32],
-    })
+    meta = normalize_decode_meta(
+        {
+            "head": "DFL",
+            "reg_max": "16",
+            "classes": "80",
+            "objectness": "false",
+            "strides": [8, 16, 32],
+        }
+    )
     assert meta["head"] == "dfl"
     assert meta["reg_max"] == 16
     assert meta["num_classes"] == 80
@@ -46,11 +48,15 @@ def test_load_decode_meta_from_model_sidecar(tmp_path):
     model_path.write_bytes(b"fake")
 
     sidecar = tmp_path / "demo.rknn.json"
-    sidecar.write_text(json.dumps({
-        "head": "raw",
-        "num_classes": 1,
-        "has_objectness": 0,
-    }))
+    sidecar.write_text(
+        json.dumps(
+            {
+                "head": "raw",
+                "num_classes": 1,
+                "has_objectness": 0,
+            }
+        )
+    )
 
     meta = load_decode_meta(model_path)
     assert meta["head"] == "raw"

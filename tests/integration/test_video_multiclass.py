@@ -95,4 +95,3 @@ def test_multiclass_video_smoke() -> None:
         if cap is not None:
             cap.release()
         rknn.release()
-
