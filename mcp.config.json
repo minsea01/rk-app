@@ -2,17 +2,17 @@
   "mcpServers": {
     "dev-tools": {
       "command": "python3",
-      "args": ["-m", "mcp_dev"],
+      "args": ["-m", "tools.mcp.mcp_dev"],
       "env": { "WORKDIR": "/home/minsea/rk-app" }
     },
     "git-summary": {
       "command": "python3",
-      "args": ["-m", "mcp_git_summary"],
+      "args": ["-m", "tools.mcp.mcp_git_summary"],
       "env": { "WORKDIR": "/home/minsea/rk-app" }
     },
     "docker": {
       "command": "python3",
-      "args": ["-m", "mcp_docker"]
+      "args": ["-m", "tools.mcp.mcp_docker"]
     }
   }
 }

@@ -90,7 +90,7 @@ Key constraint: `numpy<2.0` (RKNN toolkit compatibility).
 ```
 ISource (capture)    -> FolderSource, VideoSource, GigeSource, MppSource
 IInferEngine (infer) -> OnnxEngine, RknnEngine
-IOutput (output)     -> TcpOutput, UdpOutput
+IOutput (output)     -> TcpOutput
 ```
 
 **High-level API (Pimpl pattern):**
@@ -204,7 +204,7 @@ find calib_images -name "*.jpg" -exec realpath {} \; > calib_images/calib.txt
 
 ## CI Pipeline
 
-GitHub Actions (`.github/workflows/ci.yml`) triggers on push to `main/master/develop/claude/**` and PRs. Jobs: python-quality (black+flake8), python-tests, file-validation (shellcheck), cpp-build-tests (x86-debug + ctest), model-validation, docs-check. The `ci-success` gate uses `if: always()` and warns but does not hard-fail.
+GitHub Actions (`.github/workflows/ci.yml`) triggers on push to `main/master/develop/claude/**` and PRs. Jobs: python-quality (black+flake8), python-tests, file-validation (shellcheck), cpp-build-tests (x86-debug + ctest), model-validation, docs-check. The `ci-success` gate uses `if: always()` but explicitly fails when any required upstream job is not `success`.
 
 ## Git Conventions
 

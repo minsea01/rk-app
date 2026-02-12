@@ -13,7 +13,10 @@
 #endif
 
 // Logging support
-#if __has_include("log.hpp")
+#if __has_include("rkapp/common/log.hpp")
+#include "rkapp/common/log.hpp"
+#define RKAPP_HAS_LOG 1
+#elif __has_include("log.hpp")
 #include "log.hpp"
 #define RKAPP_HAS_LOG 1
 #else

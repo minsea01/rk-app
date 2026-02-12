@@ -59,7 +59,7 @@ input:
 
 # 输出配置
 output:
-  type: tcp  # tcp / file / display
+  type: tcp  # tcp
   
   # TCP输出（网口2）
   tcp:
@@ -69,15 +69,6 @@ output:
     retry_max: 3
     retry_interval: 1000  # ms
     queue: 64            # 本地发送队列深度
-  
-  # 文件输出（调试用）
-  file:
-    path: "output/detections.json"
-    
-  # 可视化显示（调试用）
-  display:
-    enable: true
-    window_name: "Pedestrian Detection"
 
 # 性能配置
 performance:

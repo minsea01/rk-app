@@ -1,9 +1,0 @@
-# CityPersons Test Dataset
-path: /home/minsea/rk-app/cloud_training/test_citypersons
-train: images/train
-val: images/val
-
-names:
-  0: person
-
-nc: 1

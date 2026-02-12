@@ -69,7 +69,10 @@ except Exception:  # pragma: no cover
 
 dev_requirements = list(optional_dependencies.get("dev", []))
 board_requirements = list(optional_dependencies.get("board", []))
-all_requirements = list(dict.fromkeys(requirements + dev_requirements + board_requirements))
+train_requirements = list(optional_dependencies.get("train", []))
+all_requirements = list(
+    dict.fromkeys(requirements + dev_requirements + board_requirements + train_requirements)
+)
 
 setup(
     name="rk3588-pedestrian-detection",
@@ -100,6 +103,7 @@ setup(
     extras_require={
         "dev": dev_requirements,
         "board": board_requirements,
+        "train": train_requirements,
         "all": all_requirements,
     },
     entry_points={

@@ -16,6 +16,14 @@
 
 更多演示与环境变量示例见 `docs/guides/QUICK_START_GUIDE.md` 与 `docs/QUICKSTART.md`。
 
+## Python 依赖分层
+- 基础运行时（轻量）：
+  - `pip install -r requirements.txt`
+- 训练/导出/ONNX 工具链（重依赖）：
+  - `pip install -r requirements_train.txt`
+- 板端运行（在基础运行时上追加 RKNN Lite）：
+  - `pip install -r requirements_board.txt`
+
 ## 训练与模型导出
 - 一键训练+导出（Ultralytics+ONNX→RKNN）：
   - `make RUN_NAME=<exp> all MODEL_PREFIX=yolo11n`
@@ -59,6 +67,7 @@
 
 ## 参考文档
 - 快速开始：`docs/guides/QUICK_START_GUIDE.md`
+- 板端依赖：`docs/guides/BOARD_RUNTIME_DEPENDENCIES.md`
 - 硬件集成：`docs/guides/HARDWARE_INTEGRATION_MANUAL.md`
 - 部署清单：`docs/RK3588_VALIDATION_CHECKLIST.md`
 - 性能分析：`docs/PERFORMANCE_ANALYSIS.md`

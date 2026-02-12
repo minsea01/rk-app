@@ -7,7 +7,8 @@
 #include "rkapp/infer/RknnEngine.hpp"
 #include "rkapp/infer/OnnxEngine.hpp"
 #include "rkapp/post/Postprocess.hpp"
-#include "log.hpp"
+#include "rkapp/common/StringUtils.hpp"
+#include "rkapp/common/log.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -49,12 +50,6 @@ bool isMppDecodeEnabledInStats(const PipelineConfig& config) {
     return false;
 }
 
-std::string toLowerCopy(std::string value) {
-    std::transform(value.begin(), value.end(), value.begin(),
-                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    return value;
-}
-
 struct PreprocessFeatureFlags {
     bool gamma = false;
     bool white_balance = false;
@@ -63,7 +58,7 @@ struct PreprocessFeatureFlags {
 
 PreprocessFeatureFlags resolveFeatureFlags(const PipelineConfig& config) {
     PreprocessFeatureFlags flags;
-    const std::string profile = toLowerCopy(config.preprocess_profile);
+    const std::string profile = rkapp::common::toLowerCopy(config.preprocess_profile);
     if (profile == "balanced") {
         flags.gamma = true;
         flags.white_balance = true;
@@ -86,7 +81,7 @@ PreprocessFeatureFlags resolveFeatureFlags(const PipelineConfig& config) {
 }
 
 bool roiModeIsNormalized(const std::string& mode) {
-    return toLowerCopy(mode) != "pixel";
+    return rkapp::common::toLowerCopy(mode) != "pixel";
 }
 
 cv::Mat buildGammaLut(float gamma) {
@@ -429,7 +424,7 @@ PipelineResult DetectionPipeline::process(const cv::Mat& image) {
     }
 
     if (impl_->preprocess_flags.denoise) {
-        if (toLowerCopy(impl_->config.denoise_method) != "bilateral") {
+        if (rkapp::common::toLowerCopy(impl_->config.denoise_method) != "bilateral") {
             LOGW("DetectionPipeline: Unsupported denoise method '",
                  impl_->config.denoise_method, "', using bilateral");
         }
@@ -694,12 +689,7 @@ capture::SourcePtr createSource(const PipelineConfig& config) {
 }
 
 std::unique_ptr<infer::IInferEngine> createEngine(const PipelineConfig& config) {
-    auto to_lower = [](std::string value) {
-        std::transform(value.begin(), value.end(), value.begin(),
-                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-        return value;
-    };
-    const std::string model_path_lower = to_lower(config.model_path);
+    const std::string model_path_lower = rkapp::common::toLowerCopy(config.model_path);
 
     // Always use RKNN engine for .rknn models
     if (model_path_lower.find(".rknn") != std::string::npos) {

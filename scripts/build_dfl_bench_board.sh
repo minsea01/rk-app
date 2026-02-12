@@ -8,6 +8,11 @@
 
 set -e
 
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+OUT_DIR="${ROOT_DIR}/artifacts/bin"
+OUT_BIN="${OUT_DIR}/bench_dfl_opt"
+mkdir -p "${OUT_DIR}"
+
 echo "=================================================="
 echo "编译DFL优化性能测试 (RK3588板端)"
 echo "=================================================="
@@ -29,7 +34,7 @@ g++ -std=c++17 -O3 -march=armv8-a+fp+simd \
     -I include \
     examples/bench_dfl_optimized.cpp \
     src/infer/rknn/RknnDecodeOptimized.cpp \
-    -o bench_dfl_opt \
+    -o "${OUT_BIN}" \
     -lpthread
 
 if [ $? -eq 0 ]; then
@@ -39,7 +44,7 @@ if [ $? -eq 0 ]; then
     echo "=================================================="
     echo ""
     echo "运行测试:"
-    echo "  ./bench_dfl_opt"
+    echo "  ./artifacts/bin/bench_dfl_opt"
     echo ""
     echo "预期结果:"
     echo "  - 标量版本: ~30ms/frame"

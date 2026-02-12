@@ -7,7 +7,7 @@ set -euo pipefail
 # 3) 汇总到 artifacts/reports/sim_summary.md
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-ONNX=${1:-$ROOT/check3_fuse_ops.onnx}
+ONNX=${1:-$ROOT/artifacts/models/best.onnx}
 IMG=${2:-}
 IMGSZ=${3:-640}
 LOOPS=${4:-200}
@@ -63,5 +63,4 @@ SUMMARY=$REP_DIR/sim_summary.md
 } > "$SUMMARY"
 
 echo "[SIM] Done. Summary -> $SUMMARY"
-
 
