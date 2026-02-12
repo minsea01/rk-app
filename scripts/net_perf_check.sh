@@ -15,6 +15,11 @@ SERVER_IP=${2:-}
 IFACE=${3:-}
 IFACE2=${4:-}
 
+get_iface_ipv4() {
+  local iface=$1
+  ip -o -4 addr show "$iface" | awk '{print $4}' | cut -d/ -f1 | head -n1
+}
+
 run_server() {
   echo "Starting iperf3 server..."
   iperf3 -s
@@ -23,26 +28,43 @@ run_server() {
 run_client() {
   local server=$1
   local iface=${2:-}
+  local bind_ip=""
+  local -a bind_opt=()
   if [ -n "$iface" ]; then
     echo "Binding to interface $iface"
     ip addr show "$iface" || true
+    bind_ip="$(get_iface_ipv4 "$iface")"
+    if [ -z "$bind_ip" ]; then
+      echo "Unable to determine IPv4 address for interface $iface"
+      return 1
+    fi
+    bind_opt=(-B "$bind_ip")
   fi
   echo "Upstream -> server"
-  iperf3 -c "$server" -P 4 -t 30 ${iface:+-B $(ip -o -4 addr show $iface | awk '{print $4}' | cut -d/ -f1 | head -n1)}
+  iperf3 -c "$server" -P 4 -t 30 "${bind_opt[@]}"
   echo "Downstream <- server"
-  iperf3 -c "$server" -P 4 -t 30 -R ${iface:+-B $(ip -o -4 addr show $iface | awk '{print $4}' | cut -d/ -f1 | head -n1)}
+  iperf3 -c "$server" -P 4 -t 30 -R "${bind_opt[@]}"
 }
 
 run_dual() {
   local server=$1
   local i1=$2
   local i2=$3
+  local ip1=""
+  local ip2=""
+  ip1="$(get_iface_ipv4 "$i1")"
+  ip2="$(get_iface_ipv4 "$i2")"
+  if [ -z "$ip1" ] || [ -z "$ip2" ]; then
+    echo "Unable to determine IPv4 address for interfaces: $i1($ip1), $i2($ip2)"
+    return 1
+  fi
+
   echo "Running concurrent tests on $i1 and $i2"
-  (iperf3 -c "$server" -P 4 -t 30 -B $(ip -o -4 addr show $i1 | awk '{print $4}' | cut -d/ -f1 | head -n1) &)
-  (iperf3 -c "$server" -P 4 -t 30 -B $(ip -o -4 addr show $i2 | awk '{print $4}' | cut -d/ -f1 | head -n1) &)
+  iperf3 -c "$server" -P 4 -t 30 -B "$ip1" &
+  iperf3 -c "$server" -P 4 -t 30 -B "$ip2" &
   wait
-  (iperf3 -c "$server" -P 4 -t 30 -R -B $(ip -o -4 addr show $i1 | awk '{print $4}' | cut -d/ -f1 | head -n1) &)
-  (iperf3 -c "$server" -P 4 -t 30 -R -B $(ip -o -4 addr show $i2 | awk '{print $4}' | cut -d/ -f1 | head -n1) &)
+  iperf3 -c "$server" -P 4 -t 30 -R -B "$ip1" &
+  iperf3 -c "$server" -P 4 -t 30 -R -B "$ip2" &
   wait
 }
 
@@ -62,4 +84,3 @@ case "$ROLE" in
     echo "Usage: $0 server | client <server_ip> [iface] | dual <server_ip> <iface1> <iface2>"; exit 1;
     ;;
 esac
-
