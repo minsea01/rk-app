@@ -1,47 +1,7 @@
-# RK-App PC Development Dependencies
-# ============================================================
-#
-# Purpose: Full development environment for x86_64 PC
-# Environment: WSL2 Ubuntu 22.04, Python 3.10, CUDA 11.7
-#
-# Installation:
-#   pip install -r requirements.txt
-#
-# For RK3588 board deployment, use: requirements_board.txt
-# (Minimal inference-only dependencies, no training libraries)
-#
-# ============================================================
+# Auto-generated from pyproject.toml: base
+# Do not edit manually. Run: python3 tools/export_requirements.py
 
-# Core ML/CV dependencies
-numpy>=1.20.0,<2.0  # RKNN toolkit requires numpy<2.0
+numpy>=1.20.0,<2.0
 opencv-python-headless==4.9.0.80
 pillow==11.3.0
-
-# YOLO training and export
-ultralytics>=8.0.0
-torch>=2.0.0  # For training; omit if inference-only
-
-# RKNN conversion (x86 PC only)
-rknn-toolkit2>=2.3.2  # For ONNX->RKNN conversion on PC
-
-# ONNX inference
-onnxruntime==1.18.1
-
-# Configuration parsing
 PyYAML>=6.0
-
-# Visualization
-matplotlib==3.10.6
-contourpy==1.3.2
-cycler==0.12.1
-fonttools==4.59.2
-kiwisolver==1.4.9
-pyparsing==3.2.3
-
-# Utilities
-python-dateutil==2.9.0.post0
-packaging==25.0
-six==1.17.0
-pandas>=1.5.0
-setuptools==80.9.0
-wheel==0.45.1

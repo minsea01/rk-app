@@ -9,7 +9,8 @@
 
 #include <opencv2/opencv.hpp>
 
-#include "log.hpp"
+#include "rkapp/common/StringUtils.hpp"
+#include "rkapp/common/log.hpp"
 #include "pixel_format_utils.hpp"
 
 #ifdef RKAPP_WITH_GIGE
@@ -36,12 +37,6 @@ std::string trimCopy(const std::string& input) {
   return std::string(first, last);
 }
 
-std::string toLowerCopy(std::string value) {
-  std::transform(value.begin(), value.end(), value.begin(),
-                 [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-  return value;
-}
-
 bool parseInt(const std::string& input, int& out) {
   const auto trimmed = trimCopy(input);
   if (trimmed.empty()) return false;
@@ -56,7 +51,7 @@ bool parseInt(const std::string& input, int& out) {
 }
 
 bool parseBool(const std::string& input) {
-  const auto lowered = toLowerCopy(trimCopy(input));
+  const auto lowered = rkapp::common::toLowerCopy(trimCopy(input));
   return lowered == "1" || lowered == "true" || lowered == "yes" ||
          lowered == "on" || lowered == "color" || lowered == "colour" ||
          lowered == "bgr" || lowered == "rgb";
@@ -395,7 +390,7 @@ GigeSource::UriConfig GigeSource::parseUri(const std::string& uri) {
       std::string value = trimCopy(token.substr(eq + 1));
       if (key.empty()) continue;
 
-      const std::string lowered = toLowerCopy(key);
+      const std::string lowered = rkapp::common::toLowerCopy(key);
       if (lowered == "camera-name") {
         if (!value.empty()) config.camera_name = value;
         continue;

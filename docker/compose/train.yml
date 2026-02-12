@@ -1,0 +1,99 @@
+version: '3.8'
+
+services:
+  # GPU Training Service for YOLO Fine-tuning
+  train-gpu:
+    build:
+      context: ../..
+      dockerfile: docker/train.Dockerfile
+    image: rk-app-train:latest
+    container_name: rk-app-train
+
+    # GPU configuration
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+    # Mount project directory for live editing
+    volumes:
+      - ../../datasets:/workspace/datasets
+      - ../../artifacts:/workspace/artifacts
+      - ../../runs:/workspace/runs
+      - ../../apps:/workspace/apps
+      - ../../tools:/workspace/tools
+      - ../../scripts:/workspace/scripts
+      - ../../config:/workspace/config
+
+    # Working directory
+    working_dir: /workspace
+
+    # Network mode
+    network_mode: host
+
+    # Environment variables
+    environment:
+      - PYTHONPATH=/workspace
+      - CUDA_VISIBLE_DEVICES=0
+      - TORCH_HOME=/workspace/.cache/torch
+
+    # Keep container running
+    tty: true
+    stdin_open: true
+
+    # Command
+    command: bash
+
+  # Optional: Jupyter notebook for interactive training
+  train-jupyter:
+    build:
+      context: ../..
+      dockerfile: docker/train.Dockerfile
+    image: rk-app-train:latest
+    container_name: rk-app-train-jupyter
+
+    # GPU configuration
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+    # Mount project directory
+    volumes:
+      - ../../datasets:/workspace/datasets
+      - ../../artifacts:/workspace/artifacts
+      - ../../runs:/workspace/runs
+      - ../../apps:/workspace/apps
+      - ../../tools:/workspace/tools
+      - ../../scripts:/workspace/scripts
+      - ../../config:/workspace/config
+
+    # Working directory
+    working_dir: /workspace
+
+    # Expose Jupyter port
+    ports:
+      - "8888:8888"
+
+    # Environment variables
+    environment:
+      - PYTHONPATH=/workspace
+      - CUDA_VISIBLE_DEVICES=0
+      - JUPYTER_ENABLE_LAB=yes
+
+    # Keep container running
+    tty: true
+    stdin_open: true
+
+    # Command: Start Jupyter Lab
+    command: >
+      bash -c "pip install jupyter jupyterlab &&
+               jupyter lab --ip=0.0.0.0 --port=8888 --no-browser
+               --allow-root --NotebookApp.token=''
+               --NotebookApp.password=''"

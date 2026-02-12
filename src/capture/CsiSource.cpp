@@ -10,7 +10,8 @@
 
 #include <opencv2/opencv.hpp>
 
-#include "log.hpp"
+#include "rkapp/common/StringUtils.hpp"
+#include "rkapp/common/log.hpp"
 #include "pixel_format_utils.hpp"
 
 #ifdef RKAPP_WITH_CSI
@@ -38,12 +39,6 @@ std::string trimCopy(const std::string& input) {
     return {};
   }
   return std::string(first, last);
-}
-
-std::string toLowerCopy(std::string value) {
-  std::transform(value.begin(), value.end(), value.begin(),
-                 [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-  return value;
 }
 
 bool parseInt(const std::string& input, int& out) {
@@ -411,7 +406,7 @@ CsiSource::UriConfig CsiSource::parseUri(const std::string& uri) {
         continue;
       }
 
-      const std::string key = toLowerCopy(trimCopy(token.substr(0, eq)));
+      const std::string key = rkapp::common::toLowerCopy(trimCopy(token.substr(0, eq)));
       const std::string value = trimCopy(token.substr(eq + 1));
       if (key.empty()) {
         continue;

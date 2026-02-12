@@ -16,10 +16,7 @@ struct FrameResult {
 };
 
 enum class OutputType {
-    TCP,
-    UDP,
-    FILE,
-    CONSOLE
+    TCP
 };
 
 class IOutput {

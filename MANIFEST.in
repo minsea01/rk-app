@@ -4,9 +4,10 @@ include LICENSE
 include CLAUDE.md
 include requirements.txt
 include requirements-dev.txt
+include requirements_board.txt
+include requirements_train.txt
 
 # Include configuration files
-include pytest.ini
 include pyproject.toml
 include setup.py
 recursive-include config *.yaml *.yml *.txt

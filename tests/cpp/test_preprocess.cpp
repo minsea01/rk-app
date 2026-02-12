@@ -1,193 +1,83 @@
-/*
- * Unit tests for preprocessing module
- * Framework: Google Test
- */
-
 #include <gtest/gtest.h>
-#include <vector>
-#include <cmath>
-#include <chrono>
 
-// Mock preprocessing functions for testing
-namespace preprocessing {
+#include <opencv2/opencv.hpp>
 
-struct Image {
-    int width;
-    int height;
-    int channels;
-    std::vector<uint8_t> data;
-};
+#include "rkapp/preprocess/Preprocess.hpp"
 
-Image letterbox(const Image& input, int target_size) {
-    // Simplified letterbox implementation for testing
-    Image output;
-    output.width = target_size;
-    output.height = target_size;
-    output.channels = input.channels;
+namespace {
 
-    // Calculate scaling
-    float scale = std::min(
-        static_cast<float>(target_size) / input.width,
-        static_cast<float>(target_size) / input.height
-    );
+TEST(PreprocessTest, LetterboxPreservesAspectAndReturnsInfo) {
+  cv::Mat src(1080, 1920, CV_8UC3, cv::Scalar(10, 20, 30));
+  rkapp::preprocess::LetterboxInfo info{};
 
-    int new_width = static_cast<int>(input.width * scale);
-    int new_height = static_cast<int>(input.height * scale);
+  const cv::Mat out = rkapp::preprocess::Preprocess::letterbox(
+      src, 640, info, rkapp::preprocess::AccelBackend::OPENCV);
 
-    // Allocate output
-    output.data.resize(target_size * target_size * input.channels, 114);  // Gray padding
-
-    // Simple resize (nearest neighbor for test)
-    for (int y = 0; y < new_height; ++y) {
-        for (int x = 0; x < new_width; ++x) {
-            int src_y = static_cast<int>(y / scale);
-            int src_x = static_cast<int>(x / scale);
-
-            if (src_y < input.height && src_x < input.width) {
-                for (int c = 0; c < input.channels; ++c) {
-                    int dst_idx = (y * target_size + x) * input.channels + c;
-                    int src_idx = (src_y * input.width + src_x) * input.channels + c;
-                    output.data[dst_idx] = input.data[src_idx];
-                }
-            }
-        }
-    }
-
-    return output;
+  ASSERT_FALSE(out.empty());
+  EXPECT_EQ(out.rows, 640);
+  EXPECT_EQ(out.cols, 640);
+  EXPECT_NEAR(info.scale, 640.0f / 1920.0f, 1e-4f);
+  EXPECT_EQ(info.new_width, 640);
+  EXPECT_EQ(info.new_height, 360);
+  EXPECT_NEAR(info.dx, 0.0f, 1e-4f);
+  EXPECT_NEAR(info.dy, 140.0f, 1e-4f);
 }
 
-bool normalize_image(std::vector<float>& data, float mean, float std) {
-    if (std == 0.0f) return false;
+TEST(PreprocessTest, LetterboxRejectsEmptyInput) {
+  rkapp::preprocess::LetterboxInfo info{};
+  const cv::Mat out = rkapp::preprocess::Preprocess::letterbox(
+      cv::Mat(), 640, info, rkapp::preprocess::AccelBackend::OPENCV);
 
-    for (auto& pixel : data) {
-        pixel = (pixel - mean) / std;
-    }
-    return true;
+  EXPECT_TRUE(out.empty());
+  EXPECT_EQ(info.scale, 0.0f);
 }
 
-} // namespace preprocessing
+TEST(PreprocessTest, NormalizeConvertsToFloatAndScalesValues) {
+  cv::Mat src(1, 1, CV_8UC3, cv::Scalar(255, 127, 0));
+  const cv::Mat norm = rkapp::preprocess::Preprocess::normalize(src, 1.0f / 255.0f);
 
-// Test fixtures
-class PreprocessTest : public ::testing::Test {
-protected:
-    void SetUp() override {
-        // Create a simple test image
-        test_image.width = 1920;
-        test_image.height = 1080;
-        test_image.channels = 3;
-        test_image.data.resize(test_image.width * test_image.height * test_image.channels, 128);
-    }
-
-    preprocessing::Image test_image;
-};
-
-// Test cases
-TEST_F(PreprocessTest, LetterboxPreservesAspectRatio) {
-    auto result = preprocessing::letterbox(test_image, 640);
-
-    EXPECT_EQ(result.width, 640);
-    EXPECT_EQ(result.height, 640);
-    EXPECT_EQ(result.channels, 3);
-    EXPECT_EQ(result.data.size(), 640 * 640 * 3);
+  ASSERT_EQ(norm.type(), CV_32FC3);
+  const cv::Vec3f px = norm.at<cv::Vec3f>(0, 0);
+  EXPECT_NEAR(px[0], 1.0f, 1e-5f);
+  EXPECT_NEAR(px[1], 127.0f / 255.0f, 1e-5f);
+  EXPECT_NEAR(px[2], 0.0f, 1e-5f);
 }
 
-TEST_F(PreprocessTest, LetterboxHandlesSquareInput) {
-    preprocessing::Image square_img;
-    square_img.width = 640;
-    square_img.height = 640;
-    square_img.channels = 3;
-    square_img.data.resize(640 * 640 * 3, 100);
-
-    auto result = preprocessing::letterbox(square_img, 640);
-
-    EXPECT_EQ(result.width, 640);
-    EXPECT_EQ(result.height, 640);
+TEST(PreprocessTest, Hwc2ChwRejectsNonFloatInput) {
+  cv::Mat src(2, 2, CV_8UC3, cv::Scalar(1, 2, 3));
+  const cv::Mat chw = rkapp::preprocess::Preprocess::hwc2chw(src);
+  EXPECT_TRUE(chw.empty());
 }
 
-TEST_F(PreprocessTest, LetterboxHandlesPortraitImage) {
-    preprocessing::Image portrait;
-    portrait.width = 480;
-    portrait.height = 640;
-    portrait.channels = 3;
-    portrait.data.resize(480 * 640 * 3, 50);
+TEST(PreprocessTest, Hwc2ChwConvertsThreeChannelFloatImage) {
+  cv::Mat src(1, 2, CV_32FC3);
+  src.at<cv::Vec3f>(0, 0) = cv::Vec3f(1.0f, 2.0f, 3.0f);
+  src.at<cv::Vec3f>(0, 1) = cv::Vec3f(4.0f, 5.0f, 6.0f);
 
-    auto result = preprocessing::letterbox(portrait, 640);
+  const cv::Mat chw = rkapp::preprocess::Preprocess::hwc2chw(src);
 
-    EXPECT_EQ(result.width, 640);
-    EXPECT_EQ(result.height, 640);
+  ASSERT_FALSE(chw.empty());
+  ASSERT_EQ(chw.type(), CV_32F);
+  ASSERT_EQ(chw.rows, 1);
+  ASSERT_EQ(chw.cols, 6);
+
+  const float* data = chw.ptr<float>();
+  EXPECT_FLOAT_EQ(data[0], 1.0f);
+  EXPECT_FLOAT_EQ(data[1], 4.0f);
+  EXPECT_FLOAT_EQ(data[2], 2.0f);
+  EXPECT_FLOAT_EQ(data[3], 5.0f);
+  EXPECT_FLOAT_EQ(data[4], 3.0f);
+  EXPECT_FLOAT_EQ(data[5], 6.0f);
 }
 
-TEST_F(PreprocessTest, NormalizeValidInput) {
-    std::vector<float> data = {0.0f, 127.5f, 255.0f};
-    bool success = preprocessing::normalize_image(data, 127.5f, 127.5f);
+TEST(PreprocessTest, BlobReturnsExpectedFlatTensor) {
+  cv::Mat src(2, 2, CV_8UC3, cv::Scalar(20, 40, 60));
+  const cv::Mat blob = rkapp::preprocess::Preprocess::blob(src);
 
-    EXPECT_TRUE(success);
-    EXPECT_FLOAT_EQ(data[0], -1.0f);
-    EXPECT_FLOAT_EQ(data[1], 0.0f);
-    EXPECT_FLOAT_EQ(data[2], 1.0f);
+  ASSERT_FALSE(blob.empty());
+  EXPECT_EQ(blob.rows, 1);
+  EXPECT_EQ(blob.cols, 12);
+  EXPECT_EQ(blob.type(), CV_32F);
 }
 
-TEST_F(PreprocessTest, NormalizeHandlesZeroStd) {
-    std::vector<float> data = {1.0f, 2.0f, 3.0f};
-    bool success = preprocessing::normalize_image(data, 0.0f, 0.0f);
-
-    EXPECT_FALSE(success);
-}
-
-TEST_F(PreprocessTest, NormalizeEmptyInput) {
-    std::vector<float> data;
-    bool success = preprocessing::normalize_image(data, 0.0f, 1.0f);
-
-    EXPECT_TRUE(success);  // Should handle empty input gracefully
-    EXPECT_TRUE(data.empty());
-}
-
-// Performance test
-TEST(PreprocessPerformanceTest, LetterboxPerformance) {
-    preprocessing::Image large_image;
-    large_image.width = 3840;  // 4K
-    large_image.height = 2160;
-    large_image.channels = 3;
-    large_image.data.resize(large_image.width * large_image.height * large_image.channels, 128);
-
-    auto start = std::chrono::high_resolution_clock::now();
-    auto result = preprocessing::letterbox(large_image, 640);
-    auto end = std::chrono::high_resolution_clock::now();
-
-    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
-
-    // Should complete in reasonable time (< 100ms for 4K image)
-    EXPECT_LT(duration, 100) << "Letterbox resize took " << duration << "ms";
-}
-
-// Edge case tests
-TEST(PreprocessEdgeCases, ZeroSizeImage) {
-    preprocessing::Image zero_img;
-    zero_img.width = 0;
-    zero_img.height = 0;
-    zero_img.channels = 3;
-
-    // Should not crash
-    EXPECT_NO_THROW({
-        auto result = preprocessing::letterbox(zero_img, 640);
-    });
-}
-
-TEST(PreprocessEdgeCases, VerySmallImage) {
-    preprocessing::Image tiny;
-    tiny.width = 1;
-    tiny.height = 1;
-    tiny.channels = 3;
-    tiny.data = {255, 0, 0};
-
-    auto result = preprocessing::letterbox(tiny, 640);
-
-    EXPECT_EQ(result.width, 640);
-    EXPECT_EQ(result.height, 640);
-}
-
-// Main function
-int main(int argc, char** argv) {
-    ::testing::InitGoogleTest(&argc, argv);
-    return RUN_ALL_TESTS();
-}
+}  // namespace

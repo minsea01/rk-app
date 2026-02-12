@@ -73,7 +73,6 @@ assets/*.mp4
 temp_data/
 
 # Generated documentation
-AGENTS.md
 AGENT_SDK_CONFIG_GUIDE.md
 AUTO_TRAINING_GUIDE.md
 FINAL_STATUS.md
@@ -108,3 +107,16 @@ artifacts/onnx_optimized/
 .mcp.json
 cloud_training/test_citypersons/images/
 .cache/
+*.so.*
+
+# Additional generated outputs and local datasets
+/industrial_dataset/
+/cloud_training/test_citypersons/
+/logs/
+/output/
+/artifacts/vis/
+/artifacts/test_train/
+/artifacts/*.mp4
+/artifacts/*.jpg
+/.third_party/
+/third_party/onnxruntime

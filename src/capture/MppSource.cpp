@@ -28,7 +28,7 @@ extern "C" {
 
 // Logging
 #if __has_include("log.hpp")
-#include "log.hpp"
+#include "rkapp/common/log.hpp"
 #else
 #define LOGI(...) do { std::cout << "[INFO] MppSource: " << __VA_ARGS__ << std::endl; } while(0)
 #define LOGW(...) do { std::cerr << "[WARN] MppSource: " << __VA_ARGS__ << std::endl; } while(0)

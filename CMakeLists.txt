@@ -282,7 +282,11 @@ endif()
 
 # ONNX inference engine (optional)
 if (ENABLE_ONNX)
-    add_library(rkapp_infer_onnx src/infer/onnx/OnnxEngine.cpp)
+    set(RKAPP_ONNX_SOURCES
+      src/infer/onnx/OnnxEngine.cpp
+      src/infer/onnx/internal/OnnxEngineInternal.cpp
+    )
+    add_library(rkapp_infer_onnx ${RKAPP_ONNX_SOURCES})
     target_include_directories(rkapp_infer_onnx PUBLIC include)
     target_link_libraries(rkapp_infer_onnx PUBLIC ${OpenCV_LIBS} rkapp_core rkapp_decode_utils)
 
@@ -329,7 +333,12 @@ if (ENABLE_RKNN)
     message(STATUS "Found RKNN SDK: ${RKNN_HOME}")
     message(STATUS "  rknn_api: ${RKNN_API_LIB}")
 
-    add_library(rkapp_infer_rknn src/infer/rknn/RknnEngine.cpp)
+    set(RKAPP_RKNN_SOURCES
+      src/infer/rknn/RknnEngine.cpp
+      src/infer/rknn/internal/RknnEngineInternal.cpp
+      src/infer/rknn/internal/RknnEngineDma.cpp
+    )
+    add_library(rkapp_infer_rknn ${RKAPP_RKNN_SOURCES})
     target_include_directories(rkapp_infer_rknn PUBLIC include)
     target_link_libraries(rkapp_infer_rknn PUBLIC ${OpenCV_LIBS} rkapp_decode_utils)
     # RKNN SDK

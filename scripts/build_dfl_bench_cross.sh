@@ -7,6 +7,11 @@
 
 set -e
 
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+OUT_DIR="${ROOT_DIR}/artifacts/bin"
+OUT_BIN="${OUT_DIR}/bench_dfl_opt"
+mkdir -p "${OUT_DIR}"
+
 echo "=================================================="
 echo "交叉编译DFL优化性能测试 (x86_64 -> ARM64)"
 echo "=================================================="
@@ -33,31 +38,31 @@ aarch64-linux-gnu-g++ -std=c++17 -O3 \
     -I include \
     examples/bench_dfl_optimized.cpp \
     src/infer/rknn/RknnDecodeOptimized.cpp \
-    -o bench_dfl_opt \
+    -o "${OUT_BIN}" \
     -static \
     -lpthread
 
 if [ $? -eq 0 ]; then
     # 验证是ARM64二进制
-    FILE_INFO=$(file bench_dfl_opt)
+    FILE_INFO=$(file "${OUT_BIN}")
     if [[ "$FILE_INFO" == *"ARM aarch64"* ]]; then
         echo ""
         echo "=================================================="
         echo "✅ 交叉编译成功！"
         echo "=================================================="
         echo ""
-        echo "二进制文件: bench_dfl_opt"
+        echo "二进制文件: ${OUT_BIN}"
         echo "架构: ARM64 (aarch64)"
-        echo "大小: $(ls -lh bench_dfl_opt | awk '{print $5}')"
+        echo "大小: $(ls -lh "${OUT_BIN}" | awk '{print $5}')"
         echo ""
         echo "下一步："
         echo "  1. 传输到板端:"
-        echo "     scp bench_dfl_opt root@192.168.137.226:~/rk-app/"
+        echo "     scp ${OUT_BIN} root@192.168.137.226:~/rk-app/artifacts/bin/"
         echo ""
         echo "  2. 板端运行:"
         echo "     ssh root@192.168.137.226"
         echo "     cd ~/rk-app"
-        echo "     ./bench_dfl_opt"
+        echo "     ./artifacts/bin/bench_dfl_opt"
         echo "=================================================="
     else
         echo "⚠️  警告: 编译产物不是ARM64架构"

@@ -1,5 +1,5 @@
 #include "rkapp/common/DmaBuf.hpp"
-#include "log.hpp"
+#include "rkapp/common/log.hpp"
 
 #include <cstring>
 #include <cerrno>

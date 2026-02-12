@@ -28,10 +28,13 @@
 
 1. **环境准备**: 参考 [QUICK_START_GUIDE.md](QUICK_START_GUIDE.md)
    ```bash
-   # 安装依赖
+   # 安装基础运行时依赖（轻量）
    pip install -r requirements.txt
 
-   # 验证环境
+   # 训练/导出/ONNX 相关能力（按需）
+   pip install -r requirements_train.txt
+
+   # 验证 ONNXRuntime（训练/导出环境）
    python -c "import onnxruntime; print(onnxruntime.get_device())"
    ```
 

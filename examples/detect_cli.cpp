@@ -14,7 +14,8 @@
 #include "rkapp/preprocess/Preprocess.hpp"
 #include "rkapp/post/Postprocess.hpp"
 #include "rkapp/output/IOutput.hpp"
-#include "log.hpp"
+#include "rkapp/common/StringUtils.hpp"
+#include "rkapp/common/log.hpp"
 
 // Concrete class headers
 #include "rkapp/capture/FolderSource.hpp"
@@ -117,12 +118,6 @@ bool shouldRetryRead(const std::string& source_type, rkapp::capture::SourceType 
            actual_type == rkapp::capture::SourceType::CSI;
 }
 
-std::string toLowerCopy(std::string value) {
-    std::transform(value.begin(), value.end(), value.begin(),
-                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    return value;
-}
-
 struct FeatureFlags {
     bool gamma = false;
     bool white_balance = false;
@@ -131,7 +126,7 @@ struct FeatureFlags {
 
 FeatureFlags resolveFeatureFlags(const Config& config) {
     FeatureFlags flags;
-    const std::string profile = toLowerCopy(config.preprocess_profile);
+    const std::string profile = rkapp::common::toLowerCopy(config.preprocess_profile);
     if (profile == "balanced") {
         flags.gamma = true;
         flags.white_balance = true;
@@ -593,7 +588,7 @@ int main(int argc, char* argv[]) {
                 config.roi_pixel_xywh[0], config.roi_pixel_xywh[1],
                 config.roi_pixel_xywh[2], config.roi_pixel_xywh[3]);
             if (rkapp::preprocess::Preprocess::resolveRoiRect(
-                    coord_frame.size(), toLowerCopy(config.roi_mode) != "pixel", normalized_roi,
+                    coord_frame.size(), rkapp::common::toLowerCopy(config.roi_mode) != "pixel", normalized_roi,
                     pixel_roi, config.roi_clamp, config.roi_min_size, resolved_roi)) {
                 out.roi_rect = resolved_roi;
                 if (resolved_roi.x != 0 || resolved_roi.y != 0 ||
@@ -613,7 +608,7 @@ int main(int argc, char* argv[]) {
         }
 
         if (feature_flags.denoise) {
-            if (toLowerCopy(config.denoise_method) != "bilateral") {
+            if (rkapp::common::toLowerCopy(config.denoise_method) != "bilateral") {
                 LOGW("Unsupported denoise method '", config.denoise_method, "', using bilateral");
             }
             cv::Mat denoised = rkapp::preprocess::Preprocess::denoiseBilateral(
@@ -711,9 +706,16 @@ int main(int argc, char* argv[]) {
         (void)engine->infer(dummy);
     }
     
+    const std::string normalized_output_type = rkapp::common::toLowerCopy(config.output_type);
+    if (normalized_output_type != "tcp") {
+        LOGE("Unsupported output.type='", config.output_type,
+             "'. Only 'tcp' is implemented in this build.");
+        return 1;
+    }
+
     // Create output
     std::unique_ptr<rkapp::output::IOutput> output;
-    if (!json_output_file.empty() || config.output_type == "tcp") {
+    if (!json_output_file.empty() || normalized_output_type == "tcp") {
         output = std::make_unique<rkapp::output::TcpOutput>();
         
         std::string output_config = config.output_ip + ":" + std::to_string(config.output_port);

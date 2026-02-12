@@ -1,0 +1,194 @@
+# Docker Compose for dual-NIC network simulation
+# Simulates RK3588 board with dual Gigabit Ethernet (camera input + detection output)
+#
+# Services:
+#   - rk3588_simulator: Main detection app with dual network interfaces
+#   - camera_server: Simulates camera feed source
+#   - results_server: Receives detection results
+#   - monitor: Network monitoring (optional)
+#
+# Usage:
+#   docker compose -f docker/compose/dual-nic.yml up -d
+#   docker compose -f docker/compose/dual-nic.yml logs -f
+#   docker compose -f docker/compose/dual-nic.yml down
+
+version: '3.8'
+
+services:
+  # Main RK3588 simulator with detection inference
+  rk3588_simulator:
+    build:
+      context: ../..
+      dockerfile: docker/rk3588-runtime.Dockerfile
+    container_name: rk3588_detection
+    image: rk3588-detection:latest
+    hostname: rk3588-board
+
+    # Two networks: camera input + detection output
+    networks:
+      camera_network:
+        ipv4_address: 192.168.1.100
+      detection_network:
+        ipv4_address: 192.168.2.100
+
+    environment:
+      # Detection config
+      - MODEL_PATH=/app/artifacts/models/best.rknn
+      - CONF_THRESHOLD=0.5
+      - IOU_THRESHOLD=0.5
+      - INPUT_SIZE=416
+
+      # Camera input (network stream)
+      - CAMERA_HOST=192.168.1.101
+      - CAMERA_PORT=8554
+
+      # Detection output (results upload)
+      - RESULTS_HOST=192.168.2.101
+      - RESULTS_PORT=9000
+      - RESULTS_PROTOCOL=tcp
+
+    volumes:
+      - ../../artifacts:/app/artifacts:ro
+      - ../../config:/app/config:ro
+      - ../../apps:/app/apps:ro
+      - ../../tools:/app/tools:ro
+
+    # Resource limits (simulate RK3588: 16GB RAM, 6 CPU cores)
+    deploy:
+      resources:
+        limits:
+          cpus: '6'
+          memory: 4G
+        reservations:
+          cpus: '4'
+          memory: 2G
+
+    ports:
+      - "9000:9000"  # Detection results port
+      - "5000:5000"  # Health check endpoint
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+    depends_on:
+      camera_server:
+        condition: service_healthy
+      results_server:
+        condition: service_healthy
+
+  # Simulated camera feed server
+  camera_server:
+    image: python:3.10-slim
+    container_name: camera_server
+    hostname: camera-simulator
+    networks:
+      camera_network:
+        ipv4_address: 192.168.1.101
+
+    working_dir: /app
+    command: python3 /scripts/camera_simulator.py
+
+    volumes:
+      - ../../scripts:/scripts:ro
+      - ../../assets:/assets:ro
+      - ../../datasets/coco/calib_images:/data:ro
+
+    environment:
+      - STREAM_HOST=0.0.0.0
+      - STREAM_PORT=8554
+      - RESOLUTION=1920x1080
+      - FPS=30
+      - BITRATE=4000k
+
+    ports:
+      - "8554:8554"  # RTSP port
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "rtsp://127.0.0.1:8554/stream"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+  # Results collection server (detection output sink)
+  results_server:
+    image: python:3.10-slim
+    container_name: results_server
+    hostname: results-aggregator
+    networks:
+      detection_network:
+        ipv4_address: 192.168.2.101
+
+    working_dir: /app
+    command: python3 /scripts/results_receiver.py
+
+    volumes:
+      - ../../scripts:/scripts:ro
+      - ../../artifacts:/artifacts
+
+    environment:
+      - LISTEN_HOST=0.0.0.0
+      - LISTEN_PORT=9000
+      - RESULTS_DIR=/artifacts/detection_results
+
+    ports:
+      - "9001:9000"  # Expose results port
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:9000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+  # Network monitoring (optional)
+  monitor:
+    image: nicolaka/netshoot:latest
+    container_name: network_monitor
+    hostname: monitor
+    networks:
+      camera_network:
+        ipv4_address: 192.168.1.50
+      detection_network:
+        ipv4_address: 192.168.2.50
+
+    stdin_open: true
+    tty: true
+    command: /bin/bash
+
+    # Mount for capturing network traffic
+    volumes:
+      - ../../artifacts/pcap:/pcap
+
+    # Run privileged for network tools
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+
+    profiles: ["monitor"]  # Optional: docker-compose up --profile monitor
+
+# Networks
+networks:
+  camera_network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 192.168.1.0/24
+    driver_opts:
+      com.docker.network.driver.mtu: 1500
+
+  detection_network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 192.168.2.0/24
+    driver_opts:
+      com.docker.network.driver.mtu: 1500
+
+volumes:
+  results_data:
+    driver: local

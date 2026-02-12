@@ -7,7 +7,7 @@
 #include <iostream>
 #include <limits>
 #include <numeric>
-#include "log.hpp"
+#include "rkapp/common/log.hpp"
 
 // OpenMP for parallel NMS
 #if defined(_OPENMP)
@@ -110,11 +110,8 @@ std::vector<rkapp::infer::Detection> Postprocess::nms(
     constexpr float kEps = 1e-6f;
 
     // ========== Stage 1: Filter and pre-compute ==========
-    thread_local std::vector<BoxInfo> boxes;
-    boxes.clear();
-    if (boxes.capacity() < detections.size()) {
-        boxes.reserve(detections.size());
-    }
+    std::vector<BoxInfo> boxes;
+    boxes.reserve(detections.size());
 
     for (size_t idx = 0; idx < detections.size(); ++idx) {
         const auto& det = detections[idx];
@@ -183,23 +180,11 @@ std::vector<rkapp::infer::Detection> Postprocess::nms(
 
 #if RKAPP_HAS_NEON
     // Pre-extract coordinates into contiguous arrays for NEON
-    thread_local std::vector<float> all_x1;
-    thread_local std::vector<float> all_y1;
-    thread_local std::vector<float> all_x2;
-    thread_local std::vector<float> all_y2;
-    thread_local std::vector<float> all_area;
-    if (all_x1.capacity() < n) {
-        all_x1.reserve(n);
-        all_y1.reserve(n);
-        all_x2.reserve(n);
-        all_y2.reserve(n);
-        all_area.reserve(n);
-    }
-    all_x1.resize(n);
-    all_y1.resize(n);
-    all_x2.resize(n);
-    all_y2.resize(n);
-    all_area.resize(n);
+    std::vector<float> all_x1(n);
+    std::vector<float> all_y1(n);
+    std::vector<float> all_x2(n);
+    std::vector<float> all_y2(n);
+    std::vector<float> all_area(n);
     for (size_t i = 0; i < n; ++i) {
         all_x1[i] = boxes[i].x1;
         all_y1[i] = boxes[i].y1;
