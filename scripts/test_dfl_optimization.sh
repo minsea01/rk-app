@@ -4,18 +4,32 @@
 # 使用方法（在WSL执行）：
 #   cd ~/rk-app
 #   bash scripts/test_dfl_optimization.sh
+# 自定义板端路径示例：
+#   BOARD_USER=radxa BOARD_IP=192.168.1.100 BOARD_DIR=/data/rk-app \
+#   bash scripts/test_dfl_optimization.sh
 
-BOARD_IP="192.168.137.226"
-BOARD_USER="root"
+BOARD_IP="${BOARD_IP:-192.168.137.226}"
+BOARD_USER="${BOARD_USER:-root}"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LOCAL_BIN="${ROOT_DIR}/artifacts/bin/bench_dfl_opt"
-REMOTE_BIN_DIR="$HOME/rk-app/artifacts/bin"
+
+default_board_dir() {
+  if [[ "$BOARD_USER" == "root" ]]; then
+    echo "/root/rk-app"
+  else
+    echo "/home/${BOARD_USER}/rk-app"
+  fi
+}
+
+BOARD_DIR="${BOARD_DIR:-$(default_board_dir)}"
+REMOTE_BIN_DIR="${BOARD_DIR}/artifacts/bin"
 
 set -e
 
 echo "=================================================="
 echo "DFL优化一键测试流程"
 echo "=================================================="
+echo "目标板路径: ${BOARD_DIR}"
 
 # 步骤1: 交叉编译
 echo ""
@@ -25,14 +39,14 @@ bash scripts/build_dfl_bench_cross.sh
 # 步骤2: 传输到板端
 echo ""
 echo "[2/3] 传输到板端 (${BOARD_USER}@${BOARD_IP})..."
-ssh ${BOARD_USER}@${BOARD_IP} "mkdir -p ${REMOTE_BIN_DIR}"
+ssh "${BOARD_USER}@${BOARD_IP}" "mkdir -p \"${REMOTE_BIN_DIR}\""
 scp "${LOCAL_BIN}" "${BOARD_USER}@${BOARD_IP}:${REMOTE_BIN_DIR}/"
 
 # 步骤3: 板端运行
 echo ""
 echo "[3/3] 板端执行测试..."
 echo "=================================================="
-ssh ${BOARD_USER}@${BOARD_IP} "cd ~/rk-app && ./artifacts/bin/bench_dfl_opt"
+ssh "${BOARD_USER}@${BOARD_IP}" "cd \"${BOARD_DIR}\" && ./artifacts/bin/bench_dfl_opt"
 
 echo ""
 echo "=================================================="
