@@ -25,7 +25,6 @@ from apps.utils.yolo_post import (
     sigmoid,
 )
 
-
 # ============================================================================
 # decode_meta: pose metadata extensions
 # ============================================================================
@@ -52,9 +51,7 @@ class TestDecodeMetaPose:
 
     def test_normalize_detect_defaults(self):
         """Detection-only metadata should have None for task/num_keypoints."""
-        meta = normalize_decode_meta(
-            {"head": "dfl", "reg_max": 16, "num_classes": 80}
-        )
+        meta = normalize_decode_meta({"head": "dfl", "reg_max": 16, "num_classes": 80})
         assert meta["task"] is None
         assert meta["num_keypoints"] is None
 
@@ -326,9 +323,9 @@ class TestPostprocessYolov8Pose:
 
         # First keypoint: raw_x=0.5, raw_y=0.25, vis_logit=3.0
         kpt_base = 4 * reg_max + nc
-        pred[0, 0, kpt_base + 0] = 0.5   # raw_x
+        pred[0, 0, kpt_base + 0] = 0.5  # raw_x
         pred[0, 0, kpt_base + 1] = 0.25  # raw_y
-        pred[0, 0, kpt_base + 2] = 3.0   # visibility logit
+        pred[0, 0, kpt_base + 2] = 3.0  # visibility logit
 
         # Identity letterbox (no padding, no scaling)
         boxes, confs, class_ids, keypoints = postprocess_yolov8_pose(

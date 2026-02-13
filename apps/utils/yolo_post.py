@@ -565,9 +565,7 @@ def postprocess_yolov8_pose(
         - keypoints: (M, num_keypoints, 3) with (x, y, visibility) per keypoint
     """
     if preds.ndim != 3 or preds.shape[0] != 1:
-        raise ValueError(
-            f"Expected predictions shape (1, N, C), got {preds.shape}."
-        )
+        raise ValueError(f"Expected predictions shape (1, N, C), got {preds.shape}.")
     pred = preds[0]  # (N, C)
     n, c = pred.shape
 
@@ -581,9 +579,9 @@ def postprocess_yolov8_pose(
         )
 
     # Split channels
-    raw_box = pred[:, : 4 * reg_max]                          # (N, 64)
-    cls_logits = pred[:, 4 * reg_max : 4 * reg_max + nc]      # (N, 1)
-    raw_kpts = pred[:, 4 * reg_max + nc :]                     # (N, kpt_channels)
+    raw_box = pred[:, : 4 * reg_max]  # (N, 64)
+    cls_logits = pred[:, 4 * reg_max : 4 * reg_max + nc]  # (N, 1)
+    raw_kpts = pred[:, 4 * reg_max + nc :]  # (N, kpt_channels)
 
     # Decode DFL bbox distances
     dfl = dfl_decode(raw_box, reg_max=reg_max)  # (N, 4)
@@ -595,9 +593,7 @@ def postprocess_yolov8_pose(
         if alt.shape[0] == n:
             anchors = alt
         else:
-            raise ValueError(
-                f"Anchor count mismatch: preds={n}, anchors={anchors.shape[0]}"
-            )
+            raise ValueError(f"Anchor count mismatch: preds={n}, anchors={anchors.shape[0]}")
 
     # Bbox: ltrb to xyxy in input image coordinates
     cx, cy = anchors[:, 0], anchors[:, 1]
