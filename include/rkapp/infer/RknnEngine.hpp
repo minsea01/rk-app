@@ -27,6 +27,8 @@ struct ModelMeta {
   int output_index = -1;  // Optional override for multi-output models
   int num_classes = -1;   // Optional: explicit class count
   int has_objectness = -1;  // Optional: -1 unknown, 0 false, 1 true
+  std::string task{"detect"};  // "detect" | "pose"
+  int num_keypoints = 0;       // 17 for COCO pose, 0 for detection-only
 };
 
 class RknnEngine : public IInferEngine {

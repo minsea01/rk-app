@@ -7,11 +7,18 @@
 
 namespace rkapp::infer {
 
+struct Keypoint {
+    float x = 0.0f;         // x in original image coordinates
+    float y = 0.0f;         // y in original image coordinates
+    float visibility = 0.0f; // confidence [0-1]
+};
+
 struct Detection {
     float x, y, w, h;       // bbox in original image coordinates
     float confidence;       // confidence score [0-1]
     int class_id;          // class index
     std::string class_name; // class name
+    std::vector<Keypoint> keypoints;  // empty = pure detection, non-empty = pose
 };
 
 struct DecodeParams {
