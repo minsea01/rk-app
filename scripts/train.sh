@@ -16,6 +16,7 @@ Usage:
   train.sh --model <pt> --data <yaml> --epochs <n> --imgsz <n> --batch <n> [options]
 
 Core options:
+  --task <name>               YOLO task: detect, pose, segment (default: detect)
   --exp <yaml>                Experiment YAML (config/experiments/*.yaml)
   --set <k=v>                 Override key/value from --exp (repeatable)
   --profile <name>            One of: none, baseline, map90, extreme_stage1, extreme_stage2
@@ -71,6 +72,7 @@ EOF
 }
 
 # Defaults
+TASK="detect"
 PROFILE="baseline"
 WORKDIR=""
 MODEL=""
@@ -156,6 +158,7 @@ apply_key_value() {
   local source="$3"  # exp|set
 
   case "$key" in
+    task) TASK="$value" ;;
     profile) PROFILE="$value" ;;
     workdir) WORKDIR="$value" ;;
     model) MODEL="$value" ;;
@@ -445,6 +448,7 @@ while [[ $# -gt 0 ]]; do
     --exp) EXP_FILE="$2"; shift 2 ;;
     --set) SET_OVERRIDES+=("$2"); shift 2 ;;
     --profile) PROFILE="$2"; shift 2 ;;
+    --task) TASK="$2"; shift 2 ;;
     --workdir) WORKDIR="$2"; shift 2 ;;
     --model) MODEL="$2"; shift 2 ;;
     --data) DATA="$2"; shift 2 ;;
@@ -510,7 +514,7 @@ if ! command -v yolo >/dev/null 2>&1; then
 fi
 
 TRAIN_CMD=(
-  yolo detect train
+  yolo "$TASK" train
   "model=$MODEL"
   "data=$DATA"
   "epochs=$EPOCHS"
@@ -549,6 +553,7 @@ for kv in "${EXTRA_ARGS[@]}"; do
 done
 
 echo "========================================="
+echo "[train.sh] Task:    $TASK"
 echo "[train.sh] Profile: $PROFILE"
 if [[ -n "$EXP_FILE" ]]; then
   echo "[train.sh] Exp:     $EXP_FILE"
