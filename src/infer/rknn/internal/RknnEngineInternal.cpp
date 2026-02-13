@@ -133,7 +133,8 @@ std::vector<Detection> decodeAndPostprocess(const float* logits,
     return {};
   }
 
-  const int expected_c = use_dfl ? (4 * reg_max + cls_ch_meta)
+  const int kpt_ch = model_meta.num_keypoints > 0 ? model_meta.num_keypoints * 3 : 0;
+  const int expected_c = use_dfl ? (4 * reg_max + cls_ch_meta + kpt_ch)
                                  : (4 + cls_ch_meta + (model_meta.has_objectness == 1 ? 1 : 0));
   if (C != expected_c) {
     LOGE(log_tag, ": Output channels mismatch (C=", C, ", expected=", expected_c, ")");
@@ -241,6 +242,26 @@ std::vector<Detection> decodeAndPostprocess(const float* logits,
         d.confidence = best_conf;
         d.class_id = best_cls;
         d.class_name = "class_" + std::to_string(best_cls);
+
+        // Decode keypoints for pose models
+        if (model_meta.num_keypoints > 0) {
+          const int kp_base = 4 * reg_max + cls_ch;
+          d.keypoints.reserve(model_meta.num_keypoints);
+          for (int k = 0; k < model_meta.num_keypoints; ++k) {
+            float raw_x = logits[(kp_base + k * 3 + 0) * N + i];
+            float raw_y = logits[(kp_base + k * 3 + 1) * N + i];
+            float vis = sigmoid(logits[(kp_base + k * 3 + 2) * N + i]);
+            float kx = (layout.anchor_cx[i] + raw_x * 2.0f) * s;
+            float ky = (layout.anchor_cy[i] + raw_y * 2.0f) * s;
+            // Reverse letterbox transform to original image coordinates
+            kx = (kx - dx) / scale;
+            ky = (ky - dy) / scale;
+            kx = std::max(0.0f, std::min(kx, img_w));
+            ky = std::max(0.0f, std::min(ky, img_h));
+            d.keypoints.push_back({kx, ky, vis});
+          }
+        }
+
         clamp_det(d);
         dets.push_back(d);
       }
@@ -395,9 +416,30 @@ ModelMeta loadModelMeta(const std::string& model_path) {
     if (has_obj < 0) has_obj = parse_bool(sanitized, "has_obj");
     if (has_obj >= 0) meta.has_objectness = has_obj;
 
+    std::string task = parse_head(sanitized);  // reuse string parser
+    // parse_head only accepts "dfl"/"raw", so use a dedicated regex for "task"
+    {
+      std::smatch tm;
+      std::regex re_task(R"("task"\s*[:=]\s*"?([a-zA-Z]+)"?)");
+      if (std::regex_search(sanitized, tm, re_task) && tm.size() > 1) {
+        std::string t = rkapp::common::toLowerCopy(tm[1].str());
+        if (t == "detect" || t == "pose") {
+          meta.task = std::move(t);
+        }
+      }
+    }
+
+    int num_kpts = parse_int(sanitized, "num_keypoints");
+    if (num_kpts < 0) num_kpts = parse_int(sanitized, "kpt_shape");
+    if (num_kpts > 0) meta.num_keypoints = num_kpts;
+
     if (meta.reg_max > 0 || !meta.strides.empty() || !meta.head.empty() ||
-        meta.output_index >= 0 || meta.num_classes > 0 || meta.has_objectness >= 0) {
+        meta.output_index >= 0 || meta.num_classes > 0 || meta.has_objectness >= 0 ||
+        meta.task != "detect" || meta.num_keypoints > 0) {
       LOGI("RknnEngine: loaded decode metadata from ", path);
+      if (meta.num_keypoints > 0) {
+        LOGI("RknnEngine: pose model (", meta.num_keypoints, " keypoints)");
+      }
       break;
     }
   }
