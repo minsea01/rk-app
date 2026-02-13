@@ -63,6 +63,16 @@ struct PipelineConfig {
     // Performance tuning
     int buffer_pool_size = 4;        // Number of pre-allocated DMA buffers
     bool enable_profiling = false;   // Enable timing measurements
+
+    // Dual-model pose estimation (Phase 4)
+    // When pose_model_path is non-empty, a second engine is initialized
+    // for parallel pose inference on a dedicated NPU core subset.
+    std::string pose_model_path;          // Empty = pose disabled
+    int pose_input_size = 416;
+    float pose_conf_threshold = 0.5f;
+    float pose_iou_threshold = 0.45f;
+    uint32_t detection_core_mask = 0x3;   // Cores 0+1 (4 TOPS)
+    uint32_t pose_core_mask = 0x4;        // Core 2 (2 TOPS)
 };
 
 /**
