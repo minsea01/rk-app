@@ -1,18 +1,32 @@
 #!/bin/bash
 # 一键部署并执行板端benchmark测试
+# 自定义板端路径示例：
+#   BOARD_USER=radxa BOARD_IP=192.168.1.100 BOARD_DIR=/data/rk-app \
+#   bash scripts/run_board_benchmark.sh
 
-BOARD_IP="192.168.137.226"
-BOARD_USER="root"
-BOARD_DIR="~/rk-app"
+BOARD_IP="${BOARD_IP:-192.168.137.226}"
+BOARD_USER="${BOARD_USER:-root}"
+
+default_board_dir() {
+  if [[ "$BOARD_USER" == "root" ]]; then
+    echo "/root/rk-app"
+  else
+    echo "/home/${BOARD_USER}/rk-app"
+  fi
+}
+
+BOARD_DIR="${BOARD_DIR:-$(default_board_dir)}"
 
 set -e  # 遇到错误立即退出
 
 echo "正在部署并执行板端benchmark测试..."
 echo ""
+echo "目标板路径: ${BOARD_DIR}"
+echo ""
 
 # 传输文件并执行测试（只需要输入一次密码）
-ssh ${BOARD_USER}@${BOARD_IP} "bash -s" << 'ENDSSH'
-cd ~/rk-app
+ssh "${BOARD_USER}@${BOARD_IP}" "BOARD_DIR='${BOARD_DIR}' bash -s" << 'ENDSSH'
+cd "$BOARD_DIR"
 
 # 创建benchmark脚本
 cat > apps/benchmark_e2e_latency.py << 'EOF'
@@ -280,7 +294,7 @@ echo "开始执行端到端延时基准测试"
 echo "========================================"
 echo ""
 
-export PYTHONPATH=/root/rk-app:$PYTHONPATH
+export PYTHONPATH="${BOARD_DIR}:$PYTHONPATH"
 
 python3 apps/benchmark_e2e_latency.py \
   --model artifacts/models/yolo11n_416.rknn \
@@ -299,5 +313,5 @@ echo ""
 echo "========================================="
 echo "测试完成！可以查看板端结果："
 echo "  ssh ${BOARD_USER}@${BOARD_IP}"
-echo "  cat ~/rk-app/artifacts/e2e_latency_report.json"
+echo "  cat ${BOARD_DIR}/artifacts/e2e_latency_report.json"
 echo "========================================="
