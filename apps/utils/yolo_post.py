@@ -338,7 +338,7 @@ def nms(
 
 
 # Expose sigmoid for reuse by app
-__all__ = ["letterbox", "postprocess_yolov8", "nms", "sigmoid"]
+__all__ = ["letterbox", "postprocess_yolov8", "postprocess_yolov8_pose", "nms", "sigmoid"]
 
 # Thread-safe cache for stride maps to avoid recomputation
 _stride_map_cache: Dict[Tuple[int, Tuple[int, ...], int], np.ndarray] = {}
@@ -526,3 +526,156 @@ def postprocess_yolov8(
     boxes[:, 1::2] = boxes[:, 1::2].clip(0, h0)
 
     return boxes, confs, class_ids
+
+
+def postprocess_yolov8_pose(
+    preds: np.ndarray,
+    img_size: int,
+    orig_shape: Tuple[int, int],
+    ratio_pad: Tuple[float, Tuple[float, float]],
+    conf_thres: float = 0.25,
+    iou_thres: float = 0.45,
+    reg_max: int = 16,
+    strides: Tuple[int, ...] = (8, 16, 32),
+    num_keypoints: int = 17,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Post-process YOLOv8-pose model outputs.
+
+    YOLOv8-pose output layout per anchor (C channels):
+      [0 .. 4*reg_max)        DFL bbox regression
+      [4*reg_max]             person class score (logit)
+      [4*reg_max+1 .. end)    keypoints: num_keypoints * 3 (x, y, visibility)
+
+    Args:
+        preds: Model predictions, shape (1, N, 4*reg_max + 1 + num_keypoints*3)
+        img_size: Input image size used for inference
+        orig_shape: Original image shape (H, W) before letterbox
+        ratio_pad: Tuple of (ratio, (pad_w, pad_h)) from letterbox
+        conf_thres: Confidence threshold for filtering
+        iou_thres: IoU threshold for NMS
+        reg_max: DFL regression maximum value
+        strides: Feature map strides
+        num_keypoints: Number of keypoints (17 for COCO pose)
+
+    Returns:
+        Tuple of (boxes, confidences, class_ids, keypoints)
+        - boxes: (M, 4) in xyxy format, scaled to original image
+        - confidences: (M,) confidence scores
+        - class_ids: (M,) class indices (always 0 for single-class pose)
+        - keypoints: (M, num_keypoints, 3) with (x, y, visibility) per keypoint
+    """
+    if preds.ndim != 3 or preds.shape[0] != 1:
+        raise ValueError(
+            f"Expected predictions shape (1, N, C), got {preds.shape}."
+        )
+    pred = preds[0]  # (N, C)
+    n, c = pred.shape
+
+    kpt_channels = num_keypoints * 3
+    nc = 1  # pose model: single person class
+    expected_c = 4 * reg_max + nc + kpt_channels
+    if c != expected_c:
+        raise ValueError(
+            f"Channel mismatch: got {c}, expected {expected_c} "
+            f"(4*{reg_max} + {nc} + {num_keypoints}*3)"
+        )
+
+    # Split channels
+    raw_box = pred[:, : 4 * reg_max]                          # (N, 64)
+    cls_logits = pred[:, 4 * reg_max : 4 * reg_max + nc]      # (N, 1)
+    raw_kpts = pred[:, 4 * reg_max + nc :]                     # (N, kpt_channels)
+
+    # Decode DFL bbox distances
+    dfl = dfl_decode(raw_box, reg_max=reg_max)  # (N, 4)
+
+    # Anchors
+    anchors = make_anchors(list(strides), img_size)  # (N, 2)
+    if anchors.shape[0] != n:
+        alt = make_anchors(list(strides)[::-1], img_size)
+        if alt.shape[0] == n:
+            anchors = alt
+        else:
+            raise ValueError(
+                f"Anchor count mismatch: preds={n}, anchors={anchors.shape[0]}"
+            )
+
+    # Bbox: ltrb to xyxy in input image coordinates
+    cx, cy = anchors[:, 0], anchors[:, 1]
+    s_map = _get_stride_map(n, tuple(strides), img_size)
+    l = dfl[:, 0] * s_map
+    t = dfl[:, 1] * s_map
+    r = dfl[:, 2] * s_map
+    b = dfl[:, 3] * s_map
+    x1 = cx - l
+    y1 = cy - t
+    x2 = cx + r
+    y2 = cy + b
+
+    # Person scores
+    confs: np.ndarray = sigmoid(cls_logits[:, 0])
+    class_ids: np.ndarray = np.zeros(n, dtype=np.int64)
+
+    # Decode keypoints in input image coordinates
+    raw_kpts = raw_kpts.reshape(n, num_keypoints, 3)  # (N, 17, 3)
+    kpt_x = (cx[:, None] + raw_kpts[:, :, 0] * 2.0) * s_map[:, None]
+    kpt_y = (cy[:, None] + raw_kpts[:, :, 1] * 2.0) * s_map[:, None]
+    kpt_vis = sigmoid(raw_kpts[:, :, 2])
+    keypoints_all = np.stack([kpt_x, kpt_y, kpt_vis], axis=-1)  # (N, 17, 3)
+
+    # Confidence filter
+    mask = confs >= conf_thres
+    boxes = np.stack([x1, y1, x2, y2], axis=1)[mask]
+    confs = confs[mask]
+    class_ids = class_ids[mask]
+    keypoints_all = keypoints_all[mask]
+
+    # Early return
+    if len(boxes) == 0:
+        return (
+            np.empty((0, 4), dtype=np.float32),
+            np.array([], dtype=np.float32),
+            np.array([], dtype=np.int64),
+            np.empty((0, num_keypoints, 3), dtype=np.float32),
+        )
+
+    # NMS
+    try:
+        keep = nms(boxes, confs, iou_thres=iou_thres)
+        boxes = boxes[keep]
+        confs = confs[keep]
+        class_ids = class_ids[keep]
+        keypoints_all = keypoints_all[keep]
+    except ValueError as e:
+        warnings.warn(f"NMS failed: {e}. Returning empty detections.")
+        return (
+            np.empty((0, 4), dtype=np.float32),
+            np.array([], dtype=np.float32),
+            np.array([], dtype=np.int64),
+            np.empty((0, num_keypoints, 3), dtype=np.float32),
+        )
+
+    # Scale back to original image coordinates
+    scale_ratio, pad_wh = ratio_pad
+    pad_w, pad_h = pad_wh
+
+    if scale_ratio < MIN_VALID_RATIO:
+        raise ValueError(f"Invalid scale ratio {scale_ratio}.")
+
+    h0, w0 = orig_shape
+    if h0 < MIN_VALID_DIMENSION or w0 < MIN_VALID_DIMENSION:
+        raise ValueError(f"Invalid original shape {orig_shape}.")
+
+    # Boxes
+    boxes[:, [0, 2]] -= pad_w
+    boxes[:, [1, 3]] -= pad_h
+    boxes /= scale_ratio
+    boxes[:, 0::2] = boxes[:, 0::2].clip(0, w0)
+    boxes[:, 1::2] = boxes[:, 1::2].clip(0, h0)
+
+    # Keypoints
+    keypoints_all[:, :, 0] = (keypoints_all[:, :, 0] - pad_w) / scale_ratio
+    keypoints_all[:, :, 1] = (keypoints_all[:, :, 1] - pad_h) / scale_ratio
+    keypoints_all[:, :, 0] = keypoints_all[:, :, 0].clip(0, w0)
+    keypoints_all[:, :, 1] = keypoints_all[:, :, 1].clip(0, h0)
+
+    return boxes, confs, class_ids, keypoints_all

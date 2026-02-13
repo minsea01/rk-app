@@ -57,6 +57,15 @@ def _coerce_strides(value: Any) -> Optional[Tuple[int, ...]]:
     return tuple(parsed)
 
 
+def _coerce_task(value: Any) -> Optional[str]:
+    if value is None:
+        return None
+    text = str(value).strip().lower()
+    if text in {"detect", "pose", "segment"}:
+        return text
+    return None
+
+
 def normalize_decode_meta(meta: Optional[Mapping[str, Any]]) -> DecodeMeta:
     """Normalize decode metadata to canonical keys with validated values."""
     out: DecodeMeta = {
@@ -65,6 +74,8 @@ def normalize_decode_meta(meta: Optional[Mapping[str, Any]]) -> DecodeMeta:
         "strides": None,
         "num_classes": None,
         "has_objectness": None,
+        "task": None,
+        "num_keypoints": None,
     }
     if not isinstance(meta, Mapping):
         return out
@@ -95,13 +106,31 @@ def normalize_decode_meta(meta: Optional[Mapping[str, Any]]) -> DecodeMeta:
     if strides is not None:
         out["strides"] = strides
 
+    task = _coerce_task(meta.get("task"))
+    if task is not None:
+        out["task"] = task
+
+    num_kpts = _coerce_int(meta.get("num_keypoints"))
+    if num_kpts is None:
+        num_kpts = _coerce_int(meta.get("kpt_shape"))
+    if num_kpts is not None and num_kpts > 0:
+        out["num_keypoints"] = num_kpts
+
     return out
 
 
 def _has_any(meta: DecodeMeta) -> bool:
     return any(
         meta.get(k) is not None
-        for k in ("head", "reg_max", "strides", "num_classes", "has_objectness")
+        for k in (
+            "head",
+            "reg_max",
+            "strides",
+            "num_classes",
+            "has_objectness",
+            "task",
+            "num_keypoints",
+        )
     )
 
 
@@ -169,6 +198,16 @@ def _parse_text_meta(content: str) -> DecodeMeta:
     if strides is not None:
         raw["strides"] = strides
 
+    task = find_str("task")
+    if task is not None:
+        raw["task"] = task
+
+    for key in ("num_keypoints", "kpt_shape"):
+        val = find_int(key)
+        if val is not None:
+            raw["num_keypoints"] = val
+            break
+
     return normalize_decode_meta(raw)
 
 
@@ -230,9 +269,13 @@ def resolve_head(
     reg_max = meta["reg_max"]
     num_classes = meta["num_classes"]
     has_obj = meta["has_objectness"]
+    num_kpts = meta["num_keypoints"]
+
+    # Subtract keypoint channels for pose models before checking DFL
+    kpt_ch = num_kpts * 3 if num_kpts is not None and num_kpts > 0 else 0
 
     if reg_max is not None:
-        cls_ch = channels - 4 * reg_max
+        cls_ch = channels - 4 * reg_max - kpt_ch
         dfl_candidate = cls_ch > 0 and (num_classes is None or cls_ch == num_classes)
 
     if has_obj is not None:
@@ -252,13 +295,24 @@ def resolve_head(
 def resolve_dfl_layout(
     channels: int, decode_meta: Optional[Mapping[str, Any]]
 ) -> Optional[Tuple[int, Tuple[int, ...]]]:
-    """Resolve (reg_max, strides) for DFL decode."""
+    """Resolve (reg_max, strides) for DFL decode.
+
+    For pose models (num_keypoints > 0), the channel layout is:
+      channels = 4*reg_max + num_classes + num_keypoints*3
+    The keypoint channels are subtracted before validating num_classes.
+    """
     meta = normalize_decode_meta(decode_meta)
     reg_max = meta["reg_max"]
     num_classes = meta["num_classes"]
+    num_kpts = meta["num_keypoints"]
+
+    # Subtract keypoint channels if present (pose model)
+    effective_channels = channels
+    if num_kpts is not None and num_kpts > 0:
+        effective_channels = channels - num_kpts * 3
 
     if reg_max is None and num_classes is not None:
-        remain = channels - num_classes
+        remain = effective_channels - num_classes
         if remain > 0 and remain % 4 == 0:
             reg_max = remain // 4
     if reg_max is None:
@@ -266,7 +320,7 @@ def resolve_dfl_layout(
     if reg_max <= 0:
         return None
 
-    cls_ch = channels - 4 * reg_max
+    cls_ch = effective_channels - 4 * reg_max
     if cls_ch <= 0:
         return None
     if num_classes is not None and cls_ch != num_classes:

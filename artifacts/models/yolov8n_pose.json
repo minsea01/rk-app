@@ -1,0 +1,8 @@
+{
+  "head": "dfl",
+  "reg_max": 16,
+  "strides": [8, 16, 32],
+  "num_classes": 1,
+  "task": "pose",
+  "num_keypoints": 17
+}
