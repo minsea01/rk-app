@@ -1,0 +1,6 @@
+{
+  "head": "dfl",
+  "reg_max": 16,
+  "strides": [8, 16, 32],
+  "num_classes": 10
+}

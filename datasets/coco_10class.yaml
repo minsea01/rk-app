@@ -1,0 +1,27 @@
+# COCO 10-class subset for RK3588 edge deployment
+# Focused on high-value urban/industrial surveillance classes
+#
+# Usage:
+#   yolo detect train model=yolov8n.pt data=datasets/coco_10class.yaml \
+#     imgsz=416 epochs=100 batch=64 freeze=10 amp=True
+#
+# Original COCO IDs -> contiguous 0-9 mapping is handled by Ultralytics
+# when 'classes' filter is NOT used (we define our own dataset yaml instead).
+
+path: datasets/coco  # dataset root (adjust for your environment)
+train: images/train2017
+val: images/val2017
+
+# 10 classes selected for urban/industrial edge deployment
+# COCO class IDs: 0,1,2,3,5,7,14,15,16,24
+names:
+  0: person
+  1: bicycle
+  2: car
+  3: motorcycle
+  4: bus
+  5: truck
+  6: bird
+  7: cat
+  8: dog
+  9: backpack
