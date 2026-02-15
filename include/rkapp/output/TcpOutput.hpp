@@ -32,17 +32,19 @@ private:
   };
 
   bool setup_socket();
+  bool setup_socket_locked();
   bool attemptReconnect();
   bool flushBacklog();
   bool sendBuffer(QueuedPayload& payload);
   void closeSocket();
+  void closeSocketLocked();
 
   std::string server_ip_ = "127.0.0.1";
   int server_port_ = 9000;
   int socket_fd_ = -1;
   struct sockaddr_in server_addr_{};
   std::atomic<bool> tcp_connected_{false};
-  bool is_opened_ = false;
+  std::atomic<bool> is_opened_{false};
   bool endpoint_configured_ = false;
 
   // Optional NIC/source binding
@@ -65,6 +67,8 @@ private:
   std::deque<QueuedPayload> backlog_;
   size_t max_backlog_ = 64;
   mutable std::mutex backlog_mtx_;
+  mutable std::mutex socket_mtx_;
+  mutable std::mutex flush_mtx_;
 
   // Statistics for monitoring
   std::atomic<uint64_t> dropped_frames_{0};

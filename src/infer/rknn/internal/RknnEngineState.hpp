@@ -22,6 +22,7 @@ struct RknnEngine::Impl {
   rknn_tensor_attr out_attr{};
   rknn_tensor_format input_fmt = RKNN_TENSOR_NHWC;
   rknn_tensor_type input_type = RKNN_TENSOR_UINT8;
+  // Output layout fields are initialized once in init() and treated as immutable afterwards.
   int out_elems = 0;
   int out_c = 0;
   int out_n = 0;

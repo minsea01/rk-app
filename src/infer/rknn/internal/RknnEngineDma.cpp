@@ -129,19 +129,20 @@ std::vector<Detection> RknnEngine::inferDmaBuf(
     return infer(bgr);
   };
 
-#if !defined(RKAPP_RKNN_DMA_FD_INPUT)
-  static std::once_flag warn_once;
-  std::call_once(warn_once, []() {
-    LOGW("RknnEngine::inferDmaBuf: DMA-FD input disabled; enable ENABLE_RKNN_DMA_FD to use it");
-  });
-  return fallback_to_copy();
-#endif
-
+#if defined(RKAPP_RKNN_DMA_FD_INPUT)
   if (input.width() != input_size_snapshot || input.height() != input_size_snapshot) {
     LOGE("RknnEngine::inferDmaBuf: Input size mismatch. Expected ", input_size_snapshot, "x",
          input_size_snapshot, ", got ", input.width(), "x", input.height());
     return {};
   }
+
+  const int out_n_snapshot = impl->out_n;
+  const int out_c_snapshot = impl->out_c;
+  const int out_elems_snapshot = impl->out_elems;
+  const int out_n_dims_snapshot = impl->out_attr.n_dims;
+  const int out_dim1_snapshot = impl->out_attr.dims[1];
+  const int out_dim2_snapshot = impl->out_attr.dims[2];
+  const uint32_t out_index_snapshot = impl->out_attr.index;
 
   if (impl->input_fmt != RKNN_TENSOR_NHWC || impl->input_type != RKNN_TENSOR_UINT8) {
     LOGW("RknnEngine::inferDmaBuf: Zero-copy requires NHWC UINT8, falling back to copy");
@@ -219,7 +220,7 @@ std::vector<Detection> RknnEngine::inferDmaBuf(
     return {};
   }
 
-  const size_t logits_elems = static_cast<size_t>(impl->out_elems);
+  const size_t logits_elems = static_cast<size_t>(out_elems_snapshot);
   thread_local std::vector<float> logits_local;
   logits_local.resize(logits_elems);
 
@@ -228,7 +229,7 @@ std::vector<Detection> RknnEngine::inferDmaBuf(
   out.is_prealloc = 1;
   out.buf = logits_local.data();
   out.size = logits_local.size() * sizeof(float);
-  out.index = impl->out_attr.index;
+  out.index = out_index_snapshot;
   ret = rknn_outputs_get(impl->ctx, 1, &out, nullptr);
 
 #if defined(RKAPP_RKNN_IO_MEM)
@@ -249,8 +250,8 @@ std::vector<Detection> RknnEngine::inferDmaBuf(
   lock.unlock();
 
   auto nms_result = rknn_internal::decodeOutputAndNms(
-      logits_local.data(), impl->out_n, impl->out_c, impl->out_elems, impl->out_attr.n_dims,
-      impl->out_attr.dims[1], impl->out_attr.dims[2], num_classes, model_meta_snapshot,
+      logits_local.data(), out_n_snapshot, out_c_snapshot, out_elems_snapshot, out_n_dims_snapshot,
+      out_dim1_snapshot, out_dim2_snapshot, num_classes, model_meta_snapshot,
       decode_params_snapshot, original_size, letterbox_info, &impl->dfl_layout,
       "RknnEngine::inferDmaBuf");
 
@@ -261,6 +262,13 @@ std::vector<Detection> RknnEngine::inferDmaBuf(
     }
   }
   return nms_result;
+#else
+  static std::once_flag warn_once;
+  std::call_once(warn_once, []() {
+    LOGW("RknnEngine::inferDmaBuf: DMA-FD input disabled; enable ENABLE_RKNN_DMA_FD to use it");
+  });
+  return fallback_to_copy();
+#endif
 
 #else
   {

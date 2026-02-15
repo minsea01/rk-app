@@ -284,7 +284,6 @@ bool MppSource::open(const std::string& uri) {
     }
 
     // Configure MPP for split mode (feed complete frames)
-    MppParam param = nullptr;
     int need_split = 1;
     ret = impl_->mpi->control(impl_->mpp_ctx, MPP_DEC_SET_PARSER_SPLIT_MODE, &need_split);
     if (ret != MPP_OK) {

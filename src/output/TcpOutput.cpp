@@ -9,7 +9,6 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <iostream>
 #include <net/if.h>
 #include <netinet/tcp.h>
 #include <sstream>
@@ -177,15 +176,16 @@ bool TcpOutput::open(const std::string& config) {
             }
         }
 
-        is_opened_ = endpoint_configured_ || enable_file_output_;
-        if (is_opened_) {
+        is_opened_.store(endpoint_configured_ || enable_file_output_);
+        if (is_opened_.load()) {
+            std::lock_guard<std::mutex> socket_lock(socket_mtx_);
             last_reconnect_attempt_ = std::chrono::steady_clock::now() - reconnect_backoff_;
         }
-        return is_opened_;
+        return is_opened_.load();
 }
 
 bool TcpOutput::send(const FrameResult& result) {
-        if (!is_opened_) {
+        if (!is_opened_.load()) {
             return false;
         }
 
@@ -234,17 +234,28 @@ bool TcpOutput::send(const FrameResult& result) {
             }
         }
 
-        if (!tcp_connected_.load()) {
-            attemptReconnect();
+        bool delivered = false;
+        {
+            // Ensure only one sender drains backlog at a time.
+            std::lock_guard<std::mutex> flush_lock(flush_mtx_);
+            if (!tcp_connected_.load()) {
+                attemptReconnect();
+            }
+            delivered = tcp_connected_.load() && flushBacklog();
         }
-
-        bool delivered = tcp_connected_.load() && flushBacklog();
 
         return delivered || (enable_file_output_ && file_output_.is_open());
 }
 
 void TcpOutput::close() {
-        closeSocket();
+        {
+            std::lock_guard<std::mutex> socket_lock(socket_mtx_);
+            closeSocketLocked();
+            has_reconnect_attempt_ = false;
+            last_reconnect_attempt_ = {};
+            reconnect_backoff_ = reconnect_backoff_initial_;
+            is_opened_.store(false);
+        }
 
         if (file_output_.is_open()) {
             file_output_.close();
@@ -254,13 +265,9 @@ void TcpOutput::close() {
             std::lock_guard<std::mutex> lock(backlog_mtx_);
             backlog_.clear();
         }
-        has_reconnect_attempt_ = false;
-        last_reconnect_attempt_ = {};
-        reconnect_backoff_ = reconnect_backoff_initial_;
-        is_opened_ = false;
 }
 
-bool TcpOutput::isOpened() const { return is_opened_; }
+bool TcpOutput::isOpened() const { return is_opened_.load(); }
 
 OutputType TcpOutput::getType() const { return OutputType::TCP; }
 
@@ -272,10 +279,16 @@ size_t TcpOutput::backlogDepth() const {
 }
 
 std::chrono::milliseconds TcpOutput::reconnectBackoff() const {
+        std::lock_guard<std::mutex> lock(socket_mtx_);
         return reconnect_backoff_;
 }
 
 void TcpOutput::closeSocket() {
+        std::lock_guard<std::mutex> lock(socket_mtx_);
+        closeSocketLocked();
+}
+
+void TcpOutput::closeSocketLocked() {
         if (socket_fd_ >= 0) {
             ::close(socket_fd_);
             socket_fd_ = -1;
@@ -284,11 +297,16 @@ void TcpOutput::closeSocket() {
 }
 
 bool TcpOutput::setup_socket() {
+        std::lock_guard<std::mutex> lock(socket_mtx_);
+        return setup_socket_locked();
+}
+
+bool TcpOutput::setup_socket_locked() {
         if (!endpoint_configured_) {
             return false;
         }
 
-        closeSocket();
+        closeSocketLocked();
 
         socket_fd_ = ::socket(AF_INET, SOCK_STREAM, 0);
         if (socket_fd_ < 0) {
@@ -339,7 +357,7 @@ bool TcpOutput::setup_socket() {
         server_addr_.sin_port = htons(static_cast<uint16_t>(server_port_));
         if (inet_pton(AF_INET, server_ip_.c_str(), &server_addr_.sin_addr) <= 0) {
             LOGE("TcpOutput: invalid server ip ", server_ip_);
-            closeSocket();
+            closeSocketLocked();
             return false;
         }
 
@@ -347,7 +365,7 @@ bool TcpOutput::setup_socket() {
         if (conn_res != 0 && errno != EINPROGRESS) {
             LOGW("TcpOutput: connect to ", server_ip_, ":", server_port_, " failed (errno=", errno, ")");
             tcp_connected_.store(false);
-            closeSocket();
+            closeSocketLocked();
             return false;
         }
 
@@ -376,7 +394,7 @@ bool TcpOutput::setup_socket() {
 
         if (!connected) {
             tcp_connected_.store(false);
-            closeSocket();
+            closeSocketLocked();
             return false;
         }
 
@@ -397,6 +415,7 @@ bool TcpOutput::setup_socket() {
 
 bool TcpOutput::attemptReconnect() {
         const auto now = std::chrono::steady_clock::now();
+        std::lock_guard<std::mutex> lock(socket_mtx_);
         if (has_reconnect_attempt_ &&
             now - last_reconnect_attempt_ < reconnect_backoff_) {
             return tcp_connected_.load();
@@ -404,8 +423,7 @@ bool TcpOutput::attemptReconnect() {
 
         last_reconnect_attempt_ = now;
         has_reconnect_attempt_ = true;
-        if (setup_socket()) {
-            flushBacklog();
+        if (setup_socket_locked()) {
             return true;
         }
         reconnect_backoff_ = std::min(reconnect_backoff_ * 2, reconnect_backoff_max_);
@@ -447,27 +465,36 @@ bool TcpOutput::flushBacklog() {
 }
 
 bool TcpOutput::sendBuffer(QueuedPayload& payload) {
-        if (!tcp_connected_.load()) return false;
-
         while (payload.offset < payload.data.size()) {
-            const ssize_t sent = ::send(socket_fd_,
-                                        payload.data.data() + payload.offset,
-                                        payload.data.size() - payload.offset,
-                                        MSG_NOSIGNAL);
+            ssize_t sent = -1;
+            int send_errno = 0;
+            {
+                std::lock_guard<std::mutex> lock(socket_mtx_);
+                if (!tcp_connected_.load() || socket_fd_ < 0) {
+                    return false;
+                }
+                sent = ::send(socket_fd_,
+                              payload.data.data() + payload.offset,
+                              payload.data.size() - payload.offset,
+                              MSG_NOSIGNAL);
+                if (sent < 0) {
+                    send_errno = errno;
+                }
+            }
             if (sent > 0) {
                 payload.offset += static_cast<size_t>(sent);
                 continue;
             }
 
-            if (sent < 0 && errno == EINTR) {
+            if (sent < 0 && send_errno == EINTR) {
                 continue;
             }
 
-            if (sent < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+            if (sent < 0 && (send_errno == EAGAIN || send_errno == EWOULDBLOCK)) {
                 return false;
             }
 
-            LOGW("TcpOutput: send failed (errno=", errno, ")");
+            LOGW("TcpOutput: send failed (errno=", send_errno, ")");
             closeSocket();
             return false;
         }

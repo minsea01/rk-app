@@ -261,6 +261,7 @@ bool RknnEngine::init(const std::string& model_path, int img_size) {
     return false;
   }
 
+  const int kpt_ch = model_meta.num_keypoints > 0 ? model_meta.num_keypoints * 3 : 0;
   int expected_c = 0;
   if (model_meta.head == "dfl") {
     if (model_meta.reg_max <= 0 || model_meta.strides.empty()) {
@@ -268,7 +269,7 @@ bool RknnEngine::init(const std::string& model_path, int img_size) {
       cleanup();
       return false;
     }
-    expected_c = 4 * model_meta.reg_max + model_meta.num_classes;
+    expected_c = 4 * model_meta.reg_max + model_meta.num_classes + kpt_ch;
   } else {
     if (model_meta.has_objectness < 0) {
       LOGE("RknnEngine: RAW decode requires has_objectness metadata");
@@ -309,11 +310,6 @@ bool RknnEngine::init(const std::string& model_path, int img_size) {
 
   const bool expect_dfl = (model_meta.head == "dfl");
   if (expect_dfl) {
-    if (model_meta.reg_max <= 0 || model_meta.strides.empty()) {
-      LOGE("RknnEngine: DFL decode requires reg_max and strides metadata");
-      cleanup();
-      return false;
-    }
     if (model_meta.reg_max > rknn_internal::kMaxSupportedRegMax) {
       LOGE("RknnEngine: reg_max=", model_meta.reg_max,
            " exceeds max (", rknn_internal::kMaxSupportedRegMax, ")");
@@ -382,6 +378,13 @@ std::vector<Detection> RknnEngine::inferPreprocessed(
          preprocessed_image.rows);
     return {};
   }
+  const int out_n_snapshot = impl->out_n;
+  const int out_c_snapshot = impl->out_c;
+  const int out_elems_snapshot = impl->out_elems;
+  const int out_n_dims_snapshot = impl->out_attr.n_dims;
+  const int out_dim1_snapshot = impl->out_attr.dims[1];
+  const int out_dim2_snapshot = impl->out_attr.dims[2];
+  const uint32_t out_index_snapshot = impl->out_attr.index;
 
   cv::Mat rgb =
       rkapp::preprocess::Preprocess::convertColor(preprocessed_image, cv::COLOR_BGR2RGB);
@@ -442,7 +445,7 @@ std::vector<Detection> RknnEngine::inferPreprocessed(
   out.is_prealloc = 1;
   out.buf = logits_local.data();
   out.size = logits_local.size() * sizeof(float);
-  out.index = impl->out_attr.index;
+  out.index = out_index_snapshot;
   ret = rknn_outputs_get(impl->ctx, 1, &out, nullptr);
   if (ret != RKNN_SUCC) {
     LOGE("RknnEngine: rknn_outputs_get failed: ", ret);
@@ -454,8 +457,8 @@ std::vector<Detection> RknnEngine::inferPreprocessed(
   lock.unlock();
 
   auto nms_result = rknn_internal::decodeOutputAndNms(
-      logits_local.data(), impl->out_n, impl->out_c, impl->out_elems, impl->out_attr.n_dims,
-      impl->out_attr.dims[1], impl->out_attr.dims[2], num_classes, model_meta_snapshot,
+      logits_local.data(), out_n_snapshot, out_c_snapshot, out_elems_snapshot, out_n_dims_snapshot,
+      out_dim1_snapshot, out_dim2_snapshot, num_classes, model_meta_snapshot,
       decode_params_snapshot, original_size, letterbox_info, &impl->dfl_layout, "RknnEngine");
 
   {
@@ -574,6 +577,11 @@ int RknnEngine::num_classes() const {
 bool RknnEngine::has_objness() const {
   std::lock_guard<std::mutex> state_lock(state_mutex_);
   return has_objness_;
+}
+
+std::vector<std::string> RknnEngine::class_names() const {
+  std::lock_guard<std::mutex> state_lock(state_mutex_);
+  return class_names_;
 }
 
 }  // namespace rkapp::infer

@@ -85,19 +85,6 @@ bool roiModeIsNormalized(const std::string& mode) {
     return rkapp::common::toLowerCopy(mode) != "pixel";
 }
 
-cv::Mat buildGammaLut(float gamma) {
-    if (gamma <= 0.0f || std::fabs(gamma - 1.0f) < 1e-6f) {
-        return {};
-    }
-    cv::Mat lut(1, 256, CV_8U);
-    for (int i = 0; i < 256; ++i) {
-        const double normalized = static_cast<double>(i) / 255.0;
-        const double corrected = std::pow(normalized, static_cast<double>(gamma));
-        lut.at<uint8_t>(0, i) = cv::saturate_cast<uint8_t>(std::round(corrected * 255.0));
-    }
-    return lut;
-}
-
 void applyRoiOffsetAndClip(std::vector<infer::Detection>& detections,
                            const cv::Rect& roi, cv::Size frame_size) {
     if (frame_size.width <= 0 || frame_size.height <= 0) {
@@ -207,8 +194,6 @@ struct DetectionPipeline::Impl {
     cv::Mat undistort_map2;
     cv::Size undistort_size{0, 0};
     PreprocessFeatureFlags preprocess_flags;
-    cv::Mat gamma_lut_cache;
-    float gamma_lut_value{std::numeric_limits<float>::quiet_NaN()};
 
     void updateFps() {
         frames_since_update++;
@@ -258,8 +243,6 @@ bool DetectionPipeline::init(const PipelineConfig& config) {
     impl_->undistort_map2.release();
     impl_->undistort_size = {0, 0};
     impl_->preprocess_flags = resolveFeatureFlags(config);
-    impl_->gamma_lut_cache.release();
-    impl_->gamma_lut_value = std::numeric_limits<float>::quiet_NaN();
 
     if (config.enable_undistort) {
         if (config.calibration_file.empty()) {
@@ -294,17 +277,21 @@ bool DetectionPipeline::init(const PipelineConfig& config) {
         return false;
     }
 
+#if RKAPP_WITH_RKNN
+    impl_->rknn_engine = dynamic_cast<infer::RknnEngine*>(impl_->engine.get());
+    if (impl_->rknn_engine) {
+        const uint32_t det_core_mask = config.use_npu_multicore ? config.detection_core_mask : 0;
+        impl_->rknn_engine->setCoreMask(det_core_mask);
+    }
+#else
+    impl_->rknn_engine = nullptr;
+#endif
+
     // Initialize engine
     if (!impl_->engine->init(config.model_path, config.input_size)) {
         LOGE("DetectionPipeline: Failed to initialize model: ", config.model_path);
         return false;
     }
-
-#if RKAPP_WITH_RKNN
-    impl_->rknn_engine = dynamic_cast<infer::RknnEngine*>(impl_->engine.get());
-#else
-    impl_->rknn_engine = nullptr;
-#endif
 
     // Set decode parameters
     infer::DecodeParams decode_params;
@@ -349,6 +336,14 @@ bool DetectionPipeline::init(const PipelineConfig& config) {
         pose_cfg.input_size = config.pose_input_size;
 
         impl_->pose_engine = createEngine(pose_cfg);
+        if (impl_->pose_engine) {
+            impl_->rknn_pose_engine =
+                dynamic_cast<infer::RknnEngine*>(impl_->pose_engine.get());
+            if (impl_->rknn_pose_engine) {
+                const uint32_t pose_core_mask = config.use_npu_multicore ? config.pose_core_mask : 0;
+                impl_->rknn_pose_engine->setCoreMask(pose_core_mask);
+            }
+        }
         if (impl_->pose_engine &&
             impl_->pose_engine->init(config.pose_model_path, config.pose_input_size)) {
 
@@ -359,17 +354,6 @@ bool DetectionPipeline::init(const PipelineConfig& config) {
             pose_decode.max_boxes = config.max_detections;
             impl_->pose_engine->setDecodeParams(pose_decode);
 
-            impl_->rknn_pose_engine =
-                dynamic_cast<infer::RknnEngine*>(impl_->pose_engine.get());
-
-            // Assign dedicated NPU cores to each engine
-            if (impl_->rknn_pose_engine) {
-                impl_->rknn_pose_engine->setCoreMask(config.pose_core_mask);
-            }
-            if (impl_->rknn_engine) {
-                impl_->rknn_engine->setCoreMask(config.detection_core_mask);
-            }
-
             impl_->pose_engine->warmup();
             impl_->dual_model_enabled = true;
             LOGI("DetectionPipeline: Dual-model pose enabled");
@@ -379,6 +363,7 @@ bool DetectionPipeline::init(const PipelineConfig& config) {
         } else {
             LOGW("DetectionPipeline: Failed to init pose model: ", config.pose_model_path);
             impl_->pose_engine.reset();
+            impl_->rknn_pose_engine = nullptr;
         }
     }
 #endif
@@ -425,8 +410,10 @@ std::optional<PipelineResult> DetectionPipeline::next() {
     }
 
     auto result = process(frame.mat);
-    result.timing.capture_us = microsecondsSince(capture_start) - result.timing.total_us;
-    result.timing.total_us += result.timing.capture_us;
+    const int64_t elapsed_from_capture_start = microsecondsSince(capture_start);
+    result.timing.capture_us = std::max<int64_t>(
+        0, elapsed_from_capture_start - result.timing.total_us);
+    result.timing.total_us = elapsed_from_capture_start;
     result.frame_id = impl_->frame_counter++;
 
     impl_->updateFps();
@@ -534,18 +521,11 @@ PipelineResult DetectionPipeline::process(const cv::Mat& image) {
 
     if (impl_->preprocess_flags.gamma) {
         const float gamma_value = impl_->config.gamma_value;
-        if (gamma_value > 0.0f && std::fabs(gamma_value - 1.0f) >= 1e-6f) {
-            if (impl_->gamma_lut_cache.empty() ||
-                std::fabs(impl_->gamma_lut_value - gamma_value) > 1e-6f) {
-                impl_->gamma_lut_cache = buildGammaLut(gamma_value);
-                impl_->gamma_lut_value = gamma_value;
-            }
-            if (!impl_->gamma_lut_cache.empty()) {
-                cv::Mat gamma_corrected;
-                cv::LUT(working, impl_->gamma_lut_cache, gamma_corrected);
-                if (!gamma_corrected.empty()) {
-                    working = std::move(gamma_corrected);
-                }
+        if (gamma_value > 0.0f) {
+            cv::Mat gamma_corrected =
+                preprocess::Preprocess::applyGammaLut(working, gamma_value);
+            if (!gamma_corrected.empty()) {
+                working = std::move(gamma_corrected);
             }
         } else if (gamma_value <= 0.0f) {
             LOGW("DetectionPipeline: Invalid gamma value ", gamma_value, ", skipping gamma correction");
@@ -716,6 +696,10 @@ void DetectionPipeline::stop() {
         impl_->pose_engine->release();
     }
 
+    if (impl_->engine) {
+        impl_->engine->release();
+    }
+
     if (impl_->source) {
         impl_->source->release();
     }
@@ -801,11 +785,7 @@ std::unique_ptr<infer::IInferEngine> createEngine(const PipelineConfig& config) 
     // Always use RKNN engine for .rknn models
     if (model_path_lower.find(".rknn") != std::string::npos) {
 #if RKAPP_WITH_RKNN
-        auto engine = std::make_unique<infer::RknnEngine>();
-        if (config.use_npu_multicore) {
-            engine->setCoreMask(0x7);  // All 3 NPU cores (6 TOPS)
-        }
-        return engine;
+        return std::make_unique<infer::RknnEngine>();
 #else
         LOGE("DetectionPipeline: RKNN model specified but RKNN not enabled at build time");
         return nullptr;
