@@ -152,6 +152,7 @@ add_library(rkapp_core
     src/capture/FolderSource.cpp
     src/capture/VideoSource.cpp
     src/capture/MppSource.cpp
+    src/capture/GstSourceBase.cpp
     $<$<AND:$<BOOL:${ENABLE_GIGE}>,$<BOOL:${GST_FOUND}>>:src/capture/GigeSource.cpp>
     $<$<AND:$<BOOL:${ENABLE_CSI}>,$<BOOL:${GST_FOUND}>>:src/capture/CsiSource.cpp>
     src/preprocess/Preprocess.cpp
