@@ -15,7 +15,6 @@
 #include <chrono>
 #include <cmath>
 #include <condition_variable>
-#include <future>
 #include <limits>
 #include <mutex>
 #include <optional>
@@ -111,42 +110,6 @@ void applyRoiOffsetAndClip(std::vector<infer::Detection>& detections,
     }
 }
 
-float computeDetIoU(const infer::Detection& a, const infer::Detection& b) {
-    float ax2 = a.x + a.w, ay2 = a.y + a.h;
-    float bx2 = b.x + b.w, by2 = b.y + b.h;
-    float ix1 = std::max(a.x, b.x), iy1 = std::max(a.y, b.y);
-    float ix2 = std::min(ax2, bx2), iy2 = std::min(ay2, by2);
-    float inter = std::max(0.0f, ix2 - ix1) * std::max(0.0f, iy2 - iy1);
-    float area_a = a.w * a.h, area_b = b.w * b.h;
-    float denom = area_a + area_b - inter;
-    return denom > 1e-6f ? inter / denom : 0.0f;
-}
-
-void mergePoseIntoDetections(
-    std::vector<infer::Detection>& detections,
-    const std::vector<infer::Detection>& pose_results) {
-    constexpr float kMinIoU = 0.3f;
-    for (const auto& pose : pose_results) {
-        float best_iou = kMinIoU;
-        infer::Detection* best_match = nullptr;
-        for (auto& det : detections) {
-            if (det.class_id == 0) {  // person class
-                float iou = computeDetIoU(det, pose);
-                if (iou > best_iou) {
-                    best_iou = iou;
-                    best_match = &det;
-                }
-            }
-        }
-        if (best_match) {
-            best_match->keypoints = pose.keypoints;
-        } else {
-            // Pose model detected a person that detection model missed
-            detections.push_back(pose);
-        }
-    }
-}
-
 } // namespace
 
 // ============================================================================
@@ -161,11 +124,6 @@ struct DetectionPipeline::Impl {
     std::unique_ptr<infer::IInferEngine> engine;
     infer::RknnEngine* rknn_engine = nullptr;
     std::unique_ptr<common::DmaBufPool> buffer_pool;
-
-    // Dual-model pose engine
-    std::unique_ptr<infer::IInferEngine> pose_engine;
-    infer::RknnEngine* rknn_pose_engine = nullptr;
-    bool dual_model_enabled{false};
 
     // State
     std::atomic<bool> running{false};
@@ -279,9 +237,8 @@ bool DetectionPipeline::init(const PipelineConfig& config) {
 
 #if RKAPP_WITH_RKNN
     impl_->rknn_engine = dynamic_cast<infer::RknnEngine*>(impl_->engine.get());
-    if (impl_->rknn_engine) {
-        const uint32_t det_core_mask = config.use_npu_multicore ? config.detection_core_mask : 0;
-        impl_->rknn_engine->setCoreMask(det_core_mask);
+    if (impl_->rknn_engine && config.use_npu_multicore) {
+        impl_->rknn_engine->setCoreMask(0x7);  // All 3 NPU cores (6 TOPS)
     }
 #else
     impl_->rknn_engine = nullptr;
@@ -325,49 +282,6 @@ bool DetectionPipeline::init(const PipelineConfig& config) {
     // Warmup
     impl_->engine->warmup();
 
-    // Initialize dual-model pose engine if configured
-    impl_->pose_engine.reset();
-    impl_->rknn_pose_engine = nullptr;
-    impl_->dual_model_enabled = false;
-#if RKAPP_WITH_RKNN
-    if (!config.pose_model_path.empty()) {
-        PipelineConfig pose_cfg = config;
-        pose_cfg.model_path = config.pose_model_path;
-        pose_cfg.input_size = config.pose_input_size;
-
-        impl_->pose_engine = createEngine(pose_cfg);
-        if (impl_->pose_engine) {
-            impl_->rknn_pose_engine =
-                dynamic_cast<infer::RknnEngine*>(impl_->pose_engine.get());
-            if (impl_->rknn_pose_engine) {
-                const uint32_t pose_core_mask = config.use_npu_multicore ? config.pose_core_mask : 0;
-                impl_->rknn_pose_engine->setCoreMask(pose_core_mask);
-            }
-        }
-        if (impl_->pose_engine &&
-            impl_->pose_engine->init(config.pose_model_path, config.pose_input_size)) {
-
-            // Set pose-specific decode params
-            infer::DecodeParams pose_decode;
-            pose_decode.conf_thres = config.pose_conf_threshold;
-            pose_decode.iou_thres = config.pose_iou_threshold;
-            pose_decode.max_boxes = config.max_detections;
-            impl_->pose_engine->setDecodeParams(pose_decode);
-
-            impl_->pose_engine->warmup();
-            impl_->dual_model_enabled = true;
-            LOGI("DetectionPipeline: Dual-model pose enabled");
-            LOGI("  - Pose model: ", config.pose_model_path);
-            LOGI("  - Detection cores: 0x", std::hex, config.detection_core_mask, std::dec);
-            LOGI("  - Pose cores: 0x", std::hex, config.pose_core_mask, std::dec);
-        } else {
-            LOGW("DetectionPipeline: Failed to init pose model: ", config.pose_model_path);
-            impl_->pose_engine.reset();
-            impl_->rknn_pose_engine = nullptr;
-        }
-    }
-#endif
-
     // Initialize stats
     impl_->stats.rga_enabled = config.use_rga_preprocess;
     impl_->stats.mpp_enabled = isMppDecodeEnabledInStats(config);
@@ -388,7 +302,6 @@ bool DetectionPipeline::init(const PipelineConfig& config) {
     LOGI("  - White balance: ", (impl_->preprocess_flags.white_balance ? "enabled" : "disabled"));
     LOGI("  - Gamma: ", (impl_->preprocess_flags.gamma ? "enabled" : "disabled"));
     LOGI("  - Denoise: ", (impl_->preprocess_flags.denoise ? "enabled" : "disabled"));
-    LOGI("  - Dual-model pose: ", (impl_->dual_model_enabled ? "enabled" : "disabled"));
 
     return true;
 }
@@ -574,24 +487,7 @@ PipelineResult DetectionPipeline::process(const cv::Mat& image) {
                 preprocessed, working.size(), letterbox_info);
         };
 
-        if (impl_->dual_model_enabled && impl_->rknn_pose_engine) {
-            // Dual-model: run detection and pose in parallel on different NPU cores
-            preprocess::LetterboxInfo pose_lb;
-            cv::Mat pose_preprocessed = preprocess::Preprocess::letterbox(
-                working, impl_->config.pose_input_size, pose_lb, backend);
-
-            auto det_future = std::async(std::launch::async, runDetectionInfer);
-            auto pose_future = std::async(std::launch::async, [&]() {
-                return impl_->rknn_pose_engine->inferPreprocessed(
-                    pose_preprocessed, working.size(), pose_lb);
-            });
-
-            result.detections = det_future.get();
-            auto pose_results = pose_future.get();
-            mergePoseIntoDetections(result.detections, pose_results);
-        } else {
-            result.detections = runDetectionInfer();
-        }
+        result.detections = runDetectionInfer();
 
         if (roi_applied) {
             applyRoiOffsetAndClip(result.detections, roi_rect, coord_space_size);
@@ -690,10 +586,6 @@ void DetectionPipeline::stop() {
 
     if (impl_->worker_thread.joinable()) {
         impl_->worker_thread.join();
-    }
-
-    if (impl_->pose_engine) {
-        impl_->pose_engine->release();
     }
 
     if (impl_->engine) {
