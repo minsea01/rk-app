@@ -4,6 +4,7 @@
 #include <array>
 #include <cmath>
 #include <fstream>
+#include <mutex>
 #include <regex>
 #include <sstream>
 
@@ -164,8 +165,11 @@ std::vector<Detection> decodeAndPostprocess(const float* logits,
       return;
     }
 
-    LOGI(log_tag, ": RAW decode with ", (has_objectness ? "objectness" : "no objectness"),
-         ", cls_ch=", cls_ch);
+    static std::once_flag raw_decode_log_once;
+    std::call_once(raw_decode_log_once, [&]() {
+      LOGI(log_tag, ": RAW decode with ", (has_objectness ? "objectness" : "no objectness"),
+           ", cls_ch=", cls_ch);
+    });
 
     for (int i = 0; i < N; i++) {
       float cx = logits[0 * N + i];

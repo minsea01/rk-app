@@ -87,7 +87,7 @@ public:
   // Thread-safe accessors for inferred decode metadata.
   int num_classes() const;
   bool has_objness() const;
-  const std::vector<std::string>& class_names() const { return class_names_; }
+  std::vector<std::string> class_names() const;
 
   int getInputWidth() const override;
   int getInputHeight() const override;

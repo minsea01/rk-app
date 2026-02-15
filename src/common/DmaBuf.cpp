@@ -5,6 +5,7 @@
 #include <cerrno>
 #include <mutex>
 #include <queue>
+#include <unordered_set>
 #include <fcntl.h>
 #include <unistd.h>
 #include <sys/mman.h>
@@ -615,6 +616,8 @@ struct DmaBufPool::Impl {
     std::mutex mutex;
     std::vector<std::unique_ptr<DmaBuf>> buffers;
     std::queue<DmaBuf*> available;
+    std::unordered_set<DmaBuf*> all_buffers;
+    std::unordered_set<DmaBuf*> checked_out;
     int width, height;
     DmaBuf::PixelFormat format;
 };
@@ -629,7 +632,9 @@ DmaBufPool::DmaBufPool(int count, int width, int height, DmaBuf::PixelFormat for
     for (int i = 0; i < count; ++i) {
         auto buf = std::make_unique<DmaBuf>();
         if (buf->allocate(width, height, format)) {
-            impl_->available.push(buf.get());
+            DmaBuf* raw = buf.get();
+            impl_->available.push(raw);
+            impl_->all_buffers.insert(raw);
             impl_->buffers.push_back(std::move(buf));
         } else {
             LOGW("DmaBufPool: Failed to allocate buffer ", i);
@@ -649,12 +654,21 @@ DmaBuf* DmaBufPool::acquire() {
     }
     DmaBuf* buf = impl_->available.front();
     impl_->available.pop();
+    impl_->checked_out.insert(buf);
     return buf;
 }
 
 void DmaBufPool::release(DmaBuf* buf) {
     if (!buf) return;
     std::lock_guard<std::mutex> lock(impl_->mutex);
+    if (impl_->all_buffers.find(buf) == impl_->all_buffers.end()) {
+        LOGW("DmaBufPool: Attempted to release foreign buffer");
+        return;
+    }
+    if (impl_->checked_out.erase(buf) == 0) {
+        LOGW("DmaBufPool: Attempted double-release for buffer ", static_cast<const void*>(buf));
+        return;
+    }
     impl_->available.push(buf);
 }
 
