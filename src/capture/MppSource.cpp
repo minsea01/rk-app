@@ -1,6 +1,9 @@
 #include "rkapp/capture/MppSource.hpp"
 
 #if RKAPP_WITH_MPP
+// 本文件是“硬件视频解码采集源”：
+// FFmpeg 负责拆包（demux），MPP 负责硬解码，最终输出 OpenCV BGR 帧。
+// 可选 DMA-BUF 模式用于零拷贝链路。
 
 #include <rockchip/rk_mpi.h>
 #include <rockchip/mpp_frame.h>
@@ -62,6 +65,7 @@ struct MppSource::Impl {
     int decode_count = 0;
 
     // Current DMA-BUF fd (when in DMA-BUF mode)
+    // 注意这里保存的是 dup 后的 fd，生命周期由本对象管理。
     int current_dma_fd = -1;
 
     // EOF handling for proper decoder flush
@@ -75,6 +79,7 @@ struct MppSource::Impl {
     }
 
     void cleanup() {
+        // cleanup 可能由析构/显式 release 多次调用，按“可重入”方式写防御逻辑。
         std::lock_guard<std::mutex> lock(mtx);
 
         if (mpi && mpp_ctx) {
@@ -125,7 +130,7 @@ static bool mpp_available = false;
 
 bool MppSource::isMppAvailable() {
     std::call_once(mpp_check_flag, []() {
-        // Try to create and immediately destroy an MPP context
+        // 用最小代价探测 MPP 是否可用：创建并立即销毁上下文。
         MppCtx ctx = nullptr;
         MppApi* mpi = nullptr;
 
@@ -166,10 +171,10 @@ bool MppSource::open(const std::string& uri) {
     uri_ = uri;
     impl_->eof_reached = false;  // Reset EOF flag for new stream
 
-    // Determine codec type from file extension or probe
+    // 默认按 H.264 处理，后续会根据流实际 codec_id 纠正。
     MppCodingType coding_type = MPP_VIDEO_CodingAVC;  // Default H.264
 
-    // Initialize FFmpeg demuxer for video files and RTSP
+    // 先用 FFmpeg 打开流并做拆包，MPP 只负责解码，不负责容器解析。
     if (uri.find("rtsp://") == 0 || uri.find(".mp4") != std::string::npos ||
         uri.find(".mkv") != std::string::npos || uri.find(".avi") != std::string::npos ||
         uri.find(".h264") != std::string::npos || uri.find(".h265") != std::string::npos) {
@@ -191,7 +196,7 @@ bool MppSource::open(const std::string& uri) {
             return false;
         }
 
-        // Find video stream
+        // 找到第一个视频流索引（忽略音频/字幕等）。
         for (unsigned int i = 0; i < impl_->fmt_ctx->nb_streams; i++) {
             if (impl_->fmt_ctx->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
                 impl_->video_stream_idx = i;
@@ -208,7 +213,7 @@ bool MppSource::open(const std::string& uri) {
         AVStream* video_stream = impl_->fmt_ctx->streams[impl_->video_stream_idx];
         AVCodecParameters* codecpar = video_stream->codecpar;
 
-        // Get video properties
+        // 从 stream 参数提取基础信息。
         width_ = codecpar->width;
         height_ = codecpar->height;
 
@@ -227,7 +232,7 @@ bool MppSource::open(const std::string& uri) {
             total_frames_ = -1;  // Unknown (streaming)
         }
 
-        // Map FFmpeg codec to MPP codec type
+        // 把 FFmpeg codec_id 映射为 MPP 识别的编码类型。
         switch (codecpar->codec_id) {
             case AV_CODEC_ID_H264:
                 coding_type = MPP_VIDEO_CodingAVC;
@@ -253,7 +258,7 @@ bool MppSource::open(const std::string& uri) {
                 return false;
         }
 
-        // Allocate packet
+        // AVPacket 复用：每次 av_read_frame 填充后再 unref。
         impl_->pkt = av_packet_alloc();
         if (!impl_->pkt) {
             LOGE("Failed to allocate AVPacket");
@@ -275,7 +280,7 @@ bool MppSource::open(const std::string& uri) {
         return false;
     }
 
-    // Initialize MPP decoder
+    // 初始化 MPP 解码器上下文。
     MPP_RET ret = mpp_create(&impl_->mpp_ctx, &impl_->mpi);
     if (ret != MPP_OK) {
         LOGE("mpp_create failed: ", ret);
@@ -283,7 +288,7 @@ bool MppSource::open(const std::string& uri) {
         return false;
     }
 
-    // Configure MPP for split mode (feed complete frames)
+    // split mode=1：让 parser 对输入码流做更稳健的帧切分。
     int need_split = 1;
     ret = impl_->mpi->control(impl_->mpp_ctx, MPP_DEC_SET_PARSER_SPLIT_MODE, &need_split);
     if (ret != MPP_OK) {
@@ -298,7 +303,7 @@ bool MppSource::open(const std::string& uri) {
         return false;
     }
 
-    // Create external frame buffer group for DMA-BUF support
+    // 尝试创建外部 DRM buffer group，成功时更有利于后续零拷贝传递。
     ret = mpp_buffer_group_get_external(&impl_->frame_group, MPP_BUFFER_TYPE_DRM);
     if (ret != MPP_OK) {
         // Fallback to internal buffers
@@ -322,13 +327,14 @@ bool MppSource::read(cv::Mat& frame) {
 
     auto start_time = std::chrono::high_resolution_clock::now();
 
-    // Retry limit to prevent infinite loop (was recursive, could cause stack overflow)
+    // 重试上限：防止极端流异常导致死循环。
+    // 旧版本递归重试容易栈增长，这里改为 while 循环更安全。
     constexpr int MAX_DECODE_RETRIES = 30;  // ~1 second at 30fps
     int retry_count = 0;
 
     MppFrame mpp_frame = nullptr;
 
-    // Main decode loop - replaces recursive calls
+    // 主解码循环：读取包 -> 投喂解码器 -> 取帧。
     while (retry_count < MAX_DECODE_RETRIES) {
         // Safety check: ensure demuxer is initialized
         if (!impl_->fmt_ctx) {
@@ -336,12 +342,12 @@ bool MppSource::read(cv::Mat& frame) {
             return false;
         }
 
-        // Read packet from demuxer
+        // 先从容器/流中读取一个 packet（可能是音频或视频）。
         while (true) {
             int ret = av_read_frame(impl_->fmt_ctx, impl_->pkt);
             if (ret < 0) {
                 if (ret == AVERROR_EOF) {
-                    // EOF reached - enter flush mode
+                    // EOF 后需要进入 flush 阶段，把解码器内部缓存帧“榨干”。
                     if (impl_->eof_reached) {
                         // Already flushed, truly done
                         return false;
@@ -349,7 +355,7 @@ bool MppSource::read(cv::Mat& frame) {
                     impl_->eof_reached = true;
                     LOGI("End of stream - flushing decoder");
 
-                    // Send null packet to flush MPP decoder
+                    // 这里不再提供有效码流，后续 decode_get_frame 会持续取残留帧。
                     av_packet_unref(impl_->pkt);
                     // Continue to MPP decode loop to drain buffered frames
                     break;
@@ -359,7 +365,7 @@ bool MppSource::read(cv::Mat& frame) {
                 }
             }
 
-            // Skip non-video packets
+            // 非视频流包（音频等）直接丢弃。
             if (impl_->pkt->stream_index != impl_->video_stream_idx) {
                 av_packet_unref(impl_->pkt);
                 continue;
@@ -367,11 +373,11 @@ bool MppSource::read(cv::Mat& frame) {
             break;
         }
 
-        // Create MPP packet
+        // 把 AVPacket 包装成 MPP packet 后送入硬解码器。
         MppPacket mpp_pkt = nullptr;
         mpp_packet_init(&mpp_pkt, impl_->pkt->data, impl_->pkt->size);
 
-        // Set PTS if available
+        // 保留时间戳，便于后续做同步/统计（如果上层需要）。
         if (impl_->pkt->pts != AV_NOPTS_VALUE) {
             mpp_packet_set_pts(mpp_pkt, impl_->pkt->pts);
         }
@@ -386,12 +392,12 @@ bool MppSource::read(cv::Mat& frame) {
             return false;
         }
 
-        // Get decoded frame
+        // 取解码帧：某些编解码器存在重排序，可能本轮拿不到帧。
         mpp_frame = nullptr;
         mpp_ret = impl_->mpi->decode_get_frame(impl_->mpp_ctx, &mpp_frame);
 
         if (mpp_ret != MPP_OK || !mpp_frame) {
-            // Frame not ready yet, need more packets (B-frame reordering, etc.)
+            // 帧尚未就绪，继续喂包（例如 B 帧重排场景）。
             retry_count++;
             continue;  // Loop back to read next packet
         }
@@ -418,7 +424,7 @@ bool MppSource::read(cv::Mat& frame) {
         return false;
     }
 
-    // Get frame info
+    // 读取帧信息：width/height 是有效尺寸，stride 可能更大（内存对齐）。
     int frm_width = mpp_frame_get_width(mpp_frame);
     int frm_height = mpp_frame_get_height(mpp_frame);
     int frm_h_stride = mpp_frame_get_hor_stride(mpp_frame);
@@ -432,10 +438,10 @@ bool MppSource::read(cv::Mat& frame) {
         return false;
     }
 
-    // Get buffer pointer
+    // 获取底层缓冲区地址（通常是 NV12/NV12-10bit）。
     void* buf_ptr = mpp_buffer_get_ptr(frm_buf);
 
-    // Store DMA-BUF fd if in DMA-BUF mode
+    // DMA-BUF 模式：保存当前帧 fd（dup 一份，避免上游释放后句柄失效）。
     if (dma_buf_mode_) {
         int frame_fd = mpp_buffer_get_fd(frm_buf);
         int dup_fd = (frame_fd >= 0) ? dup(frame_fd) : -1;
@@ -449,13 +455,12 @@ bool MppSource::read(cv::Mat& frame) {
         }
     }
 
-    // Convert YUV to BGR
-    // Most common format from MPP is NV12 (YUV420SP)
+    // 把 MPP 输出的 YUV（常见 NV12）转换为 OpenCV 的 BGR。
     if (frm_fmt == MPP_FMT_YUV420SP || frm_fmt == MPP_FMT_YUV420SP_10BIT) {
         bool converted = false;
 #if RKNN_USE_RGA
-        // Use RGA with stride-aware conversion (avoids CPU memcpy)
-        // RGA can handle non-contiguous strides directly
+        // 优先用 RGA 硬件色彩空间转换，能减少 CPU 开销。
+        // 关键是把 stride 正确传入，否则会出现图像错位。
         rga_buffer_t src_buf = {};
         src_buf.width = frm_width;
         src_buf.height = frm_height;
@@ -480,10 +485,10 @@ bool MppSource::read(cv::Mat& frame) {
         }
 #endif
         if (!converted) {
-            // CPU fallback path
+            // RGA 不可用或失败时回退到 CPU 路径，保证功能可用性。
             cv::Mat yuv_mat(frm_v_stride * 3 / 2, frm_h_stride, CV_8UC1, buf_ptr);
 
-            // Crop to actual dimensions if stride differs
+            // stride 与 width/height 不一致时，需要按行拷贝到紧凑内存布局。
             cv::Mat yuv_cropped;
             if (frm_h_stride != frm_width || frm_v_stride != frm_height) {
                 // Need to handle stride - create proper NV12 layout
@@ -505,7 +510,7 @@ bool MppSource::read(cv::Mat& frame) {
                            frm_width);
                 }
 
-                // Combine for OpenCV cvtColor
+                // 重新拼成 OpenCV 期望的 NV12 连续布局后再做 cvtColor。
                 yuv_cropped = cv::Mat(frm_height * 3 / 2, frm_width, CV_8UC1);
                 y_plane.copyTo(yuv_cropped(cv::Rect(0, 0, frm_width, frm_height)));
 
@@ -528,7 +533,7 @@ bool MppSource::read(cv::Mat& frame) {
 
     mpp_frame_deinit(&mpp_frame);
 
-    // Update statistics
+    // 更新解码耗时统计（可用于监控平均解码延迟）。
     auto end_time = std::chrono::high_resolution_clock::now();
     double decode_ms = std::chrono::duration<double, std::milli>(end_time - start_time).count();
     impl_->total_decode_time_ms += decode_ms;
@@ -587,6 +592,7 @@ void MppSource::setDmaBufMode(bool enable) {
 
 int MppSource::getDmaBufFd() const {
     if (!impl_ || impl_->current_dma_fd < 0) return -1;
+    // 返回新的 dup fd：调用者拿到后可独立 close，不影响 MppSource 内部 fd。
     int dup_fd = dup(impl_->current_dma_fd);
     if (dup_fd < 0) {
         LOGW("Failed to dup current DMA-BUF fd: ", strerror(errno));

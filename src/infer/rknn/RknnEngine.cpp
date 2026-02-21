@@ -28,14 +28,17 @@ RknnEngine::RknnEngine() = default;
 RknnEngine::~RknnEngine() { release(); }
 
 bool RknnEngine::init(const std::string& model_path, int img_size) {
+  // 重新初始化时先释放旧上下文，避免句柄泄漏或状态串扰。
   release();
 
   auto new_impl = std::make_shared<Impl>();
+  // 读取模型元信息（head 类型、类别数、输出索引等），后续会严格校验。
   ModelMeta model_meta = rknn_internal::loadModelMeta(model_path);
   int inferred_num_classes = -1;
   bool inferred_has_objness = true;
-
+ 
 #if RKNN_PLATFORM
+  // cleanup 只负责当前 init 过程中的临时资源回收。
   bool ctx_ready = false;
   auto cleanup = [&]() {
     if (ctx_ready && new_impl && new_impl->ctx) {
@@ -46,6 +49,7 @@ bool RknnEngine::init(const std::string& model_path, int img_size) {
 
   std::vector<uint8_t> blob;
   std::string read_err;
+  // 先把 rknn 文件读入内存，再调用 rknn_init。
   if (!rknn_internal::readFile(model_path, blob, read_err)) {
     LOGE("RknnEngine: failed to read model file: ", model_path,
          " (exists=", std::filesystem::exists(model_path), ", reason=", read_err, ")");
@@ -66,6 +70,7 @@ bool RknnEngine::init(const std::string& model_path, int img_size) {
   }
   ctx_ready = true;
 
+  // core_mask 使用快照，避免读到并发修改中的状态。
   uint32_t core_mask_snapshot = 0;
   {
     std::lock_guard<std::mutex> state_lock(state_mutex_);
@@ -124,9 +129,11 @@ bool RknnEngine::init(const std::string& model_path, int img_size) {
       LOGI("RknnEngine: NPU multi-core enabled: ", core_desc);
     }
   } else {
+    // 当掩码为 0 时交给 RKNN 自动调度。
     LOGI("RknnEngine: NPU core_mask=0, using RKNN_NPU_CORE_AUTO mode");
   }
 
+  // 查询输入输出数量，是后续属性查询的前置条件。
   ret = rknn_query(new_impl->ctx, RKNN_QUERY_IN_OUT_NUM, &new_impl->io_num,
                    sizeof(new_impl->io_num));
   if (ret != RKNN_SUCC) {
@@ -151,6 +158,7 @@ bool RknnEngine::init(const std::string& model_path, int img_size) {
     return false;
   }
 
+  // 当前实现约束：输入需为 uint8 且布局是 NHWC/NCHW。
   new_impl->input_fmt = new_impl->in_attr.fmt;
   new_impl->input_type = new_impl->in_attr.type;
   if (new_impl->input_fmt != RKNN_TENSOR_NHWC && new_impl->input_fmt != RKNN_TENSOR_NCHW) {
@@ -164,6 +172,7 @@ bool RknnEngine::init(const std::string& model_path, int img_size) {
     return false;
   }
 
+  // 从 RKNN 张量属性里提取输入尺寸，兼容 3D/4D 两种描述格式。
   int input_c = 0;
   int input_h = 0;
   int input_w = 0;
@@ -195,6 +204,7 @@ bool RknnEngine::init(const std::string& model_path, int img_size) {
     return false;
   }
   if (input_h > 0 && input_w > 0 && (input_h != img_size || input_w != img_size)) {
+    // 仅告警不失败：允许配置尺寸与模型不一致，但结果可能异常或性能下降。
     LOGW("RknnEngine: Input size mismatch with model (model=", input_w, "x", input_h,
          ", cfg=", img_size, "x", img_size, ")");
   }
@@ -212,6 +222,7 @@ bool RknnEngine::init(const std::string& model_path, int img_size) {
     return true;
   };
 
+  // 多输出模型必须通过 metadata 指定要解码的输出分支，避免猜错输出头。
   if (new_impl->io_num.n_output == 1) {
     best_output_idx = 0;
     if (!query_output_attr(0, best_attr)) {
@@ -245,11 +256,13 @@ bool RknnEngine::init(const std::string& model_path, int img_size) {
 
   new_impl->out_attr = best_attr;
 
+  // 计算输出总元素数，后续用于预分配缓存。
   new_impl->out_elems = 1;
   for (uint32_t i = 0; i < new_impl->out_attr.n_dims; i++) {
     new_impl->out_elems *= new_impl->out_attr.dims[i];
   }
 
+  // 解码逻辑严格依赖 metadata，字段缺失直接报错，避免“静默错结果”。
   if (model_meta.head != "raw" && model_meta.head != "dfl") {
     LOGE("RknnEngine: Missing or invalid head metadata (expected raw/dfl)");
     cleanup();
@@ -261,6 +274,7 @@ bool RknnEngine::init(const std::string& model_path, int img_size) {
     return false;
   }
 
+  // 计算期望通道数 expected_c，用于判断输出张量布局是否匹配。
   const int kpt_ch = model_meta.num_keypoints > 0 ? model_meta.num_keypoints * 3 : 0;
   int expected_c = 0;
   if (model_meta.head == "dfl") {
@@ -287,6 +301,7 @@ bool RknnEngine::init(const std::string& model_path, int img_size) {
 
   int64_t d1 = new_impl->out_attr.dims[1];
   int64_t d2 = new_impl->out_attr.dims[2];
+  // 输出常见为 [1, C, N] 或 [1, N, C]，这里自动识别并记录 out_n/out_c。
   if (d1 == expected_c && d2 != expected_c) {
     new_impl->out_c = expected_c;
     new_impl->out_n = static_cast<int>(d2);
@@ -310,6 +325,7 @@ bool RknnEngine::init(const std::string& model_path, int img_size) {
 
   const bool expect_dfl = (model_meta.head == "dfl");
   if (expect_dfl) {
+    // DFL 头需要构建 anchor layout，后续 decode 时会按该布局还原边框。
     if (model_meta.reg_max > rknn_internal::kMaxSupportedRegMax) {
       LOGE("RknnEngine: reg_max=", model_meta.reg_max,
            " exceeds max (", rknn_internal::kMaxSupportedRegMax, ")");
@@ -330,6 +346,7 @@ bool RknnEngine::init(const std::string& model_path, int img_size) {
   LOGW("RknnEngine: RKNN platform not enabled at build time");
 #endif
 
+  // 走到这里说明初始化流程完成，将新状态一次性替换进对象。
   {
     std::lock_guard<std::mutex> state_lock(state_mutex_);
     model_path_ = model_path;
@@ -372,6 +389,7 @@ std::vector<Detection> RknnEngine::inferPreprocessed(
     num_classes_snapshot = num_classes_;
   }
 
+  // 入参尺寸必须和模型输入一致；该函数不再做缩放补边。
   if (preprocessed_image.cols != input_size_snapshot || preprocessed_image.rows != input_size_snapshot) {
     LOGE("RknnEngine::inferPreprocessed: Input size mismatch. Expected ", input_size_snapshot,
          "x", input_size_snapshot, ", got ", preprocessed_image.cols, "x",
@@ -386,6 +404,7 @@ std::vector<Detection> RknnEngine::inferPreprocessed(
   const int out_dim2_snapshot = impl->out_attr.dims[2];
   const uint32_t out_index_snapshot = impl->out_attr.index;
 
+  // RKNN 训练/转换常用 RGB 输入；上游传入 BGR，这里统一转换一次。
   cv::Mat rgb =
       rkapp::preprocess::Preprocess::convertColor(preprocessed_image, cv::COLOR_BGR2RGB);
   if (!rgb.isContinuous()) {
@@ -397,6 +416,7 @@ std::vector<Detection> RknnEngine::inferPreprocessed(
   in.type = impl->input_type;
   in.fmt = impl->input_fmt;
   if (impl->input_fmt == RKNN_TENSOR_NCHW) {
+    // RKNN NCHW 输入时，需要把 HWC 内存重排成 CHW 连续内存。
     const int h = rgb.rows;
     const int w = rgb.cols;
     const int c = rgb.channels();
@@ -414,10 +434,12 @@ std::vector<Detection> RknnEngine::inferPreprocessed(
     in.size = static_cast<uint32_t>(needed);
     in.buf = input_local.data();
   } else {
+    // NHWC 路径可直接复用 OpenCV 连续内存。
     in.size = static_cast<uint32_t>(rgb.total() * rgb.elemSize());
     in.buf = (void*)rgb.data;
   }
 
+  // infer_mutex 串行化同一 RKNN context 的调用，避免并发访问 SDK 产生未定义行为。
   std::unique_lock<std::mutex> lock(impl->infer_mutex);
   if (impl->shutting_down.load(std::memory_order_acquire)) {
     LOGW("RknnEngine::inferPreprocessed: Engine is shutting down");
@@ -436,6 +458,7 @@ std::vector<Detection> RknnEngine::inferPreprocessed(
     return {};
   }
 
+  // thread_local 缓冲区：减少频繁堆分配，提高稳定帧率。
   const size_t logits_elems = static_cast<size_t>(impl->out_elems);
   thread_local std::vector<float> logits_local;
   logits_local.resize(logits_elems);
@@ -452,10 +475,12 @@ std::vector<Detection> RknnEngine::inferPreprocessed(
     return {};
   }
 
+  // outputs_release 后锁就可释放，后处理（decode+NMS）不需要持有 RKNN 互斥锁。
   int num_classes = num_classes_snapshot;
   rknn_outputs_release(impl->ctx, 1, &out);
   lock.unlock();
 
+  // 统一的解码+NMS入口：根据 model_meta 自动选择 raw/dfl 解析逻辑。
   auto nms_result = rknn_internal::decodeOutputAndNms(
       logits_local.data(), out_n_snapshot, out_c_snapshot, out_elems_snapshot, out_n_dims_snapshot,
       out_dim1_snapshot, out_dim2_snapshot, num_classes, model_meta_snapshot,
@@ -494,6 +519,7 @@ std::vector<Detection> RknnEngine::infer(const cv::Mat& image) {
     input_size_snapshot = input_size_;
   }
 
+  // 通用入口先做 letterbox，再复用 inferPreprocessed 的核心推理逻辑。
   rkapp::preprocess::LetterboxInfo letterbox_info;
   cv::Mat letter =
       rkapp::preprocess::Preprocess::letterbox(image, input_size_snapshot, letterbox_info);
@@ -525,6 +551,7 @@ void RknnEngine::warmup() {
     }
     input_size_snapshot = input_size_;
   }
+  // 灰色虚拟帧用于快速预热，不依赖真实输入。
   cv::Mat dummy(input_size_snapshot, input_size_snapshot, CV_8UC3, cv::Scalar(128, 128, 128));
   (void)infer(dummy);
 }
@@ -539,6 +566,7 @@ void RknnEngine::release() {
 
 #if RKNN_PLATFORM
   if (impl) {
+    // 先标记 shutdown，再拿 infer_mutex，避免释放与正在推理并发冲突。
     impl->shutting_down.store(true, std::memory_order_release);
     std::lock_guard<std::mutex> lock(impl->infer_mutex);
     if (impl->ctx) {

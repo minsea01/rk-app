@@ -1,5 +1,25 @@
+# ============================================================
+# 目标检测主配置（给初学者）
+# ------------------------------------------------------------
+# 这个文件是 C++/Python 推理链路的“运行参数中心”：
+# 1) 输入源怎么来（文件/RTSP/GigE/CSI）
+# 2) 模型用 ONNX 还是 RKNN
+# 3) 预处理是否裁剪、去畸变、去噪
+# 4) NMS 阈值怎么设
+# 5) 结果往哪里输出
+#
+# 常见调参入口：
+# - 检测太多误报：提高 nms.conf_thres（如 0.25 -> 0.4）
+# - 检测漏检：适当降低 nms.conf_thres（如 0.25 -> 0.2）
+# - 需要边缘区域稳定：开启 preprocess.roi 并收缩 ROI
+# ============================================================
+
 source:
+  # 输入源类型：
+  # folder=图片文件夹、video=视频文件、rtsp=网络流、gige=工业相机、csi=MIPI 摄像头
   type: gige                # folder|video|rtsp|gige|csi
+  # 具体输入地址。不同 source.type 的 URI 语法不同。
+  # gige 示例：camera-name + 分辨率 + 帧率
   uri: "camera-name=Aravis-Fake-GV01,width=512,height=512,framerate=25/1"
 
 # CSI example (OV5647 / MIPI CSI-2):
@@ -8,29 +28,44 @@ source:
 #   uri: "device=/dev/video0,width=640,height=480,framerate=30,format=NV12"
 
 engine:
+  # 推理引擎类型：
+  # onnx=主机侧 ONNXRuntime，rknn=板端 NPU RKNN
   type: onnx                # onnx|rknn
+  # 模型路径（与 type 对应：onnx 或 rknn 文件）
   model: "artifacts/models/best.onnx"
+  # 网络输入尺寸（通常 416/640），需要与导出模型和推理期设置一致
   imgsz: 640
 
 preprocess:
+  # 预处理配置档位：speed（最快）/balanced（折中）/quality（质量优先）
   profile: speed            # speed|balanced|quality
   undistort:
+    # 畸变矫正：相机镜头畸变明显时才建议开启，开启后会增加少量耗时
     enable: false
     calibration_file: ""    # OpenCV calibration YAML/XML with camera_matrix + dist_coeffs
   roi:
+    # ROI 区域裁剪：只在感兴趣区域做检测，可提升速度并减少无关误报
     enable: false
+    # normalized: 使用 0~1 相对坐标；pixel: 使用绝对像素坐标
     mode: normalized        # normalized|pixel
+    # normalized 模式下的 ROI：x,y,w,h（相对整帧）
     normalized_xywh: [0.0, 0.0, 1.0, 1.0]
+    # pixel 模式下的 ROI：x,y,w,h（像素）
     pixel_xywh: [0, 0, 0, 0]
+    # clamp=true 时，ROI 超出边界会自动裁回图像范围
     clamp: true
+    # ROI 最小宽高限制，避免设置过小区域导致后续处理异常
     min_size: 8
   gamma:
+    # 伽马校正：提升暗光细节时可尝试；value>1 通常提亮中间调
     enable: false
     value: 1.0
   white_balance:
+    # 白平衡：光照偏色场景可开启，clip_percent 越大校正越激进
     enable: false
     clip_percent: 0.0
   denoise:
+    # 去噪：当前支持 bilateral（双边滤波），可降低噪点但增加耗时
     enable: false
     method: bilateral
     d: 5
@@ -38,17 +73,25 @@ preprocess:
     sigma_space: 35.0
 
 nms:
+  # 置信度阈值：低于该值的框会先被过滤
   conf_thres: 0.25
+  # NMS 的 IoU 阈值：越低去重越强，越高保留越多重叠框
   iou_thres: 0.60
+  # NMS 前候选框上限，防止异常输入导致后处理开销过大
   topk: 1000
 
 perf:
+  # 预热轮数：先跑几帧让缓存/内核状态稳定，再统计性能更可信
   warmup: 5
+  # 是否启用异步流水线（采集与推理并行），吞吐通常更高
   async: false
 
 output:
+  # 输出通道类型，当前以 tcp 为主
   type: tcp                 # tcp
+  # TCP 发送目标地址（可接外部结果接收器）
   ip: "127.0.0.1"
   port: 9000
 
+# 类别名称文件（每行一个类名，索引与模型输出 class_id 对齐）
 classes: "config/person_classes.txt"
