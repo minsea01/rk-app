@@ -109,6 +109,24 @@ cloud_training/test_citypersons/images/
 .cache/
 *.so.*
 
+# AI-generated reports and status docs
+docs/reports/
+artifacts/CODE_INTEGRITY_REPORT.md
+artifacts/PIPELINE_VALIDATION_REPORT.md
+artifacts/PROJECT_REVIEW_REPORT.md
+artifacts/*_report.md
+artifacts/*_status*.md
+artifacts/branch_cleanup_guide.md
+artifacts/task_completion_checklist.md
+artifacts/unmerged_branches_report.md
+
+# Temporary root-level scripts and debug files
+batch_inference.py
+gen_chart.py
+gen_code_charts.py
+gen_more_charts.py
+check*.onnx
+
 # Claude Code / AI tool configs (local only)
 .claude/
 CLAUDE.md
