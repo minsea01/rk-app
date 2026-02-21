@@ -109,6 +109,16 @@ cloud_training/test_citypersons/images/
 .cache/
 *.so.*
 
+# Claude Code / AI tool configs (local only)
+.claude/
+CLAUDE.md
+AGENTS.md
+mcp.config.json
+examples/rk_agent.py
+examples/simple_agent.py
+examples/test_api.py
+scripts/check_agent_sdk.sh
+
 # Additional generated outputs and local datasets
 /industrial_dataset/
 /cloud_training/test_citypersons/
