@@ -1,8 +1,24 @@
 #!/usr/bin/env python3
-"""ONNX to RKNN model conversion tool.
+"""ONNX 模型转换为 RKNN 格式。
 
-This script converts ONNX models to RKNN format with optional INT8 quantization
-for deployment on Rockchip NPU platforms.
+整体流程：
+    ONNX 模型 (.onnx)
+        ↓  本脚本（rknn-toolkit2 PC 端）
+    RKNN 量化模型 (.rknn)
+        ↓  部署到 RK3588 NPU
+    板端用 rknn-toolkit2-lite 加载推理
+
+INT8 量化原理（为什么需要 calibration dataset）：
+    ONNX 是 FP32 权重，NPU 只支持 INT8 整数运算。
+    量化 = 把 FP32 值映射到 [-128, 127]，需要知道每一层激活值的实际分布范围。
+    calibration dataset 就是用来"观测"这个范围的，图片越有代表性，精度损失越小。
+    建议用 100~300 张与实际场景相似的图片。
+
+注意事项：
+    - calibration 路径必须是绝对路径，否则 RKNN toolkit 静默失败
+    - mean/std 必须与训练时的预处理一致（YOLO 默认 mean=0,0,0  std=255,255,255）
+    - reorder='2 1 0' 表示 BGR→RGB 通道转换（OpenCV 读图是 BGR，模型训练用 RGB）
+    - rknn-toolkit2 ≥2.x 量化 dtype 用 'w8a8'；1.x 用 'asymmetric_quantized-u8'
 """
 
 import argparse
@@ -13,33 +29,33 @@ from importlib.metadata import version, PackageNotFoundError
 from contextlib import contextmanager
 from typing import Optional
 
-# Import custom exceptions
+# 导入项目内自定义异常
 from apps.exceptions import ModelLoadError, ConfigurationError
 from apps.logger import setup_logger
 
-# Setup logger
+# 初始化日志器
 logger = setup_logger(__name__, level=logging.INFO)
 
 
 @contextmanager
 def rknn_context(verbose: bool = True):
-    """Context manager for RKNN toolkit to ensure proper resource cleanup.
+    """RKNN 工具链上下文管理器，确保资源被正确释放。
 
-    Ensures rknn.release() is called even if exceptions occur, preventing
-    GPU/memory leaks in error scenarios.
+    即使转换过程中发生异常，也会在 finally 中调用 `rknn.release()`，
+    避免 GPU/内存资源泄漏。
 
-    Args:
-        verbose: Enable verbose logging from RKNN toolkit
+    参数:
+        verbose: 是否开启 RKNN toolkit 的详细日志输出
 
-    Yields:
-        RKNN: Initialized RKNN toolkit instance
+    产出:
+        RKNN: 已初始化的 RKNN toolkit 实例
 
-    Example:
+    示例:
         >>> with rknn_context() as rknn:
         ...     rknn.load_onnx('model.onnx')
         ...     rknn.build(do_quantization=True, dataset='calib.txt')
         ...     rknn.export_rknn('model.rknn')
-        ... # rknn.release() automatically called here
+        ... # 退出 with 后会自动调用 rknn.release()
     """
     try:
         from rknn.api import RKNN
@@ -55,8 +71,8 @@ def rknn_context(verbose: bool = True):
     try:
         rknn = RKNN(verbose=verbose)
     except (TypeError, AttributeError) as e:
-        # TypeError: Constructor signature changed between SDK versions
-        # AttributeError: RKNN class missing expected attributes
+        # TypeError: 不同 SDK 版本构造函数签名变化
+        # AttributeError: RKNN 类缺少预期属性
         raise ConfigurationError(
             f"rknn-toolkit2 version incompatible. Please ensure rknn-toolkit2>=2.3.2 is installed.\nError: {e}"
         ) from e
@@ -64,15 +80,15 @@ def rknn_context(verbose: bool = True):
     try:
         yield rknn
     finally:
-        # Always release resources, even on exception
+        # 无论是否异常都尝试释放资源
         try:
             rknn.release()
             logger.debug("RKNN resources released")
         except (RuntimeError, AttributeError, OSError) as e:
-            # Log but don't raise - we're in cleanup phase
-            # RuntimeError: RKNN SDK internal error
-            # AttributeError: RKNN object already released or invalid
-            # OSError: GPU/memory cleanup failure
+            # 清理阶段仅记录日志，不再抛出异常
+            # RuntimeError: RKNN SDK 内部错误
+            # AttributeError: RKNN 对象已释放或无效
+            # OSError: GPU/内存清理失败
             logger.warning(f"Failed to release RKNN resources (may already be released): {e}")
 
 
@@ -83,22 +99,22 @@ def _detect_rknn_default_qdtype():
         major = int(parts[0]) if parts and parts[0].isdigit() else 0
     except PackageNotFoundError:
         major = 0
-    # rknn-toolkit2 >=2.x uses enums like 'w8a8'; 1.x uses 'asymmetric_quantized-u8'.
+    # rknn-toolkit2 >=2.x 使用 'w8a8'；1.x 使用 'asymmetric_quantized-u8'
     return "w8a8" if major >= 2 else "asymmetric_quantized-u8"
 
 
 def _parse_and_validate_mean_std(mean: str, std: str):
-    """Parse and validate mean/std parameters.
+    """解析并校验 mean/std 参数。
 
-    Args:
-        mean: Comma-separated mean values (e.g., '0,0,0')
-        std: Comma-separated std values (e.g., '255,255,255')
+    参数:
+        mean: 逗号分隔的均值，例如 '0,0,0'
+        std: 逗号分隔的标准差，例如 '255,255,255'
 
-    Returns:
-        Tuple of (mean_values, std_values) as nested lists
+    返回:
+        (mean_values, std_values) 元组，均为嵌套列表格式
 
-    Raises:
-        ValueError: If format is invalid or values are out of range
+    异常:
+        ValueError: 格式非法或取值不合法时抛出
     """
     try:
         mean_list = [float(v.strip()) for v in mean.split(",")]
@@ -138,36 +154,35 @@ def build_rknn(
     std: str = "255,255,255",
     reorder: str = "2 1 0",  # BGR->RGB
 ):
-    """Build RKNN model from ONNX with automatic resource management.
+    """将 ONNX 模型转换为 RKNN，并自动管理资源释放。
 
-    Uses context manager to ensure RKNN resources are properly released
-    even if exceptions occur during conversion.
+    通过上下文管理器保证在转换异常时也能正确释放 RKNN 资源。
 
-    Args:
-        onnx_path: Path to input ONNX model
-        out_path: Path to output RKNN model
-        calib: Optional calibration dataset path
-        do_quant: Enable INT8 quantization
-        target: Target platform (default: rk3588)
-        quantized_dtype: Quantization dtype (auto-detected if None)
-        mean: Mean values for normalization
-        std: Std values for normalization
-        reorder: Channel reordering (e.g., '2 1 0' for BGR->RGB)
+    参数:
+        onnx_path: 输入 ONNX 模型路径
+        out_path: 输出 RKNN 模型路径
+        calib: 可选的校准数据集路径
+        do_quant: 是否启用 INT8 量化
+        target: 目标平台（默认 rk3588）
+        quantized_dtype: 量化类型（为 None 时自动检测）
+        mean: 归一化均值
+        std: 归一化标准差
+        reorder: 通道重排（如 '2 1 0' 表示 BGR->RGB）
 
-    Raises:
-        ModelLoadError: If model loading/building/exporting fails
-        ConfigurationError: If configuration is invalid
+    异常:
+        ModelLoadError: 模型加载/构建/导出失败
+        ConfigurationError: 配置参数不合法
     """
-    # Validate and parse mean/std parameters
+    # 校验并解析 mean/std 参数
     mean_values, std_values = _parse_and_validate_mean_std(mean, std)
 
     onnx_path = Path(onnx_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # Use context manager for automatic resource cleanup
+    # 使用上下文管理器自动清理 RKNN 资源
     with rknn_context(verbose=True) as rknn:
         print("Configuring RKNN...")
-        # Choose sensible default qdtype by toolkit major version if not provided
+        # 若未显式传入 quantized_dtype，则根据 toolkit 主版本自动选择默认值
         if quantized_dtype in (None, ""):
             quantized_dtype = _detect_rknn_default_qdtype()
             print(f"Auto-select quantized_dtype={quantized_dtype}")
@@ -184,7 +199,7 @@ def build_rknn(
         try:
             rknn.config(**config_kwargs)
         except TypeError as e:
-            # Older/variant toolkit builds may not support reorder_channel.
+            # 某些旧版或变体 toolkit 可能不支持 reorder_channel 参数
             if "reorder_channel" in config_kwargs and "reorder_channel" in str(e):
                 logger.warning(
                     "Current RKNN toolkit does not support reorder_channel, "
@@ -221,7 +236,7 @@ def build_rknn(
             raise ModelLoadError(f"Failed to export RKNN model to: {out_path}")
 
         logger.info("RKNN conversion completed successfully")
-        # rknn.release() automatically called by context manager
+        # rknn.release() 会在上下文退出时自动调用
 
 
 def main():
@@ -243,7 +258,7 @@ def main():
     args = ap.parse_args()
 
     calib = args.calib
-    # If a folder is given for calib, create a temporary txt list
+    # 如果 calib 传入的是目录，则自动生成临时 calib.txt（每行一个图片路径）
     if calib and calib.is_dir():
         from glob import glob
 

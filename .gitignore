@@ -148,3 +148,6 @@ scripts/check_agent_sdk.sh
 /artifacts/*.jpg
 /.third_party/
 /third_party/onnxruntime
+
+# Datasets directory (symlink to external storage, not tracked)
+datasets/
