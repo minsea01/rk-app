@@ -2,6 +2,7 @@
 #pragma once
 
 #include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 #include <opencv2/opencv.hpp>
@@ -37,6 +38,8 @@ private:
   DecodeParams decode_params_;
   bool unsupported_model_ = false;  // set when encountering unsupported output layout
   int cuda_device_id_ = 0;  // CUDA device index (configurable, default: 0)
+  // recursive_mutex: warmup() calls infer() internally; both need the same lock
+  mutable std::recursive_mutex engine_mtx_;
 };
 
 } // namespace rkapp::infer

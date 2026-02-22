@@ -15,8 +15,12 @@ services:
       - /dev/dri:/dev/dri           # GPU/NPU 设备
       - /dev/mali0:/dev/mali0       # Mali GPU（如果需要）
 
-    # 特权模式（NPU 访问可能需要）
-    privileged: true
+    # 最小权限：DMA-BUF pinned memory + raw device I/O（替代 privileged: true）
+    cap_add:
+      - IPC_LOCK    # DMA-BUF mmap pinned memory
+      - SYS_RAWIO   # NPU/DRI raw device access
+    security_opt:
+      - no-new-privileges:true
 
     # 挂载 RKNN 运行时库（如果主机已安装）
     volumes:

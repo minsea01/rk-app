@@ -33,6 +33,7 @@ Example:
 """
 
 import os
+import threading
 import yaml
 from pathlib import Path
 from typing import Any, Dict, Optional, Union
@@ -321,6 +322,7 @@ class ConfigLoader:
 
 # Singleton instance for convenience
 _default_loader = None
+_loader_lock = threading.Lock()
 
 
 def get_loader(config_file: Optional[str] = None) -> ConfigLoader:
@@ -333,6 +335,7 @@ def get_loader(config_file: Optional[str] = None) -> ConfigLoader:
         ConfigLoader instance
     """
     global _default_loader
-    if _default_loader is None or config_file is not None:
-        _default_loader = ConfigLoader(config_file=config_file)
-    return _default_loader
+    with _loader_lock:
+        if _default_loader is None or config_file is not None:
+            _default_loader = ConfigLoader(config_file=config_file)
+        return _default_loader

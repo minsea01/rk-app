@@ -99,11 +99,20 @@ int main(int argc, char** argv) {
         } else if (arg == "--input" && i + 1 < argc) {
             config.source_uri = argv[++i];
         } else if (arg == "--size" && i + 1 < argc) {
-            config.input_size = std::stoi(argv[++i]);
+            try { config.input_size = std::stoi(argv[++i]); }
+            catch (const std::exception&) {
+                std::fprintf(stderr, "Invalid value for --size: %s\n", argv[i]); return 1;
+            }
         } else if (arg == "--conf" && i + 1 < argc) {
-            config.conf_threshold = std::stof(argv[++i]);
+            try { config.conf_threshold = std::stof(argv[++i]); }
+            catch (const std::exception&) {
+                std::fprintf(stderr, "Invalid value for --conf: %s\n", argv[i]); return 1;
+            }
         } else if (arg == "--iou" && i + 1 < argc) {
-            config.iou_threshold = std::stof(argv[++i]);
+            try { config.iou_threshold = std::stof(argv[++i]); }
+            catch (const std::exception&) {
+                std::fprintf(stderr, "Invalid value for --iou: %s\n", argv[i]); return 1;
+            }
         } else if (arg == "--no-mpp") {
             config.use_mpp_decode = false;
         } else if (arg == "--no-rga") {

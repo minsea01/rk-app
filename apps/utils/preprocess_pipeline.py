@@ -236,9 +236,11 @@ def _load_calibration_once(
                     return mat
         return None
 
-    camera = read_first(("camera_matrix", "cameraMatrix", "K", "intrinsic_matrix"))
-    dist = read_first(("dist_coeffs", "distCoeffs", "distortion_coefficients", "D"))
-    fs.release()
+    try:
+        camera = read_first(("camera_matrix", "cameraMatrix", "K", "intrinsic_matrix"))
+        dist = read_first(("dist_coeffs", "distCoeffs", "distortion_coefficients", "D"))
+    finally:
+        fs.release()
 
     if camera is None or dist is None:
         if logger is not None:

@@ -481,7 +481,11 @@ int main(int argc, char* argv[]) {
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
         if (arg == "--warmup" && i + 1 < argc) {
-            config.warmup = std::stoi(argv[++i]);
+            try { config.warmup = std::stoi(argv[++i]); }
+            catch (const std::exception&) {
+                std::fprintf(stderr, "Invalid value for --warmup: %s\n", argv[i]);
+                return 1;
+            }
         } else if (arg == "--async") {
             config.async = true;
         } else if (arg == "--log-level" && i + 1 < argc) {

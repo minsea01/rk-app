@@ -60,9 +60,15 @@ int main(int argc, char** argv) {
         } else if (arg == "--image" && i + 1 < argc) {
             image_path = argv[++i];
         } else if (arg == "--iterations" && i + 1 < argc) {
-            iterations = std::stoi(argv[++i]);
+            try { iterations = std::stoi(argv[++i]); }
+            catch (const std::exception&) {
+                std::fprintf(stderr, "Invalid value for --iterations: %s\n", argv[i]); return 1;
+            }
         } else if (arg == "--conf" && i + 1 < argc) {
-            conf_thres = std::stof(argv[++i]);
+            try { conf_thres = std::stof(argv[++i]); }
+            catch (const std::exception&) {
+                std::fprintf(stderr, "Invalid value for --conf: %s\n", argv[i]); return 1;
+            }
         }
     }
 
