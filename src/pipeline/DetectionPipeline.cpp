@@ -193,6 +193,8 @@ DetectionPipeline::~DetectionPipeline() {
 }
 
 bool DetectionPipeline::init(const PipelineConfig& config) {
+    impl_->initialized = false;  // 重置状态，确保失败时不残留旧状态
+
     // Release any previously acquired resources before reinitializing
     if (impl_->engine) {
         impl_->engine->release();
@@ -607,6 +609,9 @@ void DetectionPipeline::stop() {
         impl_->source->release();
         impl_->source.reset();
     }
+
+    impl_->buffer_pool.reset();
+    impl_->initialized = false;
 }
 
 bool DetectionPipeline::isRunning() const {
