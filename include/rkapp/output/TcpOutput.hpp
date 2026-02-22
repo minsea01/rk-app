@@ -60,7 +60,7 @@ private:
   std::ofstream file_output_;
 
   std::chrono::steady_clock::time_point last_reconnect_attempt_{};
-  bool has_reconnect_attempt_ = false;
+  std::atomic<bool> has_reconnect_attempt_{false};
   std::chrono::milliseconds reconnect_backoff_initial_{500};
   std::chrono::milliseconds reconnect_backoff_{500};
   std::chrono::milliseconds reconnect_backoff_max_{5000};
@@ -71,6 +71,7 @@ private:
   mutable std::mutex backlog_mtx_;
   mutable std::mutex socket_mtx_;
   mutable std::mutex flush_mtx_;
+  mutable std::mutex file_mtx_;  // guards file_output_ writes in send()
 
   // Statistics for monitoring
   std::atomic<uint64_t> dropped_frames_{0};

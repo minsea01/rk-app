@@ -118,6 +118,7 @@ bool OnnxEngine::init(const std::string& model_path, int img_size) {
 }
 
 std::vector<Detection> OnnxEngine::infer(const cv::Mat& image) {
+  std::lock_guard<std::recursive_mutex> lock(engine_mtx_);
   if (!is_initialized_) {
     LOGE("OnnxEngine: Not initialized!");
     return {};
@@ -194,6 +195,7 @@ void OnnxEngine::warmup() {
 }
 
 void OnnxEngine::release() {
+  std::lock_guard<std::recursive_mutex> lock(engine_mtx_);
   if (!impl_) return;
   impl_->session.reset();
   impl_->env.reset();

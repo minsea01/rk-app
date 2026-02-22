@@ -44,7 +44,9 @@ std::string escape_json(const std::string& value) {
                 case '\f': escaped += "\\f"; break;
                 default: {
                     const unsigned char c = static_cast<unsigned char>(ch);
-                    if (c < 0x20) {
+                    if (c < 0x20 || c > 0x7E) {
+                        // Escape control characters and non-ASCII bytes as \u00XX.
+                        // Avoids embedding raw non-UTF-8 bytes in the JSON stream.
                         constexpr char hex[] = "0123456789ABCDEF";
                         escaped += "\\u00";
                         escaped += hex[(c >> 4) & 0x0F];
@@ -219,9 +221,12 @@ bool TcpOutput::send(const FrameResult& result) {
 
         const std::string payload = json.str();
 
-        if (enable_file_output_ && file_output_.is_open()) {
-            file_output_ << payload;
-            file_output_.flush();
+        if (enable_file_output_) {
+            std::lock_guard<std::mutex> file_lock(file_mtx_);
+            if (file_output_.is_open()) {
+                file_output_ << payload;
+                file_output_.flush();
+            }
         }
 
         {
@@ -404,7 +409,10 @@ bool TcpOutput::setup_socket_locked() {
         LOGI("TcpOutput: connected to ", server_ip_, ":", server_port_);
 
         if (const char* env_snd = std::getenv("RKAPP_TCP_SNDBUF")) {
-            const int sz = std::atoi(env_snd);
+            const long sz_long = std::strtol(env_snd, nullptr, 10);
+            // Clamp to [1, 256 MiB] to guard against negative/overflow values
+            const int sz = (sz_long > 0 && sz_long <= 256L * 1024 * 1024)
+                ? static_cast<int>(sz_long) : 0;
             if (sz > 0 && setsockopt(socket_fd_, SOL_SOCKET, SO_SNDBUF, &sz, sizeof(sz)) == 0) {
                 LOGI("TcpOutput: SO_SNDBUF set to ", sz);
             }

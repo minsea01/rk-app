@@ -130,7 +130,9 @@ def main():
 
     # Write output files with error handling
     try:
-        os.makedirs(os.path.dirname(args.out_json), exist_ok=True)
+        out_dir = os.path.dirname(args.out_json)
+        if out_dir:  # dirname returns "" for bare filenames like "report.json"
+            os.makedirs(out_dir, exist_ok=True)
     except (OSError, PermissionError) as e:
         raise ConfigurationError(f"Failed to create output directory: {e}") from e
 
