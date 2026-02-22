@@ -81,8 +81,9 @@ def export(
     target = outdir / (outfile if outfile else onnx_path.name)
     if onnx_path.resolve() != target.resolve():
         try:
-            # 用字节复制而非 shutil.move，避免跨设备移动失败
+            # 用字节复制而非 shutil.move，避免跨设备移动失败；复制后删除原文件
             target.write_bytes(onnx_path.read_bytes())
+            onnx_path.unlink(missing_ok=True)
         except (IOError, OSError, PermissionError) as e:
             raise ModelLoadError(f"Failed to move ONNX file to {target}: {e}") from e
 

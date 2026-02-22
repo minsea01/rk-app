@@ -49,6 +49,7 @@ class ResultsServer:
         self.socket = None
         self.running = False
         self.result_count = 0
+        self._count_lock = threading.Lock()
 
         # Create output directory
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -159,11 +160,13 @@ class ResultsServer:
             result: Detection result dictionary
         """
         try:
-            self.result_count += 1
+            with self._count_lock:
+                self.result_count += 1
+                count_snapshot = self.result_count
 
             # Create result file with timestamp
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
-            frame_id = result.get("frame_id", self.result_count)
+            frame_id = result.get("frame_id", count_snapshot)
             filename = f"result_{timestamp}_frame{frame_id}.json"
             filepath = self.output_dir / filename
 
@@ -175,7 +178,7 @@ class ResultsServer:
             detections = len(result.get("detections", []))
             latency = result.get("latency_ms", 0)
             logger.info(
-                f"Result #{self.result_count}: {detections} detections, "
+                f"Result #{count_snapshot}: {detections} detections, "
                 f"latency={latency:.1f}ms → {filename}"
             )
 

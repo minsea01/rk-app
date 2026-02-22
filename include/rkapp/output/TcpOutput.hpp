@@ -29,6 +29,7 @@ private:
   struct QueuedPayload {
     std::string data;
     size_t offset = 0;
+    uint64_t id = 0;  // monotonic ID to detect front-element changes under concurrent send()
   };
 
   bool setup_socket();
@@ -66,6 +67,7 @@ private:
 
   std::deque<QueuedPayload> backlog_;
   size_t max_backlog_ = 64;
+  uint64_t next_payload_id_ = 0;  // guarded by backlog_mtx_
   mutable std::mutex backlog_mtx_;
   mutable std::mutex socket_mtx_;
   mutable std::mutex flush_mtx_;

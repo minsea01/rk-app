@@ -226,7 +226,7 @@ bool TcpOutput::send(const FrameResult& result) {
 
         {
             std::lock_guard<std::mutex> lock(backlog_mtx_);
-            backlog_.push_back(QueuedPayload{payload, 0});
+            backlog_.push_back(QueuedPayload{payload, 0, next_payload_id_++});
             if (backlog_.size() > max_backlog_) {
                 const uint64_t dropped = dropped_frames_.fetch_add(1, std::memory_order_relaxed) + 1;
                 LOGW("TcpOutput: backlog full (max=", max_backlog_, "), dropping oldest frame (total dropped: ", dropped, ")");
@@ -451,7 +451,9 @@ bool TcpOutput::flushBacklog() {
                         backlog_.pop_front();
                         delivered_any = true;
                         total_sent_.fetch_add(1, std::memory_order_relaxed);
-                    } else {
+                    } else if (backlog_.front().id == current.id) {
+                        // Guard: only write back offset if front hasn't been replaced by a
+                        // concurrent send() that dropped the oldest entry under backlog_mtx_.
                         backlog_.front().offset = current.offset;
                     }
                 }
@@ -491,6 +493,18 @@ bool TcpOutput::sendBuffer(QueuedPayload& payload) {
             }
 
             if (sent < 0 && (send_errno == EAGAIN || send_errno == EWOULDBLOCK)) {
+                // Brief poll before returning to avoid busy-spin when kernel send buffer is full.
+                int fd_copy;
+                {
+                    std::lock_guard<std::mutex> lock(socket_mtx_);
+                    fd_copy = socket_fd_;
+                }
+                if (fd_copy >= 0) {
+                    pollfd pfd{};
+                    pfd.fd = fd_copy;
+                    pfd.events = POLLOUT;
+                    ::poll(&pfd, 1, 1);  // 1ms backoff
+                }
                 return false;
             }
 
