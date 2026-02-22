@@ -264,7 +264,7 @@ def main():
 
         images = []
         for ext in ("*.jpg", "*.jpeg", "*.png", "*.bmp"):
-            images.extend(sorted(glob(str(calib / ext))))
+            images.extend(sorted(str(Path(p).resolve()) for p in glob(str(calib / ext))))
         if not images:
             raise ConfigurationError(f"No images found in calibration folder: {calib}")
         list_path = calib / "calib.txt"

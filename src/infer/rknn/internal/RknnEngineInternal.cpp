@@ -4,7 +4,6 @@
 #include <array>
 #include <cmath>
 #include <fstream>
-#include <mutex>
 #include <regex>
 #include <sstream>
 
@@ -165,11 +164,8 @@ std::vector<Detection> decodeAndPostprocess(const float* logits,
       return;
     }
 
-    static std::once_flag raw_decode_log_once;
-    std::call_once(raw_decode_log_once, [&]() {
-      LOGI(log_tag, ": RAW decode with ", (has_objectness ? "objectness" : "no objectness"),
-           ", cls_ch=", cls_ch);
-    });
+    LOGI(log_tag, ": RAW decode with ", (has_objectness ? "objectness" : "no objectness"),
+         ", cls_ch=", cls_ch);
 
     for (int i = 0; i < N; i++) {
       float cx = logits[0 * N + i];
@@ -255,8 +251,8 @@ std::vector<Detection> decodeAndPostprocess(const float* logits,
             float raw_x = logits[(kp_base + k * 3 + 0) * N + i];
             float raw_y = logits[(kp_base + k * 3 + 1) * N + i];
             float vis = sigmoid(logits[(kp_base + k * 3 + 2) * N + i]);
-            float kx = (layout.anchor_cx[i] + raw_x * 2.0f) * s;
-            float ky = (layout.anchor_cy[i] + raw_y * 2.0f) * s;
+            float kx = layout.anchor_cx[i] + raw_x * 2.0f * s;
+            float ky = layout.anchor_cy[i] + raw_y * 2.0f * s;
             // Reverse letterbox transform to original image coordinates
             kx = (kx - dx) / scale;
             ky = (ky - dy) / scale;

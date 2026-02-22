@@ -396,12 +396,14 @@ std::vector<Detection> RknnEngine::inferPreprocessed(
          preprocessed_image.rows);
     return {};
   }
+  // Impl 字段在 init() 后不再变更，通过持有 shared_ptr 保证对象存活；
+  // 此处读取无需再持有 state_mutex_（init 与 infer 不允许并发）。
   const int out_n_snapshot = impl->out_n;
   const int out_c_snapshot = impl->out_c;
   const int out_elems_snapshot = impl->out_elems;
-  const int out_n_dims_snapshot = impl->out_attr.n_dims;
-  const int out_dim1_snapshot = impl->out_attr.dims[1];
-  const int out_dim2_snapshot = impl->out_attr.dims[2];
+  const int out_n_dims_snapshot = static_cast<int>(impl->out_attr.n_dims);
+  const int out_dim1_snapshot = static_cast<int>(impl->out_attr.dims[1]);
+  const int out_dim2_snapshot = static_cast<int>(impl->out_attr.dims[2]);
   const uint32_t out_index_snapshot = impl->out_attr.index;
 
   // RKNN 训练/转换常用 RGB 输入；上游传入 BGR，这里统一转换一次。

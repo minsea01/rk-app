@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <memory>
 #include <functional>
+#include <mutex>
 #include <opencv2/opencv.hpp>
 
 namespace rkapp::common {
@@ -198,6 +199,8 @@ private:
     MemType mem_type_ = MemType::DRM_GEM;
 
     // RGA handle (cached to avoid repeated imports)
+    // rga_mutex_ guards lazy initialization of rga_handle_ in getRgaHandle().
+    mutable std::mutex rga_mutex_;
     mutable uint64_t rga_handle_ = 0;
 
     // DRM handle for GEM allocations

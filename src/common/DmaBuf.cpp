@@ -368,10 +368,15 @@ uint64_t DmaBuf::getPhysAddr() const {
 
 uint64_t DmaBuf::getRgaHandle() const {
 #if RKAPP_HAS_RGA
+    // Fast path: 已初始化时无需加锁。
     if (rga_handle_ != 0) return rga_handle_;
     if (fd_ < 0) return 0;
 
-    // Import DMA-BUF fd into RGA
+    // Slow path: 用 rga_mutex_ 保护 lazy init，防止多线程重复 import fd。
+    std::lock_guard<std::mutex> lock(rga_mutex_);
+    // Double-check：另一个线程可能已完成初始化。
+    if (rga_handle_ != 0) return rga_handle_;
+
     rga_buffer_handle_t handle = importbuffer_fd(fd_, size_);
     if (handle == 0) {
         LOGE("DmaBuf::getRgaHandle: importbuffer_fd failed");

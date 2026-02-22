@@ -374,12 +374,20 @@ bool MppSource::read(cv::Mat& frame) {
         }
 
         // 把 AVPacket 包装成 MPP packet 后送入硬解码器。
+        // EOF flush 路径：发送带 EOS 标记的空包触发解码器 drain；
+        // 正常路径：包装真实码流数据。
         MppPacket mpp_pkt = nullptr;
-        mpp_packet_init(&mpp_pkt, impl_->pkt->data, impl_->pkt->size);
-
-        // 保留时间戳，便于后续做同步/统计（如果上层需要）。
-        if (impl_->pkt->pts != AV_NOPTS_VALUE) {
-            mpp_packet_set_pts(mpp_pkt, impl_->pkt->pts);
+        if (impl_->eof_reached) {
+            // av_packet_unref 已被调用，data=nullptr/size=0。
+            // MPP 需要显式 EOS 包才能 drain 内部缓冲帧。
+            mpp_packet_init(&mpp_pkt, nullptr, 0);
+            mpp_packet_set_eos(mpp_pkt, 1);
+        } else {
+            mpp_packet_init(&mpp_pkt, impl_->pkt->data, impl_->pkt->size);
+            // 保留时间戳，便于后续做同步/统计（如果上层需要）。
+            if (impl_->pkt->pts != AV_NOPTS_VALUE) {
+                mpp_packet_set_pts(mpp_pkt, impl_->pkt->pts);
+            }
         }
 
         // Send packet to decoder
