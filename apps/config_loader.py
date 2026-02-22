@@ -189,14 +189,21 @@ class ConfigLoader:
         Returns:
             Model configuration dictionary
         """
+        def _check_imgsz(x: int) -> None:
+            if x not in [416, 640]:
+                raise ValueError(f"Image size must be 416 or 640, got {x}")
+
+        def _check_threshold(x: float, name: str) -> None:
+            if not (0.0 < x < 1.0):
+                raise ValueError(f"{name} must be in (0, 1), got {x}")
+
         # Image size
         size = self.get(
             "imgsz",
             cli_value=imgsz,
             default=ModelConfig.DEFAULT_SIZE,
             value_type=int,
-            validate=lambda x: x in [416, 640]
-            or (_ for _ in ()).throw(ValueError(f"Image size must be 416 or 640, got {x}")),
+            validate=_check_imgsz,
         )
 
         # Confidence threshold
@@ -205,10 +212,7 @@ class ConfigLoader:
             cli_value=conf_threshold,
             default=ModelConfig.CONF_THRESHOLD_DEFAULT,
             value_type=float,
-            validate=lambda x: 0.0 < x < 1.0
-            or (_ for _ in ()).throw(
-                ValueError(f"Confidence threshold must be in (0, 1), got {x}")
-            ),
+            validate=lambda x: _check_threshold(x, "Confidence threshold"),
         )
 
         # IOU threshold
@@ -217,8 +221,7 @@ class ConfigLoader:
             cli_value=iou_threshold,
             default=ModelConfig.IOU_THRESHOLD_DEFAULT,
             value_type=float,
-            validate=lambda x: 0.0 < x < 1.0
-            or (_ for _ in ()).throw(ValueError(f"IOU threshold must be in (0, 1), got {x}")),
+            validate=lambda x: _check_threshold(x, "IOU threshold"),
         )
 
         # Max detections based on size
@@ -254,13 +257,16 @@ class ConfigLoader:
             value_type=str,
         )
 
+        def _check_opt_level(x: int) -> None:
+            if not (0 <= x <= 3):
+                raise ValueError(f"Optimization level must be 0-3, got {x}")
+
         opt_level = self.get(
             "optimization_level",
             cli_value=optimization_level,
             default=RKNNConfig.OPTIMIZATION_LEVEL,
             value_type=int,
-            validate=lambda x: 0 <= x <= 3
-            or (_ for _ in ()).throw(ValueError(f"Optimization level must be 0-3, got {x}")),
+            validate=_check_opt_level,
         )
 
         mask = self.get(
@@ -285,13 +291,16 @@ class ConfigLoader:
         Returns:
             Log level string (DEBUG, INFO, WARNING, ERROR, CRITICAL)
         """
+        def _check_log_level(x: str) -> None:
+            if x.upper() not in ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]:
+                raise ValueError(f"Invalid log level: {x}")
+
         level = self.get(
             "log_level",
             cli_value=cli_value,
             default="INFO",
             value_type=str,
-            validate=lambda x: x.upper() in ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
-            or (_ for _ in ()).throw(ValueError(f"Invalid log level: {x}")),
+            validate=_check_log_level,
         )
         return level.upper()
 

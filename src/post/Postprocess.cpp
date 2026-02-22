@@ -212,67 +212,67 @@ std::vector<rkapp::infer::Detection> Postprocess::nms(
         const float ref_area = boxes[i].area;
 
 #if RKAPP_HAS_NEON && RKAPP_HAS_OPENMP
-        // NEON + OpenMP path for large N
+        // NEON + OpenMP path for large N.
+        // 步进为 4，每次处理一个 NEON 组（4 个 box）。
+        // 注意：OpenMP parallel for 不允许 break，所以 tail(<4) 的处理放在循环外。
         if (n - i > 100) {
             const float iou_thres = config.iou_thres;
+            // 计算有多少个完整的 4-box 组
+            const size_t aligned_end = i + 1 + ((n - i - 1) / 4) * 4;
 
-            #pragma omp parallel for schedule(static, 16) if(n - i > 200)
-            for (size_t j = i + 1; j < n; j += 4) {
-                if (j + 4 <= n) {
-                    // Check class match for all 4
-                    bool all_same_class =
-                        (boxes[j].class_id == ref_class) &&
-                        (boxes[j+1].class_id == ref_class) &&
-                        (boxes[j+2].class_id == ref_class) &&
-                        (boxes[j+3].class_id == ref_class);
+            #pragma omp parallel for schedule(static, 4) if(n - i > 200)
+            for (size_t j = i + 1; j < aligned_end; j += 4) {
+                // Check class match for all 4
+                bool all_same_class =
+                    (boxes[j].class_id == ref_class) &&
+                    (boxes[j+1].class_id == ref_class) &&
+                    (boxes[j+2].class_id == ref_class) &&
+                    (boxes[j+3].class_id == ref_class);
 
-                    if (all_same_class) {
-                        // Load 4 candidates
-                        float32x4_t cand_x1 = vld1q_f32(&all_x1[j]);
-                        float32x4_t cand_y1 = vld1q_f32(&all_y1[j]);
-                        float32x4_t cand_x2 = vld1q_f32(&all_x2[j]);
-                        float32x4_t cand_y2 = vld1q_f32(&all_y2[j]);
-                        float32x4_t cand_area = vld1q_f32(&all_area[j]);
+                if (all_same_class) {
+                    // NEON path: 4 路并行 IoU
+                    float32x4_t cand_x1 = vld1q_f32(&all_x1[j]);
+                    float32x4_t cand_y1 = vld1q_f32(&all_y1[j]);
+                    float32x4_t cand_x2 = vld1q_f32(&all_x2[j]);
+                    float32x4_t cand_y2 = vld1q_f32(&all_y2[j]);
+                    float32x4_t cand_area = vld1q_f32(&all_area[j]);
 
-                        float32x4_t iou = calculateIOU_NEON(
-                            ref_x1, ref_y1, ref_x2, ref_y2, ref_area,
-                            cand_x1, cand_y1, cand_x2, cand_y2, cand_area);
+                    float32x4_t iou = calculateIOU_NEON(
+                        ref_x1, ref_y1, ref_x2, ref_y2, ref_area,
+                        cand_x1, cand_y1, cand_x2, cand_y2, cand_area);
 
-                        // Extract and compare
-                        float iou_vals[4];
-                        vst1q_f32(iou_vals, iou);
+                    float iou_vals[4];
+                    vst1q_f32(iou_vals, iou);
 
-                        for (int k = 0; k < 4; ++k) {
-                            if (!suppressed[j+k].load(std::memory_order_relaxed) && iou_vals[k] > iou_thres) {
-                                suppressed[j+k].store(true, std::memory_order_release);
-                            }
-                        }
-                    } else {
-                        // Scalar fallback for mixed classes
-                        for (size_t k = j; k < j + 4 && k < n; ++k) {
-                            if (!suppressed[k].load(std::memory_order_relaxed) && boxes[k].class_id == ref_class) {
-                                float iou = calculateIOU(
-                                    detections[boxes[i].original_idx],
-                                    detections[boxes[k].original_idx]);
-                                if (iou > iou_thres) {
-                                    suppressed[k].store(true, std::memory_order_release);
-                                }
-                            }
+                    for (int k = 0; k < 4; ++k) {
+                        if (!suppressed[j+k].load(std::memory_order_acquire) && iou_vals[k] > iou_thres) {
+                            suppressed[j+k].store(true, std::memory_order_release);
                         }
                     }
                 } else {
-                    // Handle remaining boxes (< 4)
-                    for (size_t k = j; k < n; ++k) {
-                        if (!suppressed[k].load(std::memory_order_relaxed) && boxes[k].class_id == ref_class) {
+                    // 混合类别，标量回退
+                    for (size_t k = j; k < j + 4; ++k) {
+                        if (!suppressed[k].load(std::memory_order_acquire) && boxes[k].class_id == ref_class) {
                             float iou = calculateIOU(
                                 detections[boxes[i].original_idx],
                                 detections[boxes[k].original_idx]);
-                            if (iou > config.iou_thres) {
+                            if (iou > iou_thres) {
                                 suppressed[k].store(true, std::memory_order_release);
                             }
                         }
                     }
-                    break;
+                }
+            }
+
+            // 处理尾部（不足 4 个的剩余 box），串行执行
+            for (size_t k = aligned_end; k < n; ++k) {
+                if (!suppressed[k].load(std::memory_order_acquire) && boxes[k].class_id == ref_class) {
+                    float iou = calculateIOU(
+                        detections[boxes[i].original_idx],
+                        detections[boxes[k].original_idx]);
+                    if (iou > config.iou_thres) {
+                        suppressed[k].store(true, std::memory_order_release);
+                    }
                 }
             }
         } else
@@ -283,7 +283,7 @@ std::vector<rkapp::infer::Detection> Postprocess::nms(
             #pragma omp parallel for schedule(dynamic) if(n - i > 100)
 #endif
             for (size_t j = i + 1; j < n; ++j) {
-                if (!suppressed[j].load(std::memory_order_relaxed) && boxes[j].class_id == ref_class) {
+                if (!suppressed[j].load(std::memory_order_acquire) && boxes[j].class_id == ref_class) {
                     float iou = calculateIOU(
                         detections[boxes[i].original_idx],
                         detections[boxes[j].original_idx]);

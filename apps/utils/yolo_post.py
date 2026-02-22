@@ -613,8 +613,8 @@ def postprocess_yolov8_pose(
 
     # Decode keypoints in input image coordinates
     raw_kpts = raw_kpts.reshape(n, num_keypoints, 3)  # (N, 17, 3)
-    kpt_x = (cx[:, None] + raw_kpts[:, :, 0] * 2.0) * s_map[:, None]
-    kpt_y = (cy[:, None] + raw_kpts[:, :, 1] * 2.0) * s_map[:, None]
+    kpt_x = cx[:, None] + raw_kpts[:, :, 0] * 2.0 * s_map[:, None]
+    kpt_y = cy[:, None] + raw_kpts[:, :, 1] * 2.0 * s_map[:, None]
     kpt_vis = sigmoid(raw_kpts[:, :, 2])
     keypoints_all = np.stack([kpt_x, kpt_y, kpt_vis], axis=-1)  # (N, 17, 3)
 
