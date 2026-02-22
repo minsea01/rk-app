@@ -193,6 +193,16 @@ DetectionPipeline::~DetectionPipeline() {
 }
 
 bool DetectionPipeline::init(const PipelineConfig& config) {
+    // Release any previously acquired resources before reinitializing
+    if (impl_->engine) {
+        impl_->engine->release();
+        impl_->engine.reset();
+    }
+    if (impl_->source) {
+        impl_->source->release();
+        impl_->source.reset();
+    }
+
     impl_->config = config;
     impl_->rknn_engine = nullptr;
     impl_->calibration = {};
@@ -590,10 +600,12 @@ void DetectionPipeline::stop() {
 
     if (impl_->engine) {
         impl_->engine->release();
+        impl_->engine.reset();
     }
 
     if (impl_->source) {
         impl_->source->release();
+        impl_->source.reset();
     }
 }
 
