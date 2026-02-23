@@ -128,7 +128,7 @@ struct DetectionPipeline::Impl {
     // State
     std::atomic<bool> running{false};
     std::atomic<bool> initialized{false};
-    int64_t frame_counter{0};
+    std::atomic<int64_t> frame_counter{0};
 
     // Statistics
     mutable std::mutex stats_mutex;
@@ -213,6 +213,7 @@ bool DetectionPipeline::init(const PipelineConfig& config) {
     impl_->undistort_map2.release();
     impl_->undistort_size = {0, 0};
     impl_->preprocess_flags = resolveFeatureFlags(config);
+    impl_->frame_counter.store(0, std::memory_order_relaxed);
 
     if (config.enable_undistort) {
         if (config.calibration_file.empty()) {
@@ -339,7 +340,7 @@ std::optional<PipelineResult> DetectionPipeline::next() {
     result.timing.capture_us = std::max<int64_t>(
         0, elapsed_from_capture_start - result.timing.total_us);
     result.timing.total_us = elapsed_from_capture_start;
-    result.frame_id = impl_->frame_counter++;
+    result.frame_id = impl_->frame_counter.fetch_add(1, std::memory_order_relaxed);
 
     impl_->updateFps();
     impl_->updateStats(result);

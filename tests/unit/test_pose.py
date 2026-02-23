@@ -306,7 +306,7 @@ class TestPostprocessYolov8Pose:
             )
 
     def test_keypoint_decode_formula(self):
-        """Verify keypoint decode: kpt = (anchor + raw * 2) * stride."""
+        """Verify keypoint decode: kpt = anchor_pixels + raw * 2 * stride."""
         img_size = 416
         reg_max = 16
         nc = 1
@@ -339,10 +339,10 @@ class TestPostprocessYolov8Pose:
         assert len(keypoints) >= 1
         kpt = keypoints[0, 0]  # first detection, first keypoint
 
-        # anchor center for idx 0, stride 8: cx=4, cy=4
-        # kpt_x = (4 + 0.5 * 2) * 8 = 5 * 8 = 40
-        # kpt_y = (4 + 0.25 * 2) * 8 = 4.5 * 8 = 36
-        assert abs(kpt[0] - 40.0) < 0.5, f"kpt_x={kpt[0]}, expected ~40"
-        assert abs(kpt[1] - 36.0) < 0.5, f"kpt_y={kpt[1]}, expected ~36"
+        # anchor center for idx 0, stride 8: cx_pixels=4, cy_pixels=4
+        # kpt_x = cx + raw_x * 2 * stride = 4 + 0.5 * 2 * 8 = 12
+        # kpt_y = cy + raw_y * 2 * stride = 4 + 0.25 * 2 * 8 = 8
+        assert abs(kpt[0] - 12.0) < 0.5, f"kpt_x={kpt[0]}, expected ~12"
+        assert abs(kpt[1] - 8.0) < 0.5, f"kpt_y={kpt[1]}, expected ~8"
         # visibility: sigmoid(3.0) ≈ 0.953
         assert 0.94 < kpt[2] < 0.97, f"kpt_vis={kpt[2]}, expected ~0.953"

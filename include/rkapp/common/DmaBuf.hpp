@@ -4,6 +4,7 @@
 #include <memory>
 #include <functional>
 #include <mutex>
+#include <optional>
 #include <opencv2/opencv.hpp>
 
 namespace rkapp::common {
@@ -187,6 +188,7 @@ public:
 private:
     void release();
     bool sync(uint64_t flags);
+    void resetVirtAddrOnceFlag();
 
     int fd_ = -1;              // DMA-BUF file descriptor
     void* virt_addr_ = nullptr; // Mapped virtual address
@@ -213,6 +215,8 @@ private:
     // DMA-BUF sync capability
     bool sync_supported_ = true;
     bool sync_warned_ = false;
+    // Guards lazy mmap in getVirtAddr() to prevent concurrent double-mmap.
+    mutable std::optional<std::once_flag> virt_addr_once_{std::in_place};
 };
 
 /**

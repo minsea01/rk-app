@@ -12,8 +12,9 @@ import json
 import pytest
 import numpy as np
 
-# Skip entire module if matplotlib is not installed
+# Skip entire module if optional visualization deps are not installed
 pytest.importorskip("matplotlib", reason="matplotlib not installed")
+pytest.importorskip("seaborn", reason="seaborn not installed")
 
 from tools.model_evaluation import ModelEvaluator
 

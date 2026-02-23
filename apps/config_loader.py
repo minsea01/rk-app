@@ -190,6 +190,7 @@ class ConfigLoader:
         Returns:
             Model configuration dictionary
         """
+
         def _check_imgsz(x: int) -> None:
             if x not in [416, 640]:
                 raise ValueError(f"Image size must be 416 or 640, got {x}")
@@ -292,6 +293,7 @@ class ConfigLoader:
         Returns:
             Log level string (DEBUG, INFO, WARNING, ERROR, CRITICAL)
         """
+
         def _check_log_level(x: str) -> None:
             if x.upper() not in ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]:
                 raise ValueError(f"Invalid log level: {x}")

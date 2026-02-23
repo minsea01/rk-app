@@ -3,6 +3,7 @@
 
 import pytest
 import logging
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 import tempfile
 import sys
@@ -58,6 +59,16 @@ class TestSetupLogger:
             # Check message was written
             content = log_file.read_text()
             assert "test message" in content
+
+    def test_setup_logger_uses_rotating_file_handler(self):
+        """Test file logging uses rotation handler to cap disk usage."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_file = Path(tmpdir) / "rotate.log"
+            logger = setup_logger("test_rotate_handler", log_file=log_file)
+            rotating_handlers = [h for h in logger.handlers if isinstance(h, RotatingFileHandler)]
+            assert len(rotating_handlers) == 1
+            assert rotating_handlers[0].maxBytes > 0
+            assert rotating_handlers[0].backupCount > 0
 
     def test_setup_logger_file_directory_created(self):
         """Test logger creates parent directories for log file."""

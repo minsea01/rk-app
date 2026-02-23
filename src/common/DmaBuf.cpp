@@ -130,6 +130,7 @@ DmaBuf::DmaBuf(DmaBuf&& other) noexcept
     other.drm_fd_ = -1;
     other.gem_handle_ = 0;
     other.owns_fd_ = false;
+    other.resetVirtAddrOnceFlag();
 }
 
 DmaBuf& DmaBuf::operator=(DmaBuf&& other) noexcept {
@@ -156,8 +157,13 @@ DmaBuf& DmaBuf::operator=(DmaBuf&& other) noexcept {
         other.drm_fd_ = -1;
         other.gem_handle_ = 0;
         other.owns_fd_ = false;
+        other.resetVirtAddrOnceFlag();
     }
     return *this;
+}
+
+void DmaBuf::resetVirtAddrOnceFlag() {
+    virt_addr_once_.emplace();
 }
 
 void DmaBuf::release() {
@@ -203,6 +209,7 @@ void DmaBuf::release() {
     owns_fd_ = false;
     sync_supported_ = true;
     sync_warned_ = false;
+    resetVirtAddrOnceFlag();
 }
 
 bool DmaBuf::allocate(int width, int height, PixelFormat format, MemType mem_type) {
@@ -325,35 +332,42 @@ int DmaBuf::exportFd() const {
 }
 
 void* DmaBuf::getVirtAddr() {
-    if (virt_addr_ != nullptr) return virt_addr_;
     if (fd_ < 0) return nullptr;
+    if (!virt_addr_once_.has_value()) {
+        resetVirtAddrOnceFlag();
+    }
 
-#if defined(__aarch64__) || defined(__arm__)
-    // For GEM buffers, get mmap offset first
-    if (drm_fd_ >= 0 && gem_handle_ != 0) {
-        struct drm_rockchip_gem_map_offset map_args = {};
-        map_args.handle = gem_handle_;
-
-        int ret = ioctl(drm_fd_, DRM_IOCTL_ROCKCHIP_GEM_MAP_OFFSET, &map_args);
-        if (ret < 0) {
-            LOGE("DmaBuf::getVirtAddr: DRM_IOCTL_ROCKCHIP_GEM_MAP_OFFSET failed");
-            return nullptr;
+    std::call_once(*virt_addr_once_, [this]() {
+        if (virt_addr_ != nullptr || fd_ < 0) {
+            return;
         }
 
-        virt_addr_ = mmap(nullptr, size_, PROT_READ | PROT_WRITE, MAP_SHARED,
-                          drm_fd_, map_args.offset);
-    } else
-#endif
-    {
-        // Direct mmap for memfd or imported DMA-BUF
-        virt_addr_ = mmap(nullptr, size_, PROT_READ | PROT_WRITE, MAP_SHARED, fd_, 0);
-    }
+#if defined(__aarch64__) || defined(__arm__)
+        // For GEM buffers, get mmap offset first.
+        if (drm_fd_ >= 0 && gem_handle_ != 0) {
+            struct drm_rockchip_gem_map_offset map_args = {};
+            map_args.handle = gem_handle_;
 
-    if (virt_addr_ == MAP_FAILED) {
-        LOGE("DmaBuf::getVirtAddr: mmap failed: ", strerror(errno));
-        virt_addr_ = nullptr;
-        return nullptr;
-    }
+            int ret = ioctl(drm_fd_, DRM_IOCTL_ROCKCHIP_GEM_MAP_OFFSET, &map_args);
+            if (ret < 0) {
+                LOGE("DmaBuf::getVirtAddr: DRM_IOCTL_ROCKCHIP_GEM_MAP_OFFSET failed");
+                return;
+            }
+
+            virt_addr_ = mmap(nullptr, size_, PROT_READ | PROT_WRITE, MAP_SHARED,
+                              drm_fd_, map_args.offset);
+        } else
+#endif
+        {
+            // Direct mmap for memfd or imported DMA-BUF.
+            virt_addr_ = mmap(nullptr, size_, PROT_READ | PROT_WRITE, MAP_SHARED, fd_, 0);
+        }
+
+        if (virt_addr_ == MAP_FAILED) {
+            LOGE("DmaBuf::getVirtAddr: mmap failed: ", strerror(errno));
+            virt_addr_ = nullptr;
+        }
+    });
 
     return virt_addr_;
 }

@@ -29,13 +29,13 @@ logger = setup_logger(__name__, level="INFO")
 
 
 def export(
-    weights: str,   # PyTorch 权重文件路径，如 yolo11n.pt
-    imgsz: int,     # 输入图像尺寸（正方形边长），影响 ONNX 静态 shape
-    opset: int,     # ONNX 算子集版本，RKNN 要求 ≤ 12
-    simplify: bool, # 是否使用 onnx-simplifier 化简计算图
+    weights: str,  # PyTorch 权重文件路径，如 yolo11n.pt
+    imgsz: int,  # 输入图像尺寸（正方形边长），影响 ONNX 静态 shape
+    opset: int,  # ONNX 算子集版本，RKNN 要求 ≤ 12
+    simplify: bool,  # 是否使用 onnx-simplifier 化简计算图
     dynamic: bool,  # 是否导出动态 batch size（RKNN 转换时须关闭）
-    half: bool,     # 是否导出 FP16（仅 GPU 支持，RKNN 用 INT8 量化，通常不需要）
-    outdir: Path,   # 输出目录，如 artifacts/models/
+    half: bool,  # 是否导出 FP16（仅 GPU 支持，RKNN 用 INT8 量化，通常不需要）
+    outdir: Path,  # 输出目录，如 artifacts/models/
     outfile: str = None,  # 自定义输出文件名，默认沿用 Ultralytics 生成的名字
 ):
     # 确保输出目录存在，不存在则递归创建
@@ -68,10 +68,10 @@ def export(
         onnx_path = model.export(
             format="onnx",
             imgsz=imgsz,
-            opset=opset,      # RKNN toolkit2 推荐 opset=12
-            simplify=simplify, # 化简后算子更少，RKNN 转换更稳定
+            opset=opset,  # RKNN toolkit2 推荐 opset=12
+            simplify=simplify,  # 化简后算子更少，RKNN 转换更稳定
             dynamic=dynamic,  # RKNN 转换要求静态 shape，保持 False
-            half=half,        # FP16 导出，RKNN INT8 量化流程不需要
+            half=half,  # FP16 导出，RKNN INT8 量化流程不需要
         )
     except (RuntimeError, ValueError, TypeError) as e:
         raise ModelLoadError(f"Failed to export model to ONNX: {e}") from e
@@ -92,7 +92,9 @@ def export(
 
 
 def main():
-    p = argparse.ArgumentParser(description="Export YOLOv8/YOLO11 .pt -> .onnx (for RKNN conversion)")
+    p = argparse.ArgumentParser(
+        description="Export YOLOv8/YOLO11 .pt -> .onnx (for RKNN conversion)"
+    )
     # 输入权重文件，支持 yolov8n.pt / yolo11n.pt 等所有 Ultralytics 模型
     p.add_argument("--weights", type=str, default="yolov8s.pt", help="YOLOv8 .pt weights")
     # 图像尺寸：生产用 416（避免 NPU Transpose 限制），开发验证可用 640

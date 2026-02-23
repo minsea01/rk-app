@@ -14,6 +14,7 @@
 import argparse
 import logging
 import time
+from collections import deque
 from pathlib import Path
 
 import cv2
@@ -171,6 +172,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
         choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
         help="logging verbosity",
     )
+    ap.add_argument(
+        "--max-reconnect",
+        type=int,
+        default=100,
+        help="maximum consecutive reconnect attempts before exit",
+    )
     return ap
 
 
@@ -320,6 +327,11 @@ def main():
     reconnect_delay = 0.5
     reconnect_max = 5.0
     reconnect_attempts = 0
+    max_reconnect = args.max_reconnect
+    if max_reconnect < 1:
+        raise PreprocessError("--max-reconnect must be >= 1")
+    # 保留最近一段窗口即可，避免长时间运行时内存持续增长。
+    fps_hist = deque(maxlen=1000)
 
     def open_camera():
         """尝试打开默认摄像头，失败则返回 None。"""
@@ -338,8 +350,6 @@ def main():
                 cap = None  # Prevent double-release in finally block
             raise PreprocessError("Failed to open camera (/dev/video0)")
 
-        # 记录每帧 FPS，最后输出平均值和 P90，便于快速做性能体感评估。
-        fps_hist = []
         while True:
             if cap is None or not cap.isOpened():
                 cap = open_camera()
@@ -348,6 +358,10 @@ def main():
                     if reconnect_attempts % 10 == 1:
                         logger.warning(
                             "Camera unavailable; retrying (attempt %d)", reconnect_attempts
+                        )
+                    if reconnect_attempts >= max_reconnect:
+                        raise PreprocessError(
+                            f"Camera reconnect exceeded max attempts ({max_reconnect})"
                         )
                     time.sleep(reconnect_delay)
                     # 指数退避：0.5s -> 1s -> 2s -> ... -> 5s（上限）
@@ -363,11 +377,17 @@ def main():
                     logger.warning(
                         "Video capture failed; reconnecting (attempt %d)", reconnect_attempts
                     )
+                if reconnect_attempts >= max_reconnect:
+                    raise PreprocessError(
+                        f"Video capture reconnect exceeded max attempts ({max_reconnect})"
+                    )
                 cap.release()
                 cap = None
                 time.sleep(reconnect_delay)
                 reconnect_delay = min(reconnect_max, reconnect_delay * 2)
                 continue
+            reconnect_attempts = 0
+            reconnect_delay = 0.5
             try:
                 img, frame_meta, coord_frame = run_preprocess(
                     img0, args.imgsz, preprocess_config, preprocess_state, logger=logger

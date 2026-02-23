@@ -7,8 +7,12 @@ making it easier to control log levels and output formats.
 
 import logging
 import sys
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Optional
+
+DEFAULT_LOG_MAX_BYTES = 10 * 1024 * 1024
+DEFAULT_LOG_BACKUP_COUNT = 5
 
 
 def setup_logger(
@@ -70,7 +74,17 @@ def setup_logger(
             None,
         )
         if existing_file_handler is None:
-            file_handler = logging.FileHandler(log_file)
+            file_handler = RotatingFileHandler(
+                log_file, maxBytes=DEFAULT_LOG_MAX_BYTES, backupCount=DEFAULT_LOG_BACKUP_COUNT
+            )
+            file_handler.setFormatter(formatter)
+            logger.addHandler(file_handler)
+        elif not isinstance(existing_file_handler, RotatingFileHandler):
+            logger.removeHandler(existing_file_handler)
+            existing_file_handler.close()
+            file_handler = RotatingFileHandler(
+                log_file, maxBytes=DEFAULT_LOG_MAX_BYTES, backupCount=DEFAULT_LOG_BACKUP_COUNT
+            )
             file_handler.setFormatter(formatter)
             logger.addHandler(file_handler)
     # Ensure all handlers share the configured level and formatter
