@@ -1,0 +1,56 @@
+# ============================================================
+# OV5640 MIPI CSI 行人检测配置（用于答辩现场 Demo）
+# ------------------------------------------------------------
+# 硬件链路：
+#   OV5640 → MIPI CSI-2 → rkcif → /dev/video0 → v4l2src
+#   → NV12 → [RGA letterbox] → RKNN NPU (3核) → NMS
+#   → TCP @ eth1 (网口2，上传检测结果)
+#
+# 答辩命令示例：
+#   ./build/arm64-release/detect_cli --cfg config/detection/detect_ov5640.yaml
+# ============================================================
+
+source:
+  type: csi                   # 使用 CsiSource (GStreamer v4l2src)
+  # OV5640 1080p@30fps 采集
+  # device=/dev/video0 按真机实际 v4l2-ctl --list-devices 的结果调整
+  # format=NV12 是 RK3588 rkcif 的默认输出，也是 RGA 最友好的格式
+  uri: "device=/dev/video0,width=1920,height=1080,framerate=30,format=NV12"
+
+engine:
+  type: rknn                  # 板端走 RKNN NPU
+  model: "artifacts/models/best_int8.rknn"
+  input_size: [640, 640]      # 与训练/量化一致
+
+preprocess:
+  profile: speed              # 板端用 speed 档位 (优先走 RGA 硬件加速)
+  undistort:
+    enable: false             # OV5640 广角畸变不大，毕设可不开；需要时填标定文件
+    calibration_file: ""
+  roi:
+    enable: false
+  gamma:
+    enable: false
+  white_balance:
+    enable: false
+  denoise:
+    enable: false
+
+postprocess:
+  conf_threshold: 0.50        # 生产阈值，避免 NMS 瓶颈 (见 PERFORMANCE_ANALYSIS.md)
+  nms_threshold: 0.50
+  max_detections: 300
+
+runtime:
+  warmup: 10                  # OV5640 AWB/AE 收敛需要几帧时间
+  async: true                 # 启用异步流水线，FPS 再提升 20-30%
+
+output:
+  type: tcp
+  # 结果走 eth1 (任务书"网口2"指定)
+  # 上位机如果在同一台 PC，改成 PC 的 IP
+  tcp:
+    host: "192.168.137.1"
+    port: 9000
+
+classes: "config/person_classes.txt"
