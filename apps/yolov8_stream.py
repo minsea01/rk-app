@@ -144,6 +144,38 @@ class StageStats:
         }
 
 
+def _stage_failure_limit(queue_size: int) -> int:
+    """Return tolerated consecutive frame failures before aborting a stage."""
+    return max(8, queue_size * 3)
+
+
+def _handle_stage_frame_error(
+    *,
+    stage_name: str,
+    error: Exception,
+    consecutive_failures: int,
+    failure_limit: int,
+    logger: logging.Logger,
+) -> bool:
+    """Log a per-frame stage error and tell caller whether to abort the pipeline."""
+    if consecutive_failures >= failure_limit:
+        logger.error(
+            "%s failed for %d consecutive frames; stopping pipeline: %s",
+            stage_name,
+            consecutive_failures,
+            error,
+        )
+        return True
+    logger.warning(
+        "%s failed on frame %d/%d; dropping frame and continuing: %s",
+        stage_name,
+        consecutive_failures,
+        failure_limit,
+        error,
+    )
+    return False
+
+
 def run_stream(args) -> None:
     """Run the streaming inference pipeline.
 
@@ -229,6 +261,7 @@ def run_stream(args) -> None:
         "infer": StageStats(),
         "post": StageStats(),
     }
+    frame_failure_limit = _stage_failure_limit(args.queue)
     # shared upload throttle state
     pending_upload = None
     last_sent = 0.0
@@ -279,6 +312,7 @@ def run_stream(args) -> None:
     def t_preproc() -> None:
         """Preprocessing thread: letterbox resize and prepare input."""
         dropped_frames = 0
+        consecutive_failures = 0
         while not stop.is_set():
             try:
                 frame, t0, t1 = q_cap.get(timeout=0.1)
@@ -301,10 +335,18 @@ def run_stream(args) -> None:
                     if dropped_frames % 100 == 1:
                         logger.debug(f"Preproc queue full, dropped {dropped_frames} frames")
                 stats["preproc"].add(t3 - t2)
+                consecutive_failures = 0
             except PreprocessError as e:
-                logger.error(f"Preproc thread error: {e}")
-                stop.set()
-                break
+                consecutive_failures += 1
+                if _handle_stage_frame_error(
+                    stage_name="Preprocess",
+                    error=e,
+                    consecutive_failures=consecutive_failures,
+                    failure_limit=frame_failure_limit,
+                    logger=logger,
+                ):
+                    stop.set()
+                    break
         stop.set()
 
     rknn = RKNNLite()
@@ -369,6 +411,7 @@ def run_stream(args) -> None:
         writer_size = None
         count = 0
         dropped_uploads = 0
+        consecutive_failures = 0
         t_start = time.perf_counter()
         while not stop.is_set():
             try:
@@ -390,9 +433,18 @@ def run_stream(args) -> None:
                 except (ValueError, TypeError, cv2.error) as e:
                     raise InferenceError(f"Postprocess failed: {e}") from e
             except InferenceError as e:
-                logger.error(f"Postprocess error: {e}")
-                stop.set()
-                break
+                consecutive_failures += 1
+                if _handle_stage_frame_error(
+                    stage_name="Postprocess",
+                    error=e,
+                    consecutive_failures=consecutive_failures,
+                    failure_limit=frame_failure_limit,
+                    logger=logger,
+                ):
+                    stop.set()
+                    break
+                continue
+            consecutive_failures = 0
             # draw
             for (x1, y1, x2, y2), c, cls in zip(boxes.astype(int), confs, cls_ids):
                 label = f"{int(cls)}:{c:.2f}"

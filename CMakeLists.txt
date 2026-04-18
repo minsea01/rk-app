@@ -194,9 +194,11 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm")
         message(STATUS "Found libdrm - DMA-BUF zero-copy enabled")
     endif()
 endif()
-if(YAML_CPP_FOUND)
-    target_link_libraries(rkapp_core PUBLIC ${YAML_CPP_LIBRARIES})
-    target_include_directories(rkapp_core PUBLIC ${YAML_CPP_INCLUDE_DIRS})
+if(HAVE_YAML_CPP)
+    target_link_libraries(rkapp_core PUBLIC ${YAML_CPP_TARGET})
+    if(YAML_CPP_INCLUDE_DIRS)
+      target_include_directories(rkapp_core PUBLIC ${YAML_CPP_INCLUDE_DIRS})
+    endif()
 endif()
 if((ENABLE_GIGE OR ENABLE_CSI) AND GST_FOUND AND GST_APP_FOUND)
     target_link_libraries(rkapp_core PUBLIC ${GST_LIBRARIES} ${GST_APP_LIBRARIES})
@@ -368,9 +370,12 @@ if (ENABLE_RKNN)
 endif()
 
 # High-performance detection pipeline (integrates all hardware acceleration)
-add_library(rkapp_pipeline src/pipeline/DetectionPipeline.cpp)
+add_library(rkapp_pipeline
+    src/pipeline/DetectionPipeline.cpp
+    src/pipeline/PipelineConfigLoader.cpp
+)
 target_include_directories(rkapp_pipeline PUBLIC include)
-target_link_libraries(rkapp_pipeline PUBLIC rkapp_core)
+target_link_libraries(rkapp_pipeline PUBLIC rkapp_core rkapp_model_meta)
 
 if (ENABLE_RKNN)
     target_link_libraries(rkapp_pipeline PUBLIC rkapp_infer_rknn)
@@ -384,19 +389,9 @@ endif()
 
 # Detection CLI application
 add_executable(detect_cli examples/detect_cli.cpp)
-target_link_libraries(detect_cli PRIVATE rkapp_core ${OpenCV_LIBS})
+target_link_libraries(detect_cli PRIVATE rkapp_pipeline ${OpenCV_LIBS})
 if(HAVE_YAML_CPP)
     target_link_libraries(detect_cli PRIVATE ${YAML_CPP_TARGET})
-endif()
-
-if (ENABLE_ONNX)
-    target_link_libraries(detect_cli PRIVATE rkapp_infer_onnx)
-    target_compile_definitions(detect_cli PRIVATE RKAPP_WITH_ONNX=1)
-endif()
-
-if (ENABLE_RKNN)
-    target_link_libraries(detect_cli PRIVATE rkapp_infer_rknn)
-    target_compile_definitions(detect_cli PRIVATE RKAPP_WITH_RKNN=1)
 endif()
 
 # Install detection pipeline

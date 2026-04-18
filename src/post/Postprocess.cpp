@@ -9,13 +9,14 @@
 #include <numeric>
 #include "rkapp/common/log.hpp"
 
-// OpenMP for parallel NMS
+// Postprocess 核心实现：高性能 NMS + 坐标映射 + 类别名映射。
+// OpenMP 并行加速 NMS
 #if defined(_OPENMP)
 #include <omp.h>
 #define RKAPP_HAS_OPENMP 1
 #endif
 
-// ARM NEON for SIMD acceleration
+// ARM NEON SIMD 加速
 #if defined(__ARM_NEON) || defined(__ARM_NEON__)
 #include <arm_neon.h>
 #define RKAPP_HAS_NEON 1
@@ -24,15 +25,14 @@
 namespace rkapp::post {
 
 // ============================================================================
-// NEON-optimized IOU Calculation
+// NEON 优化 IOU 计算
 // ============================================================================
 
 #if RKAPP_HAS_NEON
 /**
- * @brief Calculate IOU for 4 boxes at once using NEON SIMD
+ * @brief 使用 NEON 一次并行计算 4 个候选框的 IOU
  *
- * Processes 4 candidate boxes against 1 reference box in parallel.
- * ~4x throughput improvement over scalar code on ARM Cortex-A76.
+ * 以 1 个参考框对 4 个候选框并行计算，在 ARM Cortex-A76 上可明显提速。
  *
  * @param ref_x1,ref_y1,ref_x2,ref_y2 Reference box coordinates (scalar)
  * @param ref_area Reference box area (scalar)
@@ -46,48 +46,47 @@ static inline float32x4_t calculateIOU_NEON(
     float32x4_t cand_x2, float32x4_t cand_y2,
     float32x4_t cand_area) {
 
-    // Broadcast reference box to vectors
+    // 将参考框标量广播到向量寄存器。
     float32x4_t r_x1 = vdupq_n_f32(ref_x1);
     float32x4_t r_y1 = vdupq_n_f32(ref_y1);
     float32x4_t r_x2 = vdupq_n_f32(ref_x2);
     float32x4_t r_y2 = vdupq_n_f32(ref_y2);
     float32x4_t r_area = vdupq_n_f32(ref_area);
 
-    // Calculate intersection rectangle
+    // 计算相交区域坐标。
     float32x4_t inter_x1 = vmaxq_f32(r_x1, cand_x1);
     float32x4_t inter_y1 = vmaxq_f32(r_y1, cand_y1);
     float32x4_t inter_x2 = vminq_f32(r_x2, cand_x2);
     float32x4_t inter_y2 = vminq_f32(r_y2, cand_y2);
 
-    // Calculate intersection dimensions (clamp to 0)
+    // 相交宽高并截断到非负。
     float32x4_t zero = vdupq_n_f32(0.0f);
     float32x4_t inter_w = vmaxq_f32(zero, vsubq_f32(inter_x2, inter_x1));
     float32x4_t inter_h = vmaxq_f32(zero, vsubq_f32(inter_y2, inter_y1));
 
-    // Intersection area
+    // 相交面积。
     float32x4_t inter_area = vmulq_f32(inter_w, inter_h);
 
-    // Union area = a_area + b_area - intersection
+    // 并集面积 = a + b - 交集。
     float32x4_t union_area = vsubq_f32(vaddq_f32(r_area, cand_area), inter_area);
 
-    // Avoid division by zero
+    // 防止除零。
     float32x4_t eps = vdupq_n_f32(1e-6f);
     union_area = vmaxq_f32(union_area, eps);
 
-    // IOU = intersection / union
+    // IOU = intersection / union。
     return vdivq_f32(inter_area, union_area);
 }
 #endif  // RKAPP_HAS_NEON
 
 // ============================================================================
-// Optimized NMS Implementation
+// 优化 NMS 实现
 // ============================================================================
 
 /**
- * @brief Internal box representation for optimized NMS
+ * @brief NMS 内部框结构
  *
- * Pre-computes x1,y1,x2,y2 and area to avoid redundant calculations.
- * 32-byte aligned for optimal NEON loading.
+ * 预计算坐标与面积，减少重复计算；32 字节对齐便于 NEON 读取。
  */
 struct alignas(32) BoxInfo {
     float x1, y1, x2, y2;  // Pre-computed corners
@@ -109,32 +108,32 @@ std::vector<rkapp::infer::Detection> Postprocess::nms(
     const float max_ar = config.max_aspect_ratio > 0.0f ? config.max_aspect_ratio : 0.0f;
     constexpr float kEps = 1e-6f;
 
-    // ========== Stage 1: Filter and pre-compute ==========
+    // ========== 阶段 1：筛选并预计算 ==========
     std::vector<BoxInfo> boxes;
     boxes.reserve(detections.size());
 
     for (size_t idx = 0; idx < detections.size(); ++idx) {
         const auto& det = detections[idx];
 
-        // Confidence filter
+        // 置信度过滤。
         if (det.confidence < config.conf_thres) continue;
 
         float w = det.w;
         float h = det.h;
 
-        // Size validation
+        // 尺寸过滤。
         if (w <= 0.0f || h <= 0.0f) continue;
         if (min_box > 0.0f && (w < min_box || h < min_box)) continue;
         if (max_box > 0.0f && (w > max_box || h > max_box)) continue;
 
-        // Aspect ratio filter
+        // 长宽比过滤。
         if (min_ar > 0.0f || max_ar > 0.0f) {
             float ratio = h / std::max(w, kEps);
             if (min_ar > 0.0f && ratio < min_ar) continue;
             if (max_ar > 0.0f && ratio > max_ar) continue;
         }
 
-        // Pre-compute box info
+        // 预计算 NMS 所需字段。
         BoxInfo box;
         box.x1 = det.x;
         box.y1 = det.y;
@@ -151,13 +150,13 @@ std::vector<rkapp::infer::Detection> Postprocess::nms(
         return result;
     }
 
-    // ========== Stage 2: Sort by confidence ==========
+    // ========== 阶段 2：按置信度排序 ==========
     std::sort(boxes.begin(), boxes.end(),
         [](const BoxInfo& a, const BoxInfo& b) {
             return a.confidence > b.confidence;
         });
 
-    // Top-K prefilter
+    // Top-K 预截断，降低后续 NMS 复杂度。
     if (config.topk > 0 && static_cast<int>(boxes.size()) > config.topk) {
         boxes.resize(config.topk);
     }
@@ -168,18 +167,16 @@ std::vector<rkapp::infer::Detection> Postprocess::nms(
     } else {
         result.reserve(n);
     }
-    // Use atomic<bool> for thread-safe parallel NMS
+    // 并行 NMS 使用原子标记，避免竞态。
     std::vector<std::atomic<bool>> suppressed(n);
     for (size_t i = 0; i < n; ++i) {
         suppressed[i].store(false, std::memory_order_relaxed);
     }
 
-    // ========== Stage 3: NMS with optional parallelization ==========
-    // For small N (<100), serial is faster due to parallel overhead
-    // For large N (>=100), OpenMP provides significant speedup
+    // ========== 阶段 3：执行 NMS（按规模选择串行/并行） ==========
 
 #if RKAPP_HAS_NEON
-    // Pre-extract coordinates into contiguous arrays for NEON
+    // 坐标拆成连续数组，便于 NEON 批量加载。
     std::vector<float> all_x1(n);
     std::vector<float> all_y1(n);
     std::vector<float> all_x2(n);
@@ -212,7 +209,7 @@ std::vector<rkapp::infer::Detection> Postprocess::nms(
         const float ref_area = boxes[i].area;
 
 #if RKAPP_HAS_NEON && RKAPP_HAS_OPENMP
-        // NEON + OpenMP path for large N.
+        // 大规模候选框使用 NEON + OpenMP。
         // 步进为 4，每次处理一个 NEON 组（4 个 box）。
         // 注意：OpenMP parallel for 不允许 break，所以 tail(<4) 的处理放在循环外。
         if (n - i > 100) {
@@ -230,7 +227,7 @@ std::vector<rkapp::infer::Detection> Postprocess::nms(
                     (boxes[j+3].class_id == ref_class);
 
                 if (all_same_class) {
-                    // NEON path: 4 路并行 IoU
+                    // NEON 路径：4 路并行计算 IoU。
                     float32x4_t cand_x1 = vld1q_f32(&all_x1[j]);
                     float32x4_t cand_y1 = vld1q_f32(&all_y1[j]);
                     float32x4_t cand_x2 = vld1q_f32(&all_x2[j]);
@@ -250,7 +247,7 @@ std::vector<rkapp::infer::Detection> Postprocess::nms(
                         }
                     }
                 } else {
-                    // 混合类别，标量回退
+                    // 类别不一致时回退标量路径。
                     for (size_t k = j; k < j + 4; ++k) {
                         if (!suppressed[k].load(std::memory_order_acquire) && boxes[k].class_id == ref_class) {
                             float iou = calculateIOU(
@@ -264,7 +261,7 @@ std::vector<rkapp::infer::Detection> Postprocess::nms(
                 }
             }
 
-            // 处理尾部（不足 4 个的剩余 box），串行执行
+            // 处理不足 4 个的尾部候选框。
             for (size_t k = aligned_end; k < n; ++k) {
                 if (!suppressed[k].load(std::memory_order_acquire) && boxes[k].class_id == ref_class) {
                     float iou = calculateIOU(
@@ -278,7 +275,7 @@ std::vector<rkapp::infer::Detection> Postprocess::nms(
         } else
 #endif
         {
-            // Scalar path (small N or no SIMD)
+            // 小规模或无 SIMD 时采用标量路径。
 #if RKAPP_HAS_OPENMP
             #pragma omp parallel for schedule(dynamic) if(n - i > 100)
 #endif
@@ -299,7 +296,7 @@ std::vector<rkapp::infer::Detection> Postprocess::nms(
 }
 
 // ============================================================================
-// Coordinate Rescaling
+// 坐标重映射
 // ============================================================================
 
 void Postprocess::rescaleDetections(
@@ -327,7 +324,7 @@ void Postprocess::rescaleDetections(
 }
 
 // ============================================================================
-// Class Name Mapping
+// 类别名映射
 // ============================================================================
 
 void Postprocess::mapClassNames(
@@ -365,11 +362,11 @@ std::vector<std::string> Postprocess::loadClassNames(const std::string& path) {
 }
 
 // ============================================================================
-// IOU Calculation (Scalar Version)
+// 标量 IOU 计算
 // ============================================================================
 
 float Postprocess::calculateIOU(const rkapp::infer::Detection& a, const rkapp::infer::Detection& b) {
-    // Convert to x1, y1, x2, y2 format
+    // 转为 x1,y1,x2,y2 形式。
     float a_x1 = a.x;
     float a_y1 = a.y;
     float a_x2 = a.x + a.w;
@@ -380,7 +377,7 @@ float Postprocess::calculateIOU(const rkapp::infer::Detection& a, const rkapp::i
     float b_x2 = b.x + b.w;
     float b_y2 = b.y + b.h;
 
-    // Calculate intersection
+    // 计算交集。
     float inter_x1 = std::max(a_x1, b_x1);
     float inter_y1 = std::max(a_y1, b_y1);
     float inter_x2 = std::min(a_x2, b_x2);

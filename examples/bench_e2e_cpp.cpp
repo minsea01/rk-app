@@ -18,6 +18,7 @@
 
 #ifdef RKAPP_WITH_RKNN
 #include "rkapp/infer/RknnEngine.hpp"
+#include "rkapp/infer/ModelMeta.hpp"
 #endif
 
 struct BenchmarkResult {
@@ -85,7 +86,14 @@ int main(int argc, char** argv) {
     // 初始化引擎
     std::cout << "加载RKNN模型...\n";
     auto engine = std::make_unique<rkapp::infer::RknnEngine>();
-    if (!engine->init(model_path, 416)) {
+    rkapp::infer::ModelSpec model_spec;
+    model_spec.backend = rkapp::infer::ModelBackend::RKNN;
+    model_spec.model_path = model_path;
+    model_spec.input_size = 416;
+    const auto model_meta = rkapp::infer::loadModelMetaFromPath(model_path);
+    model_spec.decode_meta = model_meta.meta;
+    model_spec.decode_meta_path = model_meta.source_path;
+    if (!engine->init(model_spec)) {
         std::cerr << "❌ 模型加载失败\n";
         return 1;
     }

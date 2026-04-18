@@ -22,65 +22,56 @@ struct CameraCalibration {
 };
 
 /**
- * @brief Hardware acceleration backend selection
+ * @brief 预处理加速后端选择
  */
 enum class AccelBackend {
-    AUTO,     // Auto-select best available (RGA > OpenCV)
-    RGA,      // Force RGA (fails if unavailable)
-    OPENCV    // Force OpenCV CPU
+    AUTO,     // 自动选择（优先 RGA，否则 OpenCV）
+    RGA,      // 强制使用 RGA（不可用时失败）
+    OPENCV    // 强制使用 OpenCV CPU
 };
 
 enum class FourChannelOrder {
-    UNKNOWN,  // Ambiguous 4-channel input order
-    BGRA,     // Byte layout: B,G,R,A
-    RGBA      // Byte layout: R,G,B,A
+    UNKNOWN,  // 四通道顺序未知
+    BGRA,     // 字节顺序：B,G,R,A
+    RGBA      // 字节顺序：R,G,B,A
 };
 
+// 预处理工具集合：统一封装 letterbox、颜色转换、增强与格式整理。
 class Preprocess {
 public:
-    // ========== Core Letterbox Functions ==========
+    // ========== 核心 Letterbox ==========
 
     /**
-     * @brief Letterbox resize with automatic backend selection
+     * @brief Letterbox 缩放+补边（自动后端）
      *
-     * On RK3588 with RGA available: Uses hardware acceleration (~0.3ms)
-     * Fallback: Uses OpenCV CPU implementation (~3ms)
-     *
-     * @param src Input BGR image
-     * @param target_size Square target size (e.g., 640)
-     * @param info Output letterbox parameters for coordinate mapping
-     * @param backend Acceleration backend (default: AUTO)
-     * @return Letterboxed image
+     * 在 RK3588 且 RGA 可用时优先硬件加速，否则回退到 OpenCV CPU。
      */
     static cv::Mat letterbox(const cv::Mat& src, int target_size, LetterboxInfo& info,
                              AccelBackend backend = AccelBackend::AUTO);
     static cv::Mat letterbox(const cv::Mat& src, cv::Size target_size, LetterboxInfo& info,
                              AccelBackend backend = AccelBackend::AUTO);
 
-    // ========== Color Conversion ==========
+    // ========== 颜色空间转换 ==========
 
     /**
-     * @brief Color space conversion with optional RGA acceleration
-     *
-     * RGA-accelerated conversions: BGR<->RGB, YUV420->RGB
-     * OpenCV fallback for other conversions
+     * @brief 颜色转换（可选 RGA 加速）
      */
     static cv::Mat convertColor(const cv::Mat& src, int code = cv::COLOR_BGR2RGB,
                                 AccelBackend backend = AccelBackend::AUTO);
 
-    // ========== Camera Calibration / Undistort ==========
+    // ========== 相机标定/去畸变 ==========
 
     static bool loadCalibration(const std::string& calibration_path, CameraCalibration& calibration);
     static bool buildUndistortMaps(const CameraCalibration& calibration, cv::Size image_size,
                                    cv::Mat& map1, cv::Mat& map2);
     static cv::Mat undistort(const cv::Mat& src, const cv::Mat& map1, const cv::Mat& map2);
 
-    // ========== Input Canonicalization ==========
+    // ========== 输入规范化 ==========
 
     static cv::Mat ensureBgr8(const cv::Mat& src, AccelBackend backend = AccelBackend::AUTO,
                               FourChannelOrder four_channel_order = FourChannelOrder::UNKNOWN);
 
-    // ========== ROI / Image Enhancement ==========
+    // ========== ROI 与图像增强 ==========
 
     static bool resolveRoiRect(cv::Size image_size, bool normalized_mode,
                                const cv::Rect2f& normalized_xywh, const cv::Rect& pixel_xywh,
@@ -91,41 +82,33 @@ public:
     static cv::Mat denoiseBilateral(const cv::Mat& src, int d = 5, double sigma_color = 35.0,
                                     double sigma_space = 35.0);
 
-    // ========== Normalization & Format Conversion ==========
+    // ========== 归一化与格式转换 ==========
 
     static cv::Mat normalize(const cv::Mat& src, float scale = 1.0f/255.0f);
     static cv::Mat hwc2chw(const cv::Mat& src);
     static cv::Mat blob(const cv::Mat& src);
 
-    // ========== RGA Hardware Acceleration ==========
+    // ========== RGA 硬件加速 ==========
 
 #if RKNN_USE_RGA
     /**
-     * @brief Check if RGA hardware is available
-     * @return true if RGA is available and initialized
+     * @brief 检查 RGA 是否可用
      */
     static bool isRgaAvailable();
 
     /**
-     * @brief RGA-accelerated letterbox (resize + pad)
-     *
-     * Performance: ~0.3ms for 1080p -> 640x640 (vs ~3ms OpenCV)
-     * Uses im2d API: imresize + imfill for padding
-     *
-     * @note Only available when compiled with RKNN_USE_RGA=1
+     * @brief RGA 加速 letterbox（缩放+补边）
      */
     static cv::Mat letterboxRga(const cv::Mat& src, cv::Size target_size, LetterboxInfo& info);
 
     /**
-     * @brief RGA-accelerated color conversion
-     *
-     * Supported: BGR->RGB, RGB->BGR, YUV420SP->RGB, YUV420SP->BGR
+     * @brief RGA 加速颜色转换
      */
     static cv::Mat convertColorRga(const cv::Mat& src, int code);
 #endif
 
 private:
-    // OpenCV CPU implementations (always available)
+    // OpenCV CPU 参考实现（始终可用）。
     static cv::Mat letterboxCpu(const cv::Mat& src, cv::Size target_size, LetterboxInfo& info);
     static cv::Mat convertColorCpu(const cv::Mat& src, int code);
 

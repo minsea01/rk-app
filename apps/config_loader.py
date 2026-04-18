@@ -13,12 +13,9 @@ Priority Chain (highest to lowest):
 Usage:
     from apps.config_loader import ConfigLoader
 
-    # Method 1: Load configuration with defaults
+    # Method 1: Create loader bound to a YAML file
     loader = ConfigLoader()
-    config = loader.load(
-        cli_args={'imgsz': 640},
-        config_file='config/app.yaml'
-    )
+    model_cfg = loader.get_model_config()
 
     # Method 2: Get specific value with priority chain
     imgsz = loader.get('imgsz', default=416)
@@ -29,7 +26,7 @@ Example:
     # - ENV: RK_IMGSZ=416
     # - YAML: imgsz: 320
     # - Python: DEFAULT_SIZE = 416
-    # Result: imgsz=640 (CLI wins)
+    # Result: imgsz=640 (CLI wins when passed as cli_value)
 """
 
 import os

@@ -5,21 +5,21 @@ source:
 engine:
   type: onnx
   model: "artifacts/models/yolo11n_416.onnx"
-  imgsz: 640
+  input_size: [640, 640]
 
-nms:
-  conf_thres: 0.25
-  iou_thres: 0.60
-  topk: 1000
+postprocess:
+  conf_threshold: 0.25
+  nms_threshold: 0.60
+  max_detections: 1000
 
-perf:
+runtime:
   warmup: 5
   async: false
 
 output:
   type: tcp
-  ip: "127.0.0.1"
-  port: 9000
+  tcp:
+    host: "127.0.0.1"
+    port: 9000
 
 classes: "config/classes_16.txt"
-

@@ -5,14 +5,15 @@
 #include <limits>
 #include <vector>
 
-// RGA hardware acceleration headers (RK3588)
+// 预处理核心实现：统一封装 RGA 与 OpenCV 两条路径。
+// RGA 硬件加速头文件（RK3588）
 #if RKNN_USE_RGA
 #include <im2d.h>
 #include <rga.h>
 #include <mutex>
 #endif
 
-// Logging support
+// 日志支持
 #if __has_include("rkapp/common/log.hpp")
 #include "rkapp/common/log.hpp"
 #define RKAPP_HAS_LOG 1
@@ -30,18 +31,18 @@
 namespace rkapp::preprocess {
 
 // ============================================================================
-// RGA Hardware Acceleration Implementation (RK3588)
+// RGA 硬件加速实现（RK3588）
 // ============================================================================
 
 #if RKNN_USE_RGA
 
-// Static initialization
+// 静态初始化（仅初始化一次）。
 bool Preprocess::rga_initialized_ = false;
 static std::once_flag rga_init_flag;
 
 bool Preprocess::initRga() {
     std::call_once(rga_init_flag, []() {
-        // Query RGA hardware capability
+        // 查询 RGA 硬件能力。
         const char* version = querystring(RGA_VERSION);
         if (version != nullptr && strlen(version) > 0) {
             rga_initialized_ = true;
@@ -59,7 +60,7 @@ bool Preprocess::isRgaAvailable() {
 }
 
 /**
- * @brief RGA-accelerated letterbox implementation
+ * @brief RGA 加速 letterbox 实现
  *
  * Performance: ~0.3ms for 1080p -> 640x640 (vs ~3ms OpenCV)
  *
@@ -75,14 +76,14 @@ cv::Mat Preprocess::letterboxRga(const cv::Mat& src, cv::Size target_size, Lette
     constexpr int kMinDim = 1;
     constexpr float kMinRatio = 1e-6f;
 
-    // Validate input
+    // 输入合法性校验。
     if (src.empty() || src.cols < kMinDim || src.rows < kMinDim ||
         target_size.width < kMinDim || target_size.height < kMinDim) {
         info = {0.f, 0.f, 0.f, 0, 0};
         return {};
     }
 
-    // Only support BGR 3-channel images
+    // 仅支持 BGR 三通道图像。
     if (src.type() != CV_8UC3) {
         LOGW("RGA letterbox only supports CV_8UC3, falling back to CPU");
         return letterboxCpu(src, target_size, info);
@@ -93,7 +94,7 @@ cv::Mat Preprocess::letterboxRga(const cv::Mat& src, cv::Size target_size, Lette
     int dst_w = target_size.width;
     int dst_h = target_size.height;
 
-    // Calculate scale factor
+    // 计算缩放比例。
     float scale = std::min((float)dst_w / src_w, (float)dst_h / src_h);
     if (scale < kMinRatio) {
         info = {0.f, 0.f, 0.f, 0, 0};
@@ -103,7 +104,7 @@ cv::Mat Preprocess::letterboxRga(const cv::Mat& src, cv::Size target_size, Lette
     int new_w = static_cast<int>(std::round(src_w * scale));
     int new_h = static_cast<int>(std::round(src_h * scale));
 
-    // Calculate padding
+    // 计算补边偏移。
     float dx = (dst_w - new_w) / 2.0f;
     float dy = (dst_h - new_h) / 2.0f;
 
@@ -113,20 +114,20 @@ cv::Mat Preprocess::letterboxRga(const cv::Mat& src, cv::Size target_size, Lette
     info.new_width = new_w;
     info.new_height = new_h;
 
-    // Create destination buffer (padding filled after blit)
+    // 创建目标缓冲区（稍后填充补边区域）。
     cv::Mat dst(dst_h, dst_w, CV_8UC3);
 
-    // Ensure source is contiguous
+    // 确保源数据连续，便于 RGA 访问。
     cv::Mat src_cont = src.isContinuous() ? src : src.clone();
 
-    // Create RGA buffer for source
+    // 包装源图为 RGA 缓冲描述。
     rga_buffer_t src_buf = wrapbuffer_virtualaddr(
         (void*)src_cont.data,
         src_w, src_h,
         RK_FORMAT_BGR_888
     );
 
-    // Create intermediate buffer for resized result
+    // 创建中间缩放结果缓冲。
     cv::Mat resized(new_h, new_w, CV_8UC3);
     rga_buffer_t resize_buf = wrapbuffer_virtualaddr(
         (void*)resized.data,
@@ -134,14 +135,14 @@ cv::Mat Preprocess::letterboxRga(const cv::Mat& src, cv::Size target_size, Lette
         RK_FORMAT_BGR_888
     );
 
-    // Step 1: RGA hardware resize
+    // 步骤 1：RGA 缩放。
     IM_STATUS ret = imresize(src_buf, resize_buf);
     if (ret != IM_STATUS_SUCCESS) {
         LOGW("RGA imresize failed (", imStrError(ret), "), fallback to CPU");
         return letterboxCpu(src, target_size, info);
     }
 
-    // Step 2: RGA blit resized image to center of padded destination
+    // 步骤 2：把缩放图拷贝到目标中心区域。
     int top = static_cast<int>(std::round(dy - 0.1f));
     int left = static_cast<int>(std::round(dx - 0.1f));
     top = std::max(top, 0);
@@ -152,21 +153,21 @@ cv::Mat Preprocess::letterboxRga(const cv::Mat& src, cv::Size target_size, Lette
         return {};
     }
 
-    // Create RGA buffer for destination with offset rect
+    // 包装目标图并指定偏移矩形。
     rga_buffer_t dst_buf = wrapbuffer_virtualaddr(
         (void*)dst.data,
         dst_w, dst_h,
         RK_FORMAT_BGR_888
     );
 
-    // Define destination rect for the blit
+    // 定义源/目标矩形。
     im_rect dst_rect = {left, top, new_w, new_h};
     im_rect src_rect = {0, 0, new_w, new_h};
 
-    // RGA blit (copy with offset) - avoids CPU memcpy
+    // RGA 偏移拷贝，尽量避免 CPU memcpy。
     ret = improcess(resize_buf, dst_buf, {}, src_rect, dst_rect, {}, IM_SYNC);
     if (ret != IM_STATUS_SUCCESS) {
-        // Fallback to CPU copy if RGA blit fails
+        // RGA 拷贝失败时回退 CPU 复制。
         LOGW("RGA improcess blit failed (", imStrError(ret), "), using CPU copy");
         cv::Rect roi(left, top, new_w, new_h);
         resized.copyTo(dst(roi));
@@ -192,7 +193,7 @@ cv::Mat Preprocess::letterboxRga(const cv::Mat& src, cv::Size target_size, Lette
 }
 
 /**
- * @brief RGA-accelerated color conversion
+ * @brief RGA 加速颜色转换
  *
  * Supported: BGR<->RGB, YUV420SP->RGB/BGR
  * Performance: ~0.1ms vs ~0.5ms OpenCV
@@ -202,7 +203,7 @@ cv::Mat Preprocess::convertColorRga(const cv::Mat& src, int code) {
         return convertColorCpu(src, code);
     }
 
-    // Map OpenCV code to RGA formats
+    // 将 OpenCV 转换码映射到 RGA 像素格式。
     int src_format, dst_format;
     int color_mode = IM_COLOR_SPACE_DEFAULT;
 
@@ -226,7 +227,7 @@ cv::Mat Preprocess::convertColorRga(const cv::Mat& src, int code) {
             color_mode = IM_YUV_TO_RGB_BT601_LIMIT;
             break;
         default:
-            // Unsupported, fallback to OpenCV
+            // 不支持的转换码，回退 OpenCV。
             return convertColorCpu(src, code);
     }
 
@@ -250,7 +251,7 @@ cv::Mat Preprocess::convertColorRga(const cv::Mat& src, int code) {
 #endif  // RKNN_USE_RGA
 
 // ============================================================================
-// OpenCV CPU Implementations
+// OpenCV CPU 实现
 // ============================================================================
 
 cv::Mat Preprocess::letterboxCpu(const cv::Mat& src, cv::Size target_size, LetterboxInfo& info) {

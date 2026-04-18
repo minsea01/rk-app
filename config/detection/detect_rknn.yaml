@@ -5,20 +5,21 @@ source:
 engine:
   type: rknn                 # onnx|rknn（RK3588 上使用 rknn）
   model: "models/best.rknn"  # 板子部署路径: $DEST/models/
-  imgsz: 640
+  input_size: [640, 640]
 
-nms:
-  conf_thres: 0.50
-  iou_thres: 0.50
-  topk: 300
+postprocess:
+  conf_threshold: 0.50
+  nms_threshold: 0.50
+  max_detections: 300
 
-perf:
+runtime:
   warmup: 5
   async: false
 
 output:
   type: tcp
-  ip: "127.0.0.1"
-  port: 9000
+  tcp:
+    host: "127.0.0.1"
+    port: 9000
 
 classes: "config/person_classes.txt"

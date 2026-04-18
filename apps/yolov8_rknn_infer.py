@@ -397,27 +397,27 @@ def main():
                 t0 = time.time()
                 outputs = rknn.inference(inputs=[input_data])
                 pred = outputs[0]
-            except (cv2.error, RuntimeError, ValueError) as e:
+                if pred.ndim == 2:
+                    pred = pred[None, ...]
+                boxes, confs, cls_ids = decode_predictions(
+                    pred,
+                    args.imgsz,
+                    args.conf,
+                    args.iou,
+                    args.head,
+                    (1.0, (0.0, 0.0)),
+                    img.shape[:2],
+                    decode_meta=decode_meta,
+                )
+                boxes = map_boxes_back(boxes, frame_meta)
+                t1 = time.time()
+                fps = 1.0 / max(1e-6, (t1 - t0))
+                fps_hist.append(fps)
+                vis = draw_boxes(coord_frame.copy(), boxes, confs, cls_ids, class_names)
+            except (cv2.error, RuntimeError, ValueError, TypeError) as e:
                 # 流媒体模式下单帧错误不应让整个进程退出，记录日志后跳过该帧。
                 logger.warning("Inference error (skipping frame): %s", e)
                 continue
-            if pred.ndim == 2:
-                pred = pred[None, ...]
-            boxes, confs, cls_ids = decode_predictions(
-                pred,
-                args.imgsz,
-                args.conf,
-                args.iou,
-                args.head,
-                (1.0, (0.0, 0.0)),
-                img.shape[:2],
-                decode_meta=decode_meta,
-            )
-            boxes = map_boxes_back(boxes, frame_meta)
-            t1 = time.time()
-            fps = 1.0 / max(1e-6, (t1 - t0))
-            fps_hist.append(fps)
-            vis = draw_boxes(coord_frame.copy(), boxes, confs, cls_ids, class_names)
             cv2.putText(
                 vis, f"FPS: {fps:.1f}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 0), 2
             )

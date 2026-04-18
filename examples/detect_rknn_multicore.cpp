@@ -7,6 +7,7 @@
 #include <opencv2/opencv.hpp>
 
 #include "rkapp/infer/RknnEngine.hpp"
+#include "rkapp/infer/ModelMeta.hpp"
 #include "rkapp/common/FramePool.hpp"
 
 /**
@@ -38,6 +39,14 @@ int main(int argc, char** argv) {
     }
     const std::string model = argv[1];
     const std::string src = argv[2];
+    const auto model_meta = rkapp::infer::loadModelMetaFromPath(model);
+
+    rkapp::infer::ModelSpec model_spec;
+    model_spec.backend = rkapp::infer::ModelBackend::RKNN;
+    model_spec.model_path = model;
+    model_spec.input_size = 640;
+    model_spec.decode_meta = model_meta.meta;
+    model_spec.decode_meta_path = model_meta.source_path;
 
     // Open video source
     cv::VideoCapture cap;
@@ -64,7 +73,7 @@ int main(int argc, char** argv) {
     for (int i = 0; i < K; i++) {
         auto eng = std::make_unique<rkapp::infer::RknnEngine>();
         eng->setCoreMask(1u << i);  // Core0=0x1, Core1=0x2, Core2=0x4
-        if (!eng->init(model, 640)) {
+        if (!eng->init(model_spec)) {
             std::cerr << "Engine init failed for core " << i << std::endl;
             return 1;
         }

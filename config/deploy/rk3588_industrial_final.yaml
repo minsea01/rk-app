@@ -8,12 +8,12 @@ source:
 engine:
   type: rknn  # 使用NPU加速的RKNN模型
   model: "artifacts/models/industrial_15cls_rk3588_w8a8.rknn"  # 我们刚转换的11.3MB模型
-  imgsz: 640
+  input_size: [640, 640]
 
-nms:
-  conf_thres: 0.5   # 工业检测较高阈值
-  iou_thres: 0.4
-  topk: 100
+postprocess:
+  conf_threshold: 0.5   # 工业检测较高阈值
+  nms_threshold: 0.4
+  max_detections: 100
 
 # 使用现有的双网口配置
 camera_interface:

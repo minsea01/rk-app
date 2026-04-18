@@ -29,6 +29,7 @@
 #include <iostream>
 #include <string>
 #include <csignal>
+#include <iomanip>
 #include <opencv2/opencv.hpp>
 
 #include "rkapp/pipeline/DetectionPipeline.hpp"
@@ -95,36 +96,36 @@ int main(int argc, char** argv) {
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
         if (arg == "--model" && i + 1 < argc) {
-            config.model_path = argv[++i];
+            config.model.model_path = argv[++i];
         } else if (arg == "--input" && i + 1 < argc) {
-            config.source_uri = argv[++i];
+            config.source.uri = argv[++i];
         } else if (arg == "--size" && i + 1 < argc) {
-            try { config.input_size = std::stoi(argv[++i]); }
+            try { config.model.input_size = std::stoi(argv[++i]); }
             catch (const std::exception&) {
                 std::fprintf(stderr, "Invalid value for --size: %s\n", argv[i]); return 1;
             }
         } else if (arg == "--conf" && i + 1 < argc) {
-            try { config.conf_threshold = std::stof(argv[++i]); }
+            try { config.model.conf_threshold = std::stof(argv[++i]); }
             catch (const std::exception&) {
                 std::fprintf(stderr, "Invalid value for --conf: %s\n", argv[i]); return 1;
             }
         } else if (arg == "--iou" && i + 1 < argc) {
-            try { config.iou_threshold = std::stof(argv[++i]); }
+            try { config.model.iou_threshold = std::stof(argv[++i]); }
             catch (const std::exception&) {
                 std::fprintf(stderr, "Invalid value for --iou: %s\n", argv[i]); return 1;
             }
         } else if (arg == "--no-mpp") {
-            config.use_mpp_decode = false;
+            config.source.use_mpp_decode = false;
         } else if (arg == "--no-rga") {
-            config.use_rga_preprocess = false;
+            config.preprocess.use_rga_preprocess = false;
         } else if (arg == "--no-zero-copy") {
-            config.use_zero_copy = false;
+            config.model.use_zero_copy = false;
         } else if (arg == "--profile") {
             profiling = true;
-            config.enable_profiling = true;
+            config.output.enable_profiling = true;
         } else if (arg == "--undistort-calib" && i + 1 < argc) {
-            config.calibration_file = argv[++i];
-            config.enable_undistort = true;
+            config.preprocess.calibration_file = argv[++i];
+            config.preprocess.enable_undistort = true;
         } else if (arg == "--show") {
             show_display = true;
         } else if (arg == "--output" && i + 1 < argc) {
@@ -136,7 +137,7 @@ int main(int argc, char** argv) {
     }
 
     // Validate required arguments
-    if (config.model_path.empty() || config.source_uri.empty()) {
+    if (config.model.model_path.empty() || config.source.uri.empty()) {
         std::cerr << "Error: --model and --input are required\n";
         printUsage(argv[0]);
         return 1;
@@ -160,15 +161,13 @@ int main(int argc, char** argv) {
     }
 
     std::cout << "\n=== RK3588 Detection Pipeline ===\n"
-              << "Model: " << config.model_path << "\n"
-              << "Input: " << config.source_uri << "\n"
-              << "Undistort: " << (config.enable_undistort ? "on" : "off") << "\n"
+              << "Model: " << config.model.model_path << "\n"
+              << "Input: " << config.source.uri << "\n"
+              << "Undistort: " << (config.preprocess.enable_undistort ? "on" : "off") << "\n"
               << "Press Ctrl+C to stop\n\n";
 
     // Main processing loop
     int64_t total_frames = 0;
-    int64_t total_detections = 0;
-    auto start_time = std::chrono::high_resolution_clock::now();
 
     while (g_running) {
         auto result = pipeline.next();
@@ -177,7 +176,6 @@ int main(int argc, char** argv) {
         }
 
         total_frames++;
-        total_detections += result->detections.size();
 
         // Print progress
         if (total_frames % 30 == 0 || profiling) {
@@ -196,21 +194,43 @@ int main(int argc, char** argv) {
             std::cout << std::flush;
         }
 
-        // Optional: display or save
-        if (show_display || !output_path.empty()) {
-            // Need to capture frame - re-process with frame capture
-            // For simplicity, use a placeholder here
-            // In production, you'd modify pipeline to return frames
+        if ((show_display || !output_path.empty()) && !result->frame.empty()) {
+            cv::Mat vis_frame = result->frame.clone();
+            drawDetections(vis_frame, result->detections);
+
+            if (show_display) {
+                cv::imshow("rkapp::detect_pipeline", vis_frame);
+                const int key = cv::waitKey(1);
+                if (key == 27 || key == 'q' || key == 'Q') {
+                    g_running = false;
+                }
+            }
+
+            if (!output_path.empty()) {
+                if (!writer.isOpened()) {
+                    const double fps = pipeline.getFps() > 0.0 ? pipeline.getFps() : 30.0;
+                    writer.open(output_path,
+                                cv::VideoWriter::fourcc('m', 'p', '4', 'v'),
+                                fps, vis_frame.size());
+                    if (!writer.isOpened()) {
+                        std::cerr << "Failed to open output writer: " << output_path << "\n";
+                        output_path.clear();
+                    }
+                }
+                if (writer.isOpened()) {
+                    writer.write(vis_frame);
+                }
+            }
         }
     }
 
     // Final statistics
-    auto end_time = std::chrono::high_resolution_clock::now();
-    auto elapsed_s = std::chrono::duration_cast<std::chrono::seconds>(end_time - start_time).count();
     auto stats = pipeline.getStatistics();
 
     std::cout << "\n\n=== Pipeline Statistics ===\n"
               << "Frames processed: " << stats.frames_processed << "\n"
+              << "Frames dropped: " << stats.frames_dropped << "\n"
+              << "Reconnect attempts: " << stats.reconnect_count << "\n"
               << "Total detections: " << stats.total_detections << "\n"
               << "Average FPS: " << std::fixed << std::setprecision(1) << stats.avg_fps << "\n"
               << "Average latency: " << std::fixed << std::setprecision(2) << stats.avg_latency_ms << " ms\n"

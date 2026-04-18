@@ -23,7 +23,8 @@
 
 namespace rkapp::pipeline {
 
-// Use steady_clock for stable latency/jitter measurements (not affected by wall-clock changes).
+// 管线主实现：组织采集、预处理、推理和后处理全流程。
+// 使用 steady_clock 统计耗时，避免系统时间跳变影响。
 using Clock = std::chrono::steady_clock;
 using TimePoint = Clock::time_point;
 
@@ -36,12 +37,12 @@ int64_t microsecondsSince(const TimePoint& start) {
 
 bool isMppDecodeEnabledInStats(const PipelineConfig& config) {
 #if RKAPP_WITH_MPP
-    if (config.source_type == capture::SourceType::MPP) {
+    if (config.source.type == capture::SourceType::MPP) {
         return true;
     }
-    if ((config.source_type == capture::SourceType::VIDEO ||
-         config.source_type == capture::SourceType::RTSP) &&
-        config.use_mpp_decode) {
+    if ((config.source.type == capture::SourceType::VIDEO ||
+         config.source.type == capture::SourceType::RTSP) &&
+        config.source.use_mpp_decode) {
         return true;
     }
 #else
@@ -58,7 +59,7 @@ struct PreprocessFeatureFlags {
 
 PreprocessFeatureFlags resolveFeatureFlags(const PipelineConfig& config) {
     PreprocessFeatureFlags flags;
-    const std::string profile = rkapp::common::toLowerCopy(config.preprocess_profile);
+    const std::string profile = rkapp::common::toLowerCopy(config.preprocess.profile);
     if (profile == "balanced") {
         flags.gamma = true;
         flags.white_balance = true;
@@ -68,14 +69,14 @@ PreprocessFeatureFlags resolveFeatureFlags(const PipelineConfig& config) {
         flags.denoise = true;
     }
 
-    if (config.gamma_enable.has_value()) {
-        flags.gamma = *config.gamma_enable;
+    if (config.preprocess.gamma_enable.has_value()) {
+        flags.gamma = *config.preprocess.gamma_enable;
     }
-    if (config.white_balance_enable.has_value()) {
-        flags.white_balance = *config.white_balance_enable;
+    if (config.preprocess.white_balance_enable.has_value()) {
+        flags.white_balance = *config.preprocess.white_balance_enable;
     }
-    if (config.denoise_enable.has_value()) {
-        flags.denoise = *config.denoise_enable;
+    if (config.preprocess.denoise_enable.has_value()) {
+        flags.denoise = *config.preprocess.denoise_enable;
     }
     return flags;
 }
@@ -113,45 +114,46 @@ void applyRoiOffsetAndClip(std::vector<infer::Detection>& detections,
 } // namespace
 
 // ============================================================================
-// Pipeline Implementation
+// Pipeline 内部实现
 // ============================================================================
 
 struct DetectionPipeline::Impl {
     PipelineConfig config;
 
-    // Pipeline components
+    // 管线核心组件
     capture::SourcePtr source;
     std::unique_ptr<infer::IInferEngine> engine;
     infer::RknnEngine* rknn_engine = nullptr;
     std::unique_ptr<common::DmaBufPool> buffer_pool;
 
-    // State
+    // 运行状态
     std::atomic<bool> running{false};
     std::atomic<bool> initialized{false};
     std::atomic<int64_t> frame_counter{0};
 
-    // Statistics
+    // 统计数据
     mutable std::mutex stats_mutex;
     Statistics stats;
     TimePoint start_time;
     int64_t total_latency_us{0};
 
-    // Async processing
+    // 异步处理
     std::thread worker_thread;
     ResultCallback result_callback;
 
-    // FPS calculation
+    // FPS 统计
     std::atomic<double> current_fps{0.0};
     TimePoint last_fps_update;
     int frames_since_update{0};
 
-    // Optional undistort state
+    // 可选去畸变状态
     preprocess::CameraCalibration calibration;
     bool calibration_loaded{false};
     cv::Mat undistort_map1;
     cv::Mat undistort_map2;
     cv::Size undistort_size{0, 0};
     PreprocessFeatureFlags preprocess_flags;
+    int consecutive_frame_errors = 0;
 
     void updateFps() {
         frames_since_update++;
@@ -179,10 +181,20 @@ struct DetectionPipeline::Impl {
             stats.avg_fps = static_cast<double>(stats.frames_processed) / elapsed_s;
         }
     }
+
+    void recordDroppedFrame() {
+        std::lock_guard<std::mutex> lock(stats_mutex);
+        stats.frames_dropped++;
+    }
+
+    void recordReconnectAttempt() {
+        std::lock_guard<std::mutex> lock(stats_mutex);
+        stats.reconnect_count++;
+    }
 };
 
 // ============================================================================
-// Public API
+// 对外 API
 // ============================================================================
 
 DetectionPipeline::DetectionPipeline()
@@ -195,7 +207,7 @@ DetectionPipeline::~DetectionPipeline() {
 bool DetectionPipeline::init(const PipelineConfig& config) {
     impl_->initialized = false;  // 重置状态，确保失败时不残留旧状态
 
-    // Release any previously acquired resources before reinitializing
+    // 重新初始化前先释放旧资源，避免状态污染。
     if (impl_->engine) {
         impl_->engine->release();
         impl_->engine.reset();
@@ -205,44 +217,49 @@ bool DetectionPipeline::init(const PipelineConfig& config) {
         impl_->source.reset();
     }
 
-    impl_->config = config;
+    std::vector<std::string> normalize_warnings;
+    impl_->config = normalizePipelineConfig(config, &normalize_warnings);
+    for (const auto& warning : normalize_warnings) {
+        LOGW("DetectionPipeline: ", warning);
+    }
     impl_->rknn_engine = nullptr;
     impl_->calibration = {};
     impl_->calibration_loaded = false;
     impl_->undistort_map1.release();
     impl_->undistort_map2.release();
     impl_->undistort_size = {0, 0};
-    impl_->preprocess_flags = resolveFeatureFlags(config);
+    impl_->preprocess_flags = resolveFeatureFlags(impl_->config);
     impl_->frame_counter.store(0, std::memory_order_relaxed);
 
-    if (config.enable_undistort) {
-        if (config.calibration_file.empty()) {
+    if (impl_->config.preprocess.enable_undistort) {
+        if (impl_->config.preprocess.calibration_file.empty()) {
             LOGW("DetectionPipeline: Undistort requested but calibration_file is empty");
         } else if (preprocess::Preprocess::loadCalibration(
-                       config.calibration_file, impl_->calibration)) {
+                       impl_->config.preprocess.calibration_file, impl_->calibration)) {
             impl_->calibration_loaded = true;
-            LOGI("DetectionPipeline: Loaded calibration from ", config.calibration_file);
+            LOGI("DetectionPipeline: Loaded calibration from ",
+                 impl_->config.preprocess.calibration_file);
         } else {
             LOGW("DetectionPipeline: Failed to load calibration file: ",
-                 config.calibration_file, "; undistort disabled");
+                 impl_->config.preprocess.calibration_file, "; undistort disabled");
         }
     }
 
-    // Create source
-    impl_->source = createSource(config);
+    // 创建输入源。
+    impl_->source = createSource(impl_->config.source);
     if (!impl_->source) {
         LOGE("DetectionPipeline: Failed to create source");
         return false;
     }
 
-    // Open source
-    if (!impl_->source->open(config.source_uri)) {
-        LOGE("DetectionPipeline: Failed to open source: ", config.source_uri);
+    // 打开输入源。
+    if (!impl_->source->open(impl_->config.source.uri)) {
+        LOGE("DetectionPipeline: Failed to open source: ", impl_->config.source.uri);
         return false;
     }
 
-    // Create inference engine
-    impl_->engine = createEngine(config);
+    // 创建推理引擎。
+    impl_->engine = createEngine(impl_->config.model);
     if (!impl_->engine) {
         LOGE("DetectionPipeline: Failed to create inference engine");
         return false;
@@ -250,36 +267,37 @@ bool DetectionPipeline::init(const PipelineConfig& config) {
 
 #if RKAPP_WITH_RKNN
     impl_->rknn_engine = dynamic_cast<infer::RknnEngine*>(impl_->engine.get());
-    if (impl_->rknn_engine && config.use_npu_multicore) {
+    if (impl_->rknn_engine && impl_->config.model.use_npu_multicore) {
         impl_->rknn_engine->setCoreMask(0x7);  // All 3 NPU cores (6 TOPS)
     }
 #else
     impl_->rknn_engine = nullptr;
 #endif
 
-    // Initialize engine
-    if (!impl_->engine->init(config.model_path, config.input_size)) {
-        LOGE("DetectionPipeline: Failed to initialize model: ", config.model_path);
+    // 初始化推理引擎。
+    if (!impl_->engine->init(impl_->config.model)) {
+        LOGE("DetectionPipeline: Failed to initialize model: ",
+             impl_->config.model.model_path);
         return false;
     }
 
-    // Set decode parameters
+    // 下发解码参数。
     infer::DecodeParams decode_params;
-    decode_params.conf_thres = config.conf_threshold;
-    decode_params.iou_thres = config.iou_threshold;
-    decode_params.max_boxes = config.max_detections;
+    decode_params.conf_thres = impl_->config.model.conf_threshold;
+    decode_params.iou_thres = impl_->config.model.iou_threshold;
+    decode_params.max_boxes = impl_->config.model.max_detections;
     impl_->engine->setDecodeParams(decode_params);
 
-    // Reset zero-copy state for clean re-init
+    // 重置零拷贝状态，保证重初始化后状态一致。
     impl_->buffer_pool.reset();
     impl_->stats.zero_copy_enabled = false;
 
-    // Create DMA buffer pool for zero-copy (if enabled and supported)
-    if (config.use_zero_copy && impl_->rknn_engine && common::DmaBuf::isSupported()) {
+    // 在可用时初始化 DMA-BUF 池，开启零拷贝链路。
+    if (impl_->config.model.use_zero_copy && impl_->rknn_engine && common::DmaBuf::isSupported()) {
         impl_->buffer_pool = std::make_unique<common::DmaBufPool>(
-            config.buffer_pool_size,
-            config.input_size,
-            config.input_size,
+            impl_->config.model.buffer_pool_size,
+            impl_->config.model.input_size,
+            impl_->config.model.input_size,
             common::DmaBuf::PixelFormat::RGB888);
         if (impl_->buffer_pool->available() > 0) {
             impl_->stats.zero_copy_enabled = true;
@@ -292,26 +310,28 @@ bool DetectionPipeline::init(const PipelineConfig& config) {
         }
     }
 
-    // Warmup
+    // 预热模型，降低首帧延迟。
     impl_->engine->warmup();
 
-    // Initialize stats
-    impl_->stats.rga_enabled = config.use_rga_preprocess;
-    impl_->stats.mpp_enabled = isMppDecodeEnabledInStats(config);
+    // 初始化统计项。
+    impl_->stats.rga_enabled = impl_->config.preprocess.use_rga_preprocess;
+    impl_->stats.mpp_enabled = isMppDecodeEnabledInStats(impl_->config);
     impl_->start_time = Clock::now();
     impl_->last_fps_update = impl_->start_time;
 
     impl_->initialized = true;
     LOGI("DetectionPipeline: Initialized successfully");
-    LOGI("  - Input: ", config.source_uri);
-    LOGI("  - Model: ", config.model_path, " (", config.input_size, "x", config.input_size, ")");
-    LOGI("  - NPU multi-core: ", (config.use_npu_multicore ? "enabled" : "disabled"));
+    LOGI("  - Input: ", impl_->config.source.uri);
+    LOGI("  - Model: ", impl_->config.model.model_path, " (", impl_->config.model.input_size,
+         "x", impl_->config.model.input_size, ")");
+    LOGI("  - NPU multi-core: ",
+         (impl_->config.model.use_npu_multicore ? "enabled" : "disabled"));
     LOGI("  - RGA preprocess: ", (impl_->stats.rga_enabled ? "enabled" : "disabled"));
     LOGI("  - MPP decode: ", (impl_->stats.mpp_enabled ? "enabled" : "disabled"));
     LOGI("  - Zero-copy: ", (impl_->stats.zero_copy_enabled ? "enabled" : "disabled"));
     LOGI("  - Undistort: ", (impl_->calibration_loaded ? "enabled" : "disabled"));
-    LOGI("  - Preprocess profile: ", config.preprocess_profile);
-    LOGI("  - ROI: ", (config.roi_enable ? "enabled" : "disabled"));
+    LOGI("  - Preprocess profile: ", impl_->config.preprocess.profile);
+    LOGI("  - ROI: ", (impl_->config.preprocess.roi_enable ? "enabled" : "disabled"));
     LOGI("  - White balance: ", (impl_->preprocess_flags.white_balance ? "enabled" : "disabled"));
     LOGI("  - Gamma: ", (impl_->preprocess_flags.gamma ? "enabled" : "disabled"));
     LOGI("  - Denoise: ", (impl_->preprocess_flags.denoise ? "enabled" : "disabled"));
@@ -320,32 +340,120 @@ bool DetectionPipeline::init(const PipelineConfig& config) {
 }
 
 std::optional<PipelineResult> DetectionPipeline::next() {
+    return nextInternal(false);
+}
+
+std::optional<PipelineResult> DetectionPipeline::nextInternal(bool respect_running_flag) {
     if (!impl_->initialized || !impl_->source) {
         return std::nullopt;
     }
 
-    capture::CaptureFrame frame;
-    auto capture_start = Clock::now();
+    const int configured_backoff = std::max(0, impl_->config.failure.initial_backoff_ms);
+    const int configured_backoff_max =
+        std::max(configured_backoff, impl_->config.failure.max_backoff_ms);
+    std::chrono::milliseconds backoff(configured_backoff);
+    const std::chrono::milliseconds backoff_max(configured_backoff_max);
+    const std::chrono::milliseconds grace_window(
+        std::max(0, impl_->config.failure.source_recovery_grace_ms));
+    std::optional<TimePoint> recovery_start;
+    int reconnect_attempts = 0;
 
-    if (!impl_->source->readFrame(frame)) {
-        return std::nullopt;
+    while (!respect_running_flag || impl_->running.load(std::memory_order_acquire)) {
+        capture::CaptureFrame frame;
+        auto capture_start = Clock::now();
+        const auto read_status = impl_->source->readFrameEx(frame);
+
+        if (read_status == capture::ReadStatus::FrameReady) {
+            if (recovery_start.has_value()) {
+                const auto recovered_after = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    Clock::now() - *recovery_start);
+                LOGI("DetectionPipeline: Source recovered after ", recovered_after.count(),
+                     " ms and ", reconnect_attempts, " retry attempts");
+            }
+            recovery_start.reset();
+            reconnect_attempts = 0;
+            backoff = std::chrono::milliseconds(configured_backoff);
+
+            if (frame.mat.empty()) {
+                impl_->recordDroppedFrame();
+                impl_->consecutive_frame_errors++;
+                if (impl_->config.failure.frame_error_limit >= 0 &&
+                    impl_->consecutive_frame_errors > impl_->config.failure.frame_error_limit) {
+                    LOGE("DetectionPipeline: Too many consecutive frame errors (empty frames)");
+                    return std::nullopt;
+                }
+                LOGW("DetectionPipeline: Dropping empty frame");
+                continue;
+            }
+
+            auto result = process(frame.mat);
+            if (result.timing.total_us <= 0 && result.frame.empty() && result.detections.empty()) {
+                impl_->recordDroppedFrame();
+                impl_->consecutive_frame_errors++;
+                if (impl_->config.failure.frame_error_limit >= 0 &&
+                    impl_->consecutive_frame_errors > impl_->config.failure.frame_error_limit) {
+                    LOGE("DetectionPipeline: Too many consecutive frame processing failures");
+                    return std::nullopt;
+                }
+                LOGW("DetectionPipeline: Frame processing failed, dropping frame");
+                continue;
+            }
+
+            impl_->consecutive_frame_errors = 0;
+            const int64_t elapsed_from_capture_start = microsecondsSince(capture_start);
+            result.timing.capture_us = std::max<int64_t>(
+                0, elapsed_from_capture_start - result.timing.total_us);
+            result.timing.total_us = elapsed_from_capture_start;
+            result.frame_id = impl_->frame_counter.fetch_add(1, std::memory_order_relaxed);
+
+            impl_->updateFps();
+            impl_->updateStats(result);
+            return result;
+        }
+
+        if (read_status == capture::ReadStatus::EndOfStream) {
+            LOGI("DetectionPipeline: Source exhausted");
+            return std::nullopt;
+        }
+
+        if (read_status == capture::ReadStatus::FatalError) {
+            LOGE("DetectionPipeline: Source reported fatal read error");
+            return std::nullopt;
+        }
+
+        const auto now = Clock::now();
+        if (!recovery_start.has_value()) {
+            recovery_start = now;
+        }
+
+        const int next_attempt = reconnect_attempts + 1;
+        if (impl_->config.failure.max_reconnect_attempts >= 0 &&
+            next_attempt > impl_->config.failure.max_reconnect_attempts) {
+            LOGE("DetectionPipeline: Reconnect attempts exceeded limit (",
+                 impl_->config.failure.max_reconnect_attempts, ")");
+            return std::nullopt;
+        }
+        if (grace_window.count() > 0 && now - *recovery_start >= grace_window) {
+            LOGE("DetectionPipeline: Source did not recover within ", grace_window.count(),
+                 " ms");
+            return std::nullopt;
+        }
+
+        reconnect_attempts = next_attempt;
+        impl_->recordReconnectAttempt();
+        LOGW("DetectionPipeline: Recoverable source read failure, retry ", reconnect_attempts,
+             " in ", backoff.count(), " ms");
+
+        if (respect_running_flag && !impl_->running.load(std::memory_order_acquire)) {
+            return std::nullopt;
+        }
+        if (backoff.count() > 0) {
+            std::this_thread::sleep_for(backoff);
+        }
+        backoff = std::min(backoff_max, std::max(backoff, std::chrono::milliseconds(1)) * 2);
     }
 
-    if (frame.mat.empty()) {
-        return std::nullopt;
-    }
-
-    auto result = process(frame.mat);
-    const int64_t elapsed_from_capture_start = microsecondsSince(capture_start);
-    result.timing.capture_us = std::max<int64_t>(
-        0, elapsed_from_capture_start - result.timing.total_us);
-    result.timing.total_us = elapsed_from_capture_start;
-    result.frame_id = impl_->frame_counter.fetch_add(1, std::memory_order_relaxed);
-
-    impl_->updateFps();
-    impl_->updateStats(result);
-
-    return result;
+    return std::nullopt;
 }
 
 PipelineResult DetectionPipeline::process(const cv::Mat& image) {
@@ -356,7 +464,7 @@ PipelineResult DetectionPipeline::process(const cv::Mat& image) {
         return result;
     }
 
-    preprocess::AccelBackend backend = impl_->config.use_rga_preprocess
+    preprocess::AccelBackend backend = impl_->config.preprocess.use_rga_preprocess
         ? preprocess::AccelBackend::AUTO
         : preprocess::AccelBackend::OPENCV;
 
@@ -392,20 +500,26 @@ PipelineResult DetectionPipeline::process(const cv::Mat& image) {
         }
     }
 
+    cv::Mat coord_frame = working;
     const cv::Size coord_space_size = working.size();
     cv::Rect roi_rect(0, 0, working.cols, working.rows);
     bool roi_applied = false;
-    if (impl_->config.roi_enable) {
+    if (impl_->config.preprocess.roi_enable) {
         cv::Rect resolved_roi;
         const cv::Rect2f normalized_roi(
-            impl_->config.roi_normalized_xywh[0], impl_->config.roi_normalized_xywh[1],
-            impl_->config.roi_normalized_xywh[2], impl_->config.roi_normalized_xywh[3]);
+            impl_->config.preprocess.roi_normalized_xywh[0],
+            impl_->config.preprocess.roi_normalized_xywh[1],
+            impl_->config.preprocess.roi_normalized_xywh[2],
+            impl_->config.preprocess.roi_normalized_xywh[3]);
         const cv::Rect pixel_roi(
-            impl_->config.roi_pixel_xywh[0], impl_->config.roi_pixel_xywh[1],
-            impl_->config.roi_pixel_xywh[2], impl_->config.roi_pixel_xywh[3]);
+            impl_->config.preprocess.roi_pixel_xywh[0],
+            impl_->config.preprocess.roi_pixel_xywh[1],
+            impl_->config.preprocess.roi_pixel_xywh[2],
+            impl_->config.preprocess.roi_pixel_xywh[3]);
         if (preprocess::Preprocess::resolveRoiRect(
-                working.size(), roiModeIsNormalized(impl_->config.roi_mode), normalized_roi,
-                pixel_roi, impl_->config.roi_clamp, impl_->config.roi_min_size,
+                working.size(), roiModeIsNormalized(impl_->config.preprocess.roi_mode),
+                normalized_roi, pixel_roi, impl_->config.preprocess.roi_clamp,
+                impl_->config.preprocess.roi_min_size,
                 resolved_roi)) {
             roi_rect = resolved_roi;
             if (roi_rect.x != 0 || roi_rect.y != 0 ||
@@ -425,13 +539,14 @@ PipelineResult DetectionPipeline::process(const cv::Mat& image) {
     }
 
     if (impl_->preprocess_flags.denoise) {
-        if (rkapp::common::toLowerCopy(impl_->config.denoise_method) != "bilateral") {
+        if (rkapp::common::toLowerCopy(impl_->config.preprocess.denoise_method) != "bilateral") {
             LOGW("DetectionPipeline: Unsupported denoise method '",
-                 impl_->config.denoise_method, "', using bilateral");
+                 impl_->config.preprocess.denoise_method, "', using bilateral");
         }
         cv::Mat denoised = preprocess::Preprocess::denoiseBilateral(
-            working, impl_->config.denoise_d, impl_->config.denoise_sigma_color,
-            impl_->config.denoise_sigma_space);
+            working, impl_->config.preprocess.denoise_d,
+            impl_->config.preprocess.denoise_sigma_color,
+            impl_->config.preprocess.denoise_sigma_space);
         if (!denoised.empty()) {
             working = std::move(denoised);
         }
@@ -439,14 +554,14 @@ PipelineResult DetectionPipeline::process(const cv::Mat& image) {
 
     if (impl_->preprocess_flags.white_balance) {
         cv::Mat balanced = preprocess::Preprocess::whiteBalanceGrayWorld(
-            working, impl_->config.white_balance_clip_percent);
+            working, impl_->config.preprocess.white_balance_clip_percent);
         if (!balanced.empty()) {
             working = std::move(balanced);
         }
     }
 
     if (impl_->preprocess_flags.gamma) {
-        const float gamma_value = impl_->config.gamma_value;
+        const float gamma_value = impl_->config.preprocess.gamma_value;
         if (gamma_value > 0.0f) {
             cv::Mat gamma_corrected =
                 preprocess::Preprocess::applyGammaLut(working, gamma_value);
@@ -460,24 +575,24 @@ PipelineResult DetectionPipeline::process(const cv::Mat& image) {
 
 #if RKAPP_WITH_RKNN
     if (impl_->rknn_engine) {
-        // Preprocess
+        // 预处理（letterbox）。
         preprocess::LetterboxInfo letterbox_info;
 
         cv::Mat preprocessed = preprocess::Preprocess::letterbox(
-            working, impl_->config.input_size, letterbox_info, backend);
+            working, impl_->config.model.input_size, letterbox_info, backend);
         if (preprocessed.empty()) {
             LOGW("DetectionPipeline: Letterbox preprocessing failed");
             return result;
         }
 
-        if (impl_->config.enable_profiling) {
+        if (impl_->config.output.enable_profiling) {
             result.timing.preprocess_us = microsecondsSince(preprocess_start);
         }
 
-        // Inference
+        // 推理。
         auto inference_start = Clock::now();
 
-        // Lambda for running detection inference on the primary engine
+        // 主检测推理路径：优先 DMA-BUF 零拷贝，否则回退普通路径。
         auto runDetectionInfer = [&]() -> std::vector<infer::Detection> {
             if (impl_->buffer_pool && impl_->stats.zero_copy_enabled) {
                 common::DmaBuf* dma_buf = impl_->buffer_pool->acquire();
@@ -506,17 +621,36 @@ PipelineResult DetectionPipeline::process(const cv::Mat& image) {
             applyRoiOffsetAndClip(result.detections, roi_rect, coord_space_size);
         }
 
-        if (impl_->config.enable_profiling) {
+        auto postprocess_start = Clock::now();
+        post::Postprocess::mapClassNames(result.detections, impl_->config.model.class_names);
+        if (impl_->config.model.min_box_size > 0.0f || impl_->config.model.max_box_size > 0.0f ||
+            impl_->config.model.min_aspect_ratio > 0.0f ||
+            impl_->config.model.max_aspect_ratio > 0.0f) {
+            post::NMSConfig filter_cfg;
+            filter_cfg.conf_thres = 0.0f;
+            filter_cfg.iou_thres = 1.0f;
+            filter_cfg.topk = 0;
+            filter_cfg.max_det = impl_->config.model.max_detections;
+            filter_cfg.min_box_size = impl_->config.model.min_box_size;
+            filter_cfg.max_box_size = impl_->config.model.max_box_size;
+            filter_cfg.min_aspect_ratio = impl_->config.model.min_aspect_ratio;
+            filter_cfg.max_aspect_ratio = impl_->config.model.max_aspect_ratio;
+            result.detections = post::Postprocess::nms(result.detections, filter_cfg);
+        }
+        result.frame = coord_frame;
+
+        if (impl_->config.output.enable_profiling) {
             result.timing.inference_us = microsecondsSince(inference_start);
+            result.timing.postprocess_us = microsecondsSince(postprocess_start);
         }
 
-        // Total timing
+        // 总耗时统计。
         result.timing.total_us = microsecondsSince(total_start);
         return result;
     }
 #endif
 
-    if (impl_->config.enable_profiling) {
+    if (impl_->config.output.enable_profiling) {
         result.timing.preprocess_us = microsecondsSince(preprocess_start);
     }
     auto inference_start = Clock::now();
@@ -524,8 +658,26 @@ PipelineResult DetectionPipeline::process(const cv::Mat& image) {
     if (roi_applied) {
         applyRoiOffsetAndClip(result.detections, roi_rect, coord_space_size);
     }
-    if (impl_->config.enable_profiling) {
+    auto postprocess_start = Clock::now();
+    post::Postprocess::mapClassNames(result.detections, impl_->config.model.class_names);
+    if (impl_->config.model.min_box_size > 0.0f || impl_->config.model.max_box_size > 0.0f ||
+        impl_->config.model.min_aspect_ratio > 0.0f ||
+        impl_->config.model.max_aspect_ratio > 0.0f) {
+        post::NMSConfig filter_cfg;
+        filter_cfg.conf_thres = 0.0f;
+        filter_cfg.iou_thres = 1.0f;
+        filter_cfg.topk = 0;
+        filter_cfg.max_det = impl_->config.model.max_detections;
+        filter_cfg.min_box_size = impl_->config.model.min_box_size;
+        filter_cfg.max_box_size = impl_->config.model.max_box_size;
+        filter_cfg.min_aspect_ratio = impl_->config.model.min_aspect_ratio;
+        filter_cfg.max_aspect_ratio = impl_->config.model.max_aspect_ratio;
+        result.detections = post::Postprocess::nms(result.detections, filter_cfg);
+    }
+    result.frame = coord_frame;
+    if (impl_->config.output.enable_profiling) {
         result.timing.inference_us = microsecondsSince(inference_start);
+        result.timing.postprocess_us = microsecondsSince(postprocess_start);
     }
     result.timing.total_us = microsecondsSince(total_start);
     return result;
@@ -548,43 +700,24 @@ void DetectionPipeline::runAsync(ResultCallback callback) {
     impl_->worker_thread = std::thread([this]() {
         LOGI("DetectionPipeline: Async worker started");
 
-        // Retry logic for transient failures (e.g., RTSP/GIGE timeouts)
-        constexpr int MAX_CONSECUTIVE_FAILURES = 3;
-        constexpr int RETRY_DELAY_MS = 100;
-        int consecutive_failures = 0;
-
         while (impl_->running) {
-            auto result = this->next();
+            auto result = this->nextInternal(true);
 
             if (!result) {
-                // Read failure - check if transient or fatal
-                consecutive_failures++;
-
-                if (consecutive_failures >= MAX_CONSECUTIVE_FAILURES) {
-                    LOGE("DetectionPipeline: Max consecutive read failures reached (",
-                         MAX_CONSECUTIVE_FAILURES, "), stopping");
-                    break;
-                }
-
-                LOGW("DetectionPipeline: Read failed (", consecutive_failures, "/",
-                     MAX_CONSECUTIVE_FAILURES, "), retrying...");
-                std::this_thread::sleep_for(std::chrono::milliseconds(RETRY_DELAY_MS));
-                continue;
+                LOGI("DetectionPipeline: Source exhausted or stopped; stopping async worker");
+                break;
             }
 
-            // Reset failure counter on success
-            consecutive_failures = 0;
-
-            // Invoke callback with exception handling
+            // 回调加异常保护，避免单次异常中断整个线程。
             if (impl_->result_callback) {
                 try {
                     impl_->result_callback(std::move(*result));
                 } catch (const std::exception& e) {
                     LOGE("DetectionPipeline: Callback threw exception: ", e.what());
-                    // Continue processing despite callback error
+                    // 回调异常不影响后续处理。
                 } catch (...) {
                     LOGE("DetectionPipeline: Callback threw unknown exception");
-                    // Continue processing despite callback error
+                    // 回调异常不影响后续处理。
                 }
             }
         }
@@ -631,28 +764,33 @@ DetectionPipeline::Statistics DetectionPipeline::getStatistics() const {
 void DetectionPipeline::resetStatistics() {
     std::lock_guard<std::mutex> lock(impl_->stats_mutex);
     impl_->stats = Statistics{};
-    impl_->stats.rga_enabled = impl_->config.use_rga_preprocess;
+    impl_->stats.rga_enabled = impl_->config.preprocess.use_rga_preprocess;
     impl_->stats.mpp_enabled = isMppDecodeEnabledInStats(impl_->config);
     impl_->stats.zero_copy_enabled = (impl_->buffer_pool != nullptr);
     impl_->total_latency_us = 0;
+    impl_->consecutive_frame_errors = 0;
     impl_->start_time = Clock::now();
     impl_->last_fps_update = impl_->start_time;
     impl_->frames_since_update = 0;
 }
 
 // ============================================================================
-// Factory Functions
+// 工厂函数
 // ============================================================================
 
 capture::SourcePtr createSource(const PipelineConfig& config) {
-    switch (config.source_type) {
+    return createSource(config.source);
+}
+
+capture::SourcePtr createSource(const PipelineConfig::SourceSpec& source) {
+    switch (source.type) {
         case capture::SourceType::FOLDER:
             return std::make_unique<capture::FolderSource>();
 
         case capture::SourceType::VIDEO:
         case capture::SourceType::RTSP:
 #if RKAPP_WITH_MPP
-            if (config.use_mpp_decode) {
+            if (source.use_mpp_decode) {
                 LOGI("DetectionPipeline: Using MPP hardware video decode");
                 return std::make_unique<capture::MppSource>();
             }
@@ -690,10 +828,22 @@ capture::SourcePtr createSource(const PipelineConfig& config) {
 }
 
 std::unique_ptr<infer::IInferEngine> createEngine(const PipelineConfig& config) {
-    const std::string model_path_lower = rkapp::common::toLowerCopy(config.model_path);
+    return createEngine(config.model);
+}
 
-    // Always use RKNN engine for .rknn models
-    if (model_path_lower.find(".rknn") != std::string::npos) {
+std::unique_ptr<infer::IInferEngine> createEngine(const PipelineConfig::ModelSpec& model) {
+    PipelineConfig::ModelBackend backend = model.backend;
+    const std::string model_path_lower = rkapp::common::toLowerCopy(model.model_path);
+    if (backend == PipelineConfig::ModelBackend::AUTO) {
+        if (model_path_lower.find(".rknn") != std::string::npos) {
+            backend = PipelineConfig::ModelBackend::RKNN;
+        } else if (model_path_lower.find(".onnx") != std::string::npos) {
+            backend = PipelineConfig::ModelBackend::ONNX;
+        }
+    }
+
+    // .rknn 模型优先走 RKNN 引擎。
+    if (backend == PipelineConfig::ModelBackend::RKNN) {
 #if RKAPP_WITH_RKNN
         return std::make_unique<infer::RknnEngine>();
 #else
@@ -702,7 +852,7 @@ std::unique_ptr<infer::IInferEngine> createEngine(const PipelineConfig& config) 
 #endif
     }
 
-    if (model_path_lower.find(".onnx") != std::string::npos) {
+    if (backend == PipelineConfig::ModelBackend::ONNX) {
 #if RKAPP_WITH_ONNX
         return std::make_unique<infer::OnnxEngine>();
 #else
@@ -711,7 +861,8 @@ std::unique_ptr<infer::IInferEngine> createEngine(const PipelineConfig& config) 
 #endif
     }
 
-    LOGE("DetectionPipeline: Unsupported model type (expected .rknn or .onnx): ", config.model_path);
+    LOGE("DetectionPipeline: Unsupported model type (expected .rknn or .onnx): ",
+         model.model_path);
     return nullptr;
 }
 

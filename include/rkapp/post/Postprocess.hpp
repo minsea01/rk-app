@@ -18,23 +18,29 @@ struct NMSConfig {
     float max_aspect_ratio = 0.0f; // H/W 上界，0 表示不限
 };
 
+// 后处理工具：负责 NMS、坐标映射与类别名装配。
 class Postprocess {
 public:
+    // 先做置信度/尺寸过滤，再按类别执行 NMS。
     static std::vector<rkapp::infer::Detection> nms(
         const std::vector<rkapp::infer::Detection>& detections,
         const NMSConfig& config = {});
     
+    // 按缩放/平移参数把检测框从网络输入坐标映射回目标坐标系。
     static void rescaleDetections(
         std::vector<rkapp::infer::Detection>& detections,
         float scale_x, float scale_y, float dx, float dy);
     
+    // 根据 class_id 填充 class_name。
     static void mapClassNames(
         std::vector<rkapp::infer::Detection>& detections,
         const std::vector<std::string>& class_names);
     
+    // 从文件加载类别名（每行一个类别）。
     static std::vector<std::string> loadClassNames(const std::string& path);
     
 private:
+    // 计算两框 IoU，用于 NMS 抑制判定。
     static float calculateIOU(const rkapp::infer::Detection& a, const rkapp::infer::Detection& b);
 };
 

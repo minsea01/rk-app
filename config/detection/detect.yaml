@@ -9,8 +9,8 @@
 # 5) 结果往哪里输出
 #
 # 常见调参入口：
-# - 检测太多误报：提高 nms.conf_thres（如 0.25 -> 0.4）
-# - 检测漏检：适当降低 nms.conf_thres（如 0.25 -> 0.2）
+# - 检测太多误报：提高 postprocess.conf_threshold（如 0.25 -> 0.4）
+# - 检测漏检：适当降低 postprocess.conf_threshold（如 0.25 -> 0.2）
 # - 需要边缘区域稳定：开启 preprocess.roi 并收缩 ROI
 # ============================================================
 
@@ -34,7 +34,7 @@ engine:
   # 模型路径（与 type 对应：onnx 或 rknn 文件）
   model: "artifacts/models/best.onnx"
   # 网络输入尺寸（通常 416/640），需要与导出模型和推理期设置一致
-  imgsz: 640
+  input_size: [640, 640]
 
 preprocess:
   # 预处理配置档位：speed（最快）/balanced（折中）/quality（质量优先）
@@ -72,15 +72,15 @@ preprocess:
     sigma_color: 35.0
     sigma_space: 35.0
 
-nms:
+postprocess:
   # 置信度阈值：低于该值的框会先被过滤
-  conf_thres: 0.25
+  conf_threshold: 0.25
   # NMS 的 IoU 阈值：越低去重越强，越高保留越多重叠框
-  iou_thres: 0.60
+  nms_threshold: 0.60
   # NMS 前候选框上限，防止异常输入导致后处理开销过大
-  topk: 1000
+  max_detections: 1000
 
-perf:
+runtime:
   # 预热轮数：先跑几帧让缓存/内核状态稳定，再统计性能更可信
   warmup: 5
   # 是否启用异步流水线（采集与推理并行），吞吐通常更高
@@ -90,8 +90,9 @@ output:
   # 输出通道类型，当前以 tcp 为主
   type: tcp                 # tcp
   # TCP 发送目标地址（可接外部结果接收器）
-  ip: "127.0.0.1"
-  port: 9000
+  tcp:
+    host: "127.0.0.1"
+    port: 9000
 
 # 类别名称文件（每行一个类名，索引与模型输出 class_id 对齐）
 classes: "config/person_classes.txt"

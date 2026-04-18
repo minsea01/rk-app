@@ -198,14 +198,15 @@ def build_rknn(
 
         try:
             rknn.config(**config_kwargs)
-        except TypeError as e:
-            # 某些旧版或变体 toolkit 可能不支持 reorder_channel 参数
+        except (TypeError, ValueError) as e:
+            # rknn-toolkit2 >=2.2.0 removed reorder_channel (use quant_img_RGB2BGR instead)
             if "reorder_channel" in config_kwargs and "reorder_channel" in str(e):
                 logger.warning(
                     "Current RKNN toolkit does not support reorder_channel, "
-                    "falling back without explicit channel reorder"
+                    "falling back to quant_img_RGB2BGR=True"
                 )
                 config_kwargs.pop("reorder_channel", None)
+                config_kwargs["quant_img_RGB2BGR"] = True
                 rknn.config(**config_kwargs)
             else:
                 raise
