@@ -33,12 +33,22 @@ source:
 engine:
   type: onnx
   model: "artifacts/models/best.onnx"
-  imgsz: 640
+  input_size: [640, 640]
 
-nms:
-  conf_thres: 0.25
-  iou_thres: 0.60
-  topk: 1000
+postprocess:
+  conf_threshold: 0.25
+  nms_threshold: 0.60
+  max_detections: 1000
+
+output:
+  type: tcp
+  tcp:
+    host: "127.0.0.1"
+    port: 9000
+
+runtime:
+  warmup: 3
+  async: false
 
 classes: "config/industrial_classes.txt"
 EOF

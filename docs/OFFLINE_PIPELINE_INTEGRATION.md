@@ -244,9 +244,9 @@ class TCPOutputHandler(OutputHandler):
 ```yaml
 output:
   type: tcp
-  host: 192.168.2.100  # 远程服务器
-  port: 9000
-  protocol: json       # JSON格式结果
+  tcp:
+    host: 192.168.2.100  # 远程服务器
+    port: 9000
 ```
 
 #### B. 文件保存 (离线分析)
@@ -386,46 +386,57 @@ PC验证配置：
 ```yaml
 # config/detection/detect_file.yaml
 source:
-  type: file
+  type: folder
   uri: artifacts/test_images/
 
 engine:
   type: onnx
   model: artifacts/models/best.onnx
-  imgsz: 416
+  input_size: [416, 416]
 
-nms:
-  conf_thres: 0.5
-  iou_thres: 0.5
+postprocess:
+  conf_threshold: 0.5
+  nms_threshold: 0.5
+  max_detections: 100
 
 output:
-  type: display
-  save_images: true
+  type: tcp
+  tcp:
+    host: 127.0.0.1
+    port: 9000
+```
+
+离线保存 JSON / 可视化时，通过 CLI 参数导出：
+
+```bash
+./build/x86-debug/detect_cli \
+  --cfg config/detection/detect_file.yaml \
+  --json output/test_detections.json \
+  --save_vis output/test_vis
 ```
 
 硬件部署配置：
 ```yaml
 # config/detection/detect_board.yaml
 source:
-  type: hardware_camera
-  csi_port: 0
-  resolution: [1920, 1080]
-  fps: 30
+  type: csi
+  uri: "device=/dev/video0,width=1920,height=1080,framerate=30,format=NV12"
 
 engine:
   type: rknn
   model: artifacts/models/best.rknn
-  imgsz: 416
+  input_size: [416, 416]
 
-nms:
-  conf_thres: 0.5
-  iou_thres: 0.5
+postprocess:
+  conf_threshold: 0.5
+  nms_threshold: 0.5
+  max_detections: 100
 
 output:
   type: tcp
-  ip: 192.168.2.1      # 远程监控服务器
-  port: 9000
-  protocol: json
+  tcp:
+    host: 192.168.2.1      # 远程监控服务器
+    port: 9000
 ```
 
 ---
@@ -648,4 +659,3 @@ cp config/detection/detect_file.yaml \
 **状态：** ✅ Phase 1完成，架构预留清晰
 **下一步：** 等待硬件到达，按此架构无缝集成
 **预期：** Dec 2025硬件抵达 → Jan 2026完成Phase 2
-

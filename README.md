@@ -7,14 +7,56 @@
 ## 快速开始
 - 本机构建（x86 调试）
   - `cmake --preset x86-debug && cmake --build --preset x86-debug`
-  - 运行 ONNX 管线：`./build/x86-debug/detect_cli --cfg config/detection/detect.yaml`
+  - 运行 ONNX 管线：`./build/x86-debug/detect_cli --cfg config/detection/detect.yaml --json output/detections.json --save_vis output/vis`
 - RK3588 交叉构建（启用 RKNN）
   - `cmake --preset arm64-release -DENABLE_RKNN=ON && cmake --build --preset arm64`
   - 安装产物：`cmake --install build/arm64`
 - 板端 Python Runner（RKNN 推理）
-  - `python apps/yolov8_rknn_infer.py --model artifacts/models/best.rknn --names config/industrial_classes.txt --source bus.jpg --save artifacts/vis.jpg`
+  - `python apps/yolov8_rknn_infer.py --model artifacts/models/best.rknn --names config/classes.txt --source assets/test.jpg --save artifacts/vis.jpg`
 
 更多演示与环境变量示例见 `docs/guides/QUICK_START_GUIDE.md` 与 `docs/QUICKSTART.md`。
+
+## detect_cli 配置（阶段 3）
+
+`detect_cli` 现在只接受结构化运行时 schema，不再兼容早期的平铺/别名字段。最小可用配置如下：
+
+```yaml
+source:
+  type: video
+  uri: assets/street.mp4
+
+engine:
+  type: onnx
+  model: artifacts/models/yolo11n_opset12_416.onnx
+  input_size: [416, 416]
+
+postprocess:
+  conf_threshold: 0.25
+  nms_threshold: 0.45
+  max_detections: 100
+
+classes:
+  path: config/classes.txt
+
+output:
+  type: tcp
+  tcp:
+    host: 127.0.0.1
+    port: 9000
+    queue_size: 32
+
+runtime:
+  warmup: 5
+  async: false
+
+logging:
+  level: INFO
+```
+
+说明：
+- `output.type` 当前以 `tcp` 为唯一正式输出通道；离线 JSON 和可视化通过 `--json`、`--save_vis` CLI 参数导出。
+- 模型解码契约只认模型同名 sidecar：`<model>.json` 或 `<model>.meta`。
+- 已移除的旧键包括：`input`、`nms`、`engine.imgsz`、`output.ip`、`output.tcp.queue`、`perf`、根级 `log_level`。
 
 ## Python 依赖分层
 - 基础运行时（轻量）：

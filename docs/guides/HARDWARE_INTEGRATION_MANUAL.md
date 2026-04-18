@@ -287,27 +287,24 @@ class GigEVisionSource(InputSource):
 # 硬件摄像头配置
 
 source:
-  type: hardware_camera    # or gige_vision
-  csi_port: 0              # CSI端口0或1
-  resolution: [1920, 1080] # 分辨率
-  fps: 30                  # 帧率
-  # gige_vision配置 (可选)
-  camera_ip: 192.168.1.101 # 工业相机IP
-  camera_port: 3956        # GigE Vision端口
+  type: csi
+  uri: "device=/dev/video0,width=1920,height=1080,framerate=30,format=NV12"
 
 engine:
   type: rknn
   model: artifacts/models/best.rknn
-  imgsz: 416
+  input_size: [416, 416]
 
-nms:
-  conf_thres: 0.5
-  iou_thres: 0.5
+postprocess:
+  conf_threshold: 0.5
+  nms_threshold: 0.5
+  max_detections: 100
 
 output:
   type: tcp
-  ip: 192.168.2.1  # 远程监控/存储服务器
-  port: 9000
+  tcp:
+    host: 192.168.2.1  # 远程监控/存储服务器
+    port: 9000
 ```
 
 ---
@@ -404,11 +401,15 @@ free -h
 ### 4.3 端到端延迟分析
 
 ```yaml
-# 添加详细时间戳统计
+# detect_cli 通过 output.enable_profiling 暴露阶段耗时
 # config/detection/detect_board_debug.yaml
 
-perf:
-  detailed_timing: true
+output:
+  type: tcp
+  enable_profiling: true
+  tcp:
+    host: 192.168.2.1
+    port: 9000
   # 将输出以下指标:
   # - 采集延迟 (摄像头 → 预处理)
   # - 预处理延迟
@@ -603,7 +604,7 @@ top -p $(pgrep detect_cli)
 # 使用 yolo11n_416.rknn 替代 best.rknn
 # 编辑 config/detection/detect_board.yaml:
 # engine.model: artifacts/models/yolo11n_416.rknn
-# engine.imgsz: 416
+# engine.input_size: [416, 416]
 ```
 
 ### Q2: 精度低于90%
