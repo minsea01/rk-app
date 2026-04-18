@@ -13,10 +13,12 @@ typedef struct _GstAppSink GstAppSink;
 
 namespace rkapp::capture {
 
+// GStreamer 输入源基类：封装 pipeline 生命周期、拉流与重连逻辑。
 class GstSourceBase : public ISource {
  public:
   bool read(cv::Mat& frame) override;
   bool readFrame(CaptureFrame& frame) override;
+  ReadStatus readFrameEx(CaptureFrame& frame) override;
   void release() override;
   bool isOpened() const override;
 
@@ -26,6 +28,7 @@ class GstSourceBase : public ISource {
   int getCurrentFrame() const override;
 
  protected:
+  // 打开配置：由派生类按来源（GIGE/CSI）组装 pipeline 参数。
   struct OpenConfig {
     std::string uri;
     std::string pipeline_desc;
@@ -43,6 +46,7 @@ class GstSourceBase : public ISource {
 
  private:
 #if defined(RKAPP_WITH_GIGE) || defined(RKAPP_WITH_CSI)
+  // 以下函数要求在持有 mtx_ 的情况下调用。
   bool createPipelineLocked();
   void destroyPipelineLocked();
   bool ensurePipelineLocked();
@@ -50,6 +54,7 @@ class GstSourceBase : public ISource {
   bool attemptReconnectLocked();
   void handleReadFailureLocked();
 
+  // GStreamer 对象与重连状态。
   GstElement* pipeline_ = nullptr;
   GstElement* sink_element_ = nullptr;
   GstAppSink* appsink_ = nullptr;
@@ -64,6 +69,7 @@ class GstSourceBase : public ISource {
   bool reconnect_immediately_on_failure_ = true;
 #endif
 
+  // 通用采集统计状态。
   std::string source_name_;
   bool opened_ = false;
   mutable std::mutex mtx_;

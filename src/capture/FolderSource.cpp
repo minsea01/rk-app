@@ -6,6 +6,7 @@
 
 namespace rkapp::capture {
 
+// 文件夹输入源：按排序顺序遍历图片文件。
 FolderSource::FolderSource() = default;
 FolderSource::~FolderSource() = default;
 
@@ -21,6 +22,7 @@ bool FolderSource::open(const std::string& folder_path) {
   image_files_.clear();
   current_index_ = 0;
 
+  // 支持的常见图片后缀。
   std::vector<std::string> extensions = {".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".webp", ".pgm", ".ppm"};
 
   for (const auto& entry : fs::directory_iterator(folder_path_)) {

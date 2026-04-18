@@ -20,6 +20,7 @@
 
 namespace rkapp::capture {
 
+// GStreamer 通用采集基类实现：处理拉帧、格式转换、健康检查和重连。
 #if defined(RKAPP_WITH_GIGE) || defined(RKAPP_WITH_CSI)
 namespace {
 
@@ -64,6 +65,7 @@ struct GstSampleGuard {
   }
 };
 
+// 重连退避窗口：失败时指数退避，成功后恢复初始值。
 constexpr std::chrono::milliseconds kInitialReconnectBackoff(500);
 constexpr std::chrono::milliseconds kMaxReconnectBackoff(5000);
 
@@ -76,6 +78,7 @@ GstSourceBase::GstSourceBase(const char* source_name)
 bool GstSourceBase::openWithConfig(const OpenConfig& config) {
 #if defined(RKAPP_WITH_GIGE) || defined(RKAPP_WITH_CSI)
   std::lock_guard<std::mutex> lock(mtx_);
+  // 先销毁旧 pipeline，确保重开时状态干净。
   destroyPipelineLocked();
   opened_ = false;
   count_ = 0;
@@ -94,6 +97,7 @@ bool GstSourceBase::openWithConfig(const OpenConfig& config) {
   fps_ = config.fps;
 
   if (!gst_is_initialized()) {
+    // 惰性初始化 GStreamer 全局状态。
     int argc = 0;
     char** argv = nullptr;
     gst_init(&argc, &argv);
@@ -140,6 +144,7 @@ bool GstSourceBase::readFrame(CaptureFrame& frame) {
   }
 
   if (!checkPipelineHealthLocked()) {
+    // pipeline 异常时尝试重建。
     if (!attemptReconnectLocked()) {
       return false;
     }
@@ -205,6 +210,7 @@ bool GstSourceBase::readFrame(CaptureFrame& frame) {
   }
 
   if (pixel_kind == PixelFormatKind::UNKNOWN) {
+    // 优先使用配置中的 fallback 格式再次判定。
     lock.lock();
     const std::string fallback = unknown_format_fallback_;
     lock.unlock();
@@ -268,6 +274,7 @@ bool GstSourceBase::readFrame(CaptureFrame& frame) {
 
   cv::Mat mapped(height, width, src_type, static_cast<void*>(sample_guard.map.data), row_stride);
   if (pixel_kind == PixelFormatKind::BGR) {
+    // BGR 直接零拷贝共享 sample 内存。
     auto holder = std::make_shared<GstSampleHolder>();
     holder->sample = sample_guard.sample;
     holder->buffer = sample_guard.buffer;
@@ -279,6 +286,7 @@ bool GstSourceBase::readFrame(CaptureFrame& frame) {
     frame.mat = mapped;
     frame.owner = holder;
   } else {
+    // 其他格式转换到 BGR，结果由 frame.mat 独占。
     try {
       if (pixel_kind == PixelFormatKind::GRAY) {
         cv::cvtColor(mapped, frame.mat, cv::COLOR_GRAY2BGR);
@@ -319,10 +327,18 @@ bool GstSourceBase::readFrame(CaptureFrame& frame) {
 #endif
 }
 
+ReadStatus GstSourceBase::readFrameEx(CaptureFrame& frame) {
+  if (readFrame(frame)) {
+    return ReadStatus::FrameReady;
+  }
+  return ReadStatus::RecoverableError;
+}
+
 void GstSourceBase::release() {
   std::lock_guard<std::mutex> lock(mtx_);
 
 #if defined(RKAPP_WITH_GIGE) || defined(RKAPP_WITH_CSI)
+  // 清空 pipeline 与重连状态。
   destroyPipelineLocked();
   source_uri_.clear();
   pipeline_desc_.clear();
@@ -365,6 +381,7 @@ int GstSourceBase::getCurrentFrame() const {
 
 #if defined(RKAPP_WITH_GIGE) || defined(RKAPP_WITH_CSI)
 bool GstSourceBase::createPipelineLocked() {
+  // 全量重建 pipeline：parse -> 找 appsink -> PLAYING。
   destroyPipelineLocked();
 
   GError* err = nullptr;
@@ -412,6 +429,7 @@ bool GstSourceBase::createPipelineLocked() {
 }
 
 void GstSourceBase::destroyPipelineLocked() {
+  // 按依赖顺序逆序释放对象，避免悬空引用。
   if (pipeline_) {
     gst_element_set_state(pipeline_, GST_STATE_NULL);
     gst_element_get_state(pipeline_, nullptr, nullptr, 1 * GST_SECOND);
@@ -447,6 +465,7 @@ bool GstSourceBase::checkPipelineHealthLocked() {
 
   bool healthy = true;
   while (true) {
+    // 轮询总线错误与 EOS 消息。
     GstMessage* msg = gst_bus_timed_pop_filtered(
         bus, 0, static_cast<GstMessageType>(GST_MESSAGE_ERROR | GST_MESSAGE_EOS));
     if (!msg) {
@@ -493,6 +512,7 @@ bool GstSourceBase::checkPipelineHealthLocked() {
 
 bool GstSourceBase::attemptReconnectLocked() {
   const auto now = std::chrono::steady_clock::now();
+  // 退避窗口内不重复重连，避免频繁抖动。
   if (now - last_reconnect_ < reconnect_backoff_) {
     return false;
   }
@@ -514,6 +534,7 @@ bool GstSourceBase::attemptReconnectLocked() {
 
 void GstSourceBase::handleReadFailureLocked() {
   ++consecutive_failures_;
+  // 连续失败达到阈值时强制重启 pipeline。
   if (consecutive_failures_ >= max_consecutive_failures_) {
     LOGW(source_name_, ": too many failures (", consecutive_failures_,
          "), forcing pipeline restart");

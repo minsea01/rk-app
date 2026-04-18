@@ -11,8 +11,11 @@
 
 namespace rkapp::capture {
 
+// CSI 输入源实现：URI 解析 + v4l2src pipeline 构建。
+
 namespace {
 
+// 去掉前后空白，便于 URI 键值解析。
 std::string trimCopy(const std::string& input) {
   auto first = std::find_if_not(input.begin(), input.end(),
                                 [](unsigned char ch) { return std::isspace(ch); });
@@ -40,6 +43,7 @@ bool parseInt(const std::string& input, int& out) {
   return false;
 }
 
+// 支持 "30" 或 "30/1" 形式帧率。
 int parseFramerate(const std::string& value, int fallback) {
   int parsed = 0;
   if (parseInt(value, parsed)) {
@@ -72,7 +76,7 @@ CsiSource::~CsiSource() {
   try {
     release();
   } catch (...) {
-    // Destructors must not throw.
+    // 析构函数不抛异常。
   }
 }
 
@@ -101,6 +105,7 @@ bool CsiSource::open(const std::string& uri) {
 CsiSource::UriConfig CsiSource::parseUri(const std::string& uri) {
   UriConfig config;
 
+  // 统一格式名并决定是否需要 videoconvert。
   auto applyFormat = [&](const std::string& format) {
     const std::string normalized = canonicalCapsFormat(format);
     if (normalized.empty()) {
@@ -199,6 +204,7 @@ std::string CsiSource::buildPipelineDescription(const UriConfig& config) {
   const int safe_fps = std::clamp(config.framerate, 1, 240);
 
   std::ostringstream pipeline;
+  // v4l2src 拉取原始帧，按配置拼接 caps，再接 appsink。
   pipeline << "v4l2src device=" << safe_device << " ! "
            << media_type << ",format=" << (safe_format.empty() ? "NV12" : safe_format)
            << ",width=" << safe_width << ",height=" << safe_height << ",framerate=" << safe_fps

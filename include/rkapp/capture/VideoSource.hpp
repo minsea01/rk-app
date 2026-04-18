@@ -4,6 +4,7 @@
 
 namespace rkapp::capture {
 
+// 通用视频输入源：支持本地文件与 RTSP/RTMP/HTTP 流。
 class VideoSource : public ISource {
 public:
   VideoSource();
@@ -11,6 +12,7 @@ public:
 
   bool open(const std::string& video_path) override;
   bool read(cv::Mat& frame) override;
+  ReadStatus readFrameEx(CaptureFrame& frame) override;
   void release() override;
   bool isOpened() const override;
 
@@ -39,4 +41,3 @@ private:
 };
 
 } // namespace rkapp::capture
-

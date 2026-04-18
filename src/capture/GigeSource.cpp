@@ -11,8 +11,11 @@
 
 namespace rkapp::capture {
 
+// GigE 输入源实现：URI 解析 + 安全拼接 pipeline。
+
 namespace {
 
+// 去掉前后空白，便于 URI 键值解析。
 std::string trimCopy(const std::string& input) {
   auto first = std::find_if_not(input.begin(), input.end(),
                                 [](unsigned char ch) { return std::isspace(ch); });
@@ -35,6 +38,7 @@ bool parseInt(const std::string& input, int& out) {
   return false;
 }
 
+// 兼容 yes/on/colour/bgr/rgb 等表达。
 bool parseBool(const std::string& input) {
   const auto lowered = rkapp::common::toLowerCopy(trimCopy(input));
   return lowered == "1" || lowered == "true" || lowered == "yes" ||
@@ -54,7 +58,7 @@ GigeSource::~GigeSource() {
   try {
     release();
   } catch (...) {
-    // Destructors must not throw.
+    // 析构函数不抛异常。
   }
 }
 
@@ -86,6 +90,7 @@ GigeSource::UriConfig GigeSource::parseUri(const std::string& uri) {
   bool format_explicit = false;
   bool color_requested = false;
 
+  // 标准化 format=... 并同步 caps。
   auto applyFormat = [&](const std::string& fmt) {
     const auto caps_fmt = canonicalCapsFormat(fmt);
     if (caps_fmt.empty()) return;
@@ -164,6 +169,7 @@ GigeSource::UriConfig GigeSource::parseUri(const std::string& uri) {
   }
 
   if (!format_explicit) {
+    // 未显式指定 format 时，根据 color 参数给默认值。
     config.caps_kv.erase(
         std::remove_if(config.caps_kv.begin(), config.caps_kv.end(),
                        [](const std::string& entry) {
@@ -182,6 +188,7 @@ GigeSource::UriConfig GigeSource::parseUri(const std::string& uri) {
   }
 
   std::vector<std::string> deduped;
+  // 去重 caps 项，避免重复参数干扰协商。
   deduped.reserve(config.caps_kv.size());
   for (const auto& entry : config.caps_kv) {
     if (entry.empty()) continue;
@@ -206,6 +213,7 @@ std::string GigeSource::buildPipelineDescription(const UriConfig& config) {
   }
 
   std::ostringstream pipeline;
+  // aravissrc 负责拉取 GigE Vision 图像，appsink 输出到本进程。
   pipeline << "aravissrc camera-name=\"" << sanitizeCameraName(config.camera_name) << "\" ! "
            << caps << " ! ";
   if (config.use_videoconvert) {

@@ -8,6 +8,7 @@
 
 namespace rkapp::capture::detail {
 
+// GStreamer/相机常见像素格式分类。
 enum class PixelFormatKind {
   BGR,
   RGB,
@@ -21,6 +22,7 @@ enum class PixelFormatKind {
   UNKNOWN
 };
 
+// 字符串工具：去空白/统一大小写，方便格式名匹配。
 inline std::string trimCopy(const std::string& input) {
   auto first = std::find_if_not(input.begin(), input.end(),
                                 [](unsigned char ch) { return std::isspace(ch); });
@@ -48,6 +50,7 @@ inline std::string normalizeFormatToken(std::string value) {
   return value;
 }
 
+// 将格式字符串映射到内部枚举。
 inline PixelFormatKind classifyPixelFormat(const std::string& format) {
   const std::string token = normalizeFormatToken(format);
   if (token.empty()) {
@@ -90,11 +93,13 @@ inline PixelFormatKind classifyPixelFormat(const std::string& format) {
   return PixelFormatKind::UNKNOWN;
 }
 
+// 判断是否为 Bayer 原始格式。
 inline bool isBayerFormat(PixelFormatKind kind) {
   return kind == PixelFormatKind::BAYER_RG || kind == PixelFormatKind::BAYER_BG ||
          kind == PixelFormatKind::BAYER_GR || kind == PixelFormatKind::BAYER_GB;
 }
 
+// Bayer 格式转换到 OpenCV BGR 目标的颜色转换码。
 inline int bayerToBgrCode(PixelFormatKind kind) {
   switch (kind) {
     case PixelFormatKind::BAYER_RG:
@@ -110,6 +115,7 @@ inline int bayerToBgrCode(PixelFormatKind kind) {
   }
 }
 
+// 标准化为 caps 友好的 format token。
 inline std::string canonicalCapsFormat(const std::string& format) {
   switch (classifyPixelFormat(format)) {
     case PixelFormatKind::GRAY:
@@ -136,6 +142,7 @@ inline std::string canonicalCapsFormat(const std::string& format) {
   }
 }
 
+// 某些格式需要 videoconvert 才能稳定输出 BGR。
 inline bool shouldUseVideoConvert(const std::string& format) {
   const PixelFormatKind kind = classifyPixelFormat(format);
   if (kind == PixelFormatKind::BGR || kind == PixelFormatKind::GRAY || isBayerFormat(kind)) {
@@ -144,6 +151,7 @@ inline bool shouldUseVideoConvert(const std::string& format) {
   return true;
 }
 
+// Bayer 走 video/x-bayer，其余走 video/x-raw。
 inline std::string mediaTypeForFormat(const std::string& format) {
   return isBayerFormat(classifyPixelFormat(format)) ? "video/x-bayer" : "video/x-raw";
 }

@@ -10,13 +10,13 @@
 #include <rockchip/mpp_packet.h>
 #include <rockchip/mpp_buffer.h>
 
-// FFmpeg for demuxing (optional, for video files and RTSP)
+// FFmpeg 拆包（可选，用于视频文件和 RTSP）
 extern "C" {
 #include <libavformat/avformat.h>
 #include <libavcodec/avcodec.h>
 }
 
-// RGA for YUV->BGR conversion (optional)
+// RGA 用于 YUV->BGR 转换（可选）
 #if RKNN_USE_RGA
 #include <im2d.h>
 #include <rga.h>
@@ -29,7 +29,7 @@ extern "C" {
 #include <unistd.h>
 #include <cerrno>
 
-// Logging
+// 日志
 #if __has_include("log.hpp")
 #include "rkapp/common/log.hpp"
 #else
@@ -42,36 +42,36 @@ extern "C" {
 namespace rkapp::capture {
 
 // ============================================================================
-// MPP Implementation Details
+// MPP 内部实现细节
 // ============================================================================
 
 struct MppSource::Impl {
-    // MPP context
+    // MPP 上下文
     MppCtx mpp_ctx = nullptr;
     MppApi* mpi = nullptr;
     MppBufferGroup frame_group = nullptr;
 
-    // FFmpeg demuxer (for video files / RTSP)
+    // FFmpeg 拆包器（视频文件 / RTSP）
     AVFormatContext* fmt_ctx = nullptr;
-    AVCodecContext* codec_ctx = nullptr;  // For extracting stream info only
+    AVCodecContext* codec_ctx = nullptr;  // 仅用于获取流信息
     int video_stream_idx = -1;
     AVPacket* pkt = nullptr;
 
-    // Frame conversion buffer
+    // 帧转换缓存
     cv::Mat bgr_frame;
 
-    // Statistics
+    // 统计信息
     double total_decode_time_ms = 0.0;
     int decode_count = 0;
 
-    // Current DMA-BUF fd (when in DMA-BUF mode)
+    // 当前帧 DMA-BUF fd（仅在 DMA 模式下有效）
     // 注意这里保存的是 dup 后的 fd，生命周期由本对象管理。
     int current_dma_fd = -1;
 
-    // EOF handling for proper decoder flush
+    // EOF 处理：用于正确 flush 解码器
     bool eof_reached = false;
 
-    // Thread safety
+    // 线程安全
     std::mutex mtx;
 
     ~Impl() {
@@ -122,7 +122,7 @@ struct MppSource::Impl {
 };
 
 // ============================================================================
-// Static Methods
+// 静态方法
 // ============================================================================
 
 static std::once_flag mpp_check_flag;
@@ -148,7 +148,7 @@ bool MppSource::isMppAvailable() {
 }
 
 // ============================================================================
-// Constructor / Destructor
+// 构造/析构
 // ============================================================================
 
 MppSource::MppSource() : impl_(std::make_unique<Impl>()) {}
@@ -158,7 +158,7 @@ MppSource::~MppSource() {
 }
 
 // ============================================================================
-// ISource Interface Implementation
+// ISource 接口实现
 // ============================================================================
 
 bool MppSource::open(const std::string& uri) {
@@ -167,19 +167,19 @@ bool MppSource::open(const std::string& uri) {
         return false;
     }
 
-    release();  // Clean up any previous state
+    release();  // 清理旧状态
     uri_ = uri;
-    impl_->eof_reached = false;  // Reset EOF flag for new stream
+    impl_->eof_reached = false;  // 新流打开时重置 EOF 状态
 
     // 默认按 H.264 处理，后续会根据流实际 codec_id 纠正。
-    MppCodingType coding_type = MPP_VIDEO_CodingAVC;  // Default H.264
+    MppCodingType coding_type = MPP_VIDEO_CodingAVC;  // 默认按 H.264
 
     // 先用 FFmpeg 打开流并做拆包，MPP 只负责解码，不负责容器解析。
     if (uri.find("rtsp://") == 0 || uri.find(".mp4") != std::string::npos ||
         uri.find(".mkv") != std::string::npos || uri.find(".avi") != std::string::npos ||
         uri.find(".h264") != std::string::npos || uri.find(".h265") != std::string::npos) {
 
-        // Open input
+        // 打开输入流
         int ret = avformat_open_input(&impl_->fmt_ctx, uri.c_str(), nullptr, nullptr);
         if (ret < 0) {
             char errbuf[256];
@@ -188,7 +188,7 @@ bool MppSource::open(const std::string& uri) {
             return false;
         }
 
-        // Find stream info
+        // 获取流信息
         ret = avformat_find_stream_info(impl_->fmt_ctx, nullptr);
         if (ret < 0) {
             LOGE("Failed to find stream info");
@@ -222,14 +222,14 @@ bool MppSource::open(const std::string& uri) {
         } else if (video_stream->r_frame_rate.den > 0) {
             fps_ = av_q2d(video_stream->r_frame_rate);
         } else {
-            fps_ = 30.0;  // Default
+            fps_ = 30.0;  // 默认帧率
         }
 
         if (impl_->fmt_ctx->duration > 0 && fps_ > 0) {
             total_frames_ = static_cast<int>(
                 (impl_->fmt_ctx->duration / AV_TIME_BASE) * fps_);
         } else {
-            total_frames_ = -1;  // Unknown (streaming)
+            total_frames_ = -1;  // 流媒体场景通常未知
         }
 
         // 把 FFmpeg codec_id 映射为 MPP 识别的编码类型。
@@ -269,12 +269,12 @@ bool MppSource::open(const std::string& uri) {
         LOGI("Opened video: ", width_, "x", height_, " @ ", fps_, " fps, codec: ",
              avcodec_get_name(codecpar->codec_id));
     } else {
-        // Unsupported URI format
+        // 不支持的 URI 形式
         LOGE("MppSource::open: Unsupported URI format (not RTSP or known video file extension): ", uri);
         return false;
     }
 
-    // Validate that fmt_ctx was initialized
+    // 校验拆包器是否成功初始化。
     if (!impl_->fmt_ctx) {
         LOGE("MppSource::open: Failed to initialize demuxer for URI: ", uri);
         return false;
@@ -295,7 +295,7 @@ bool MppSource::open(const std::string& uri) {
         LOGW("Failed to set parser split mode");
     }
 
-    // Initialize decoder
+    // 初始化解码器
     ret = mpp_init(impl_->mpp_ctx, MPP_CTX_DEC, coding_type);
     if (ret != MPP_OK) {
         LOGE("mpp_init failed: ", ret);
@@ -306,7 +306,7 @@ bool MppSource::open(const std::string& uri) {
     // 尝试创建外部 DRM buffer group，成功时更有利于后续零拷贝传递。
     ret = mpp_buffer_group_get_external(&impl_->frame_group, MPP_BUFFER_TYPE_DRM);
     if (ret != MPP_OK) {
-        // Fallback to internal buffers
+        // 回退到内部 buffer
         LOGW("Failed to create DRM buffer group, using internal buffers");
         impl_->frame_group = nullptr;
     }
@@ -329,14 +329,14 @@ bool MppSource::read(cv::Mat& frame) {
 
     // 重试上限：防止极端流异常导致死循环。
     // 旧版本递归重试容易栈增长，这里改为 while 循环更安全。
-    constexpr int MAX_DECODE_RETRIES = 30;  // ~1 second at 30fps
+    constexpr int MAX_DECODE_RETRIES = 30;  // 约等于 30fps 下 1 秒窗口
     int retry_count = 0;
 
     MppFrame mpp_frame = nullptr;
 
     // 主解码循环：读取包 -> 投喂解码器 -> 取帧。
     while (retry_count < MAX_DECODE_RETRIES) {
-        // Safety check: ensure demuxer is initialized
+        // 安全检查：确保拆包器可用。
         if (!impl_->fmt_ctx) {
             LOGE("MppSource::read: Demuxer not initialized. Call open() first.");
             return false;
@@ -349,7 +349,7 @@ bool MppSource::read(cv::Mat& frame) {
                 if (ret == AVERROR_EOF) {
                     // EOF 后需要进入 flush 阶段，把解码器内部缓存帧“榨干”。
                     if (impl_->eof_reached) {
-                        // Already flushed, truly done
+                        // 已完成 flush，流真正结束。
                         return false;
                     }
                     impl_->eof_reached = true;
@@ -357,10 +357,10 @@ bool MppSource::read(cv::Mat& frame) {
 
                     // 这里不再提供有效码流，后续 decode_get_frame 会持续取残留帧。
                     av_packet_unref(impl_->pkt);
-                    // Continue to MPP decode loop to drain buffered frames
+                    // 继续进入解码循环，榨干缓冲帧。
                     break;
                 } else {
-                    // Other error
+                    // 其他读取错误
                     return false;
                 }
             }
@@ -390,7 +390,7 @@ bool MppSource::read(cv::Mat& frame) {
             }
         }
 
-        // Send packet to decoder
+        // 投喂 packet 到解码器
         MPP_RET mpp_ret = impl_->mpi->decode_put_packet(impl_->mpp_ctx, mpp_pkt);
         mpp_packet_deinit(&mpp_pkt);
         av_packet_unref(impl_->pkt);
@@ -407,23 +407,23 @@ bool MppSource::read(cv::Mat& frame) {
         if (mpp_ret != MPP_OK || !mpp_frame) {
             // 帧尚未就绪，继续喂包（例如 B 帧重排场景）。
             retry_count++;
-            continue;  // Loop back to read next packet
+            continue;  // 继续读下一个包
         }
 
-        // Check for decode errors
+        // 检查帧级解码错误
         if (mpp_frame_get_errinfo(mpp_frame)) {
             LOGW("Decode error in frame, retry ", retry_count + 1, "/", MAX_DECODE_RETRIES);
             mpp_frame_deinit(&mpp_frame);
             mpp_frame = nullptr;
             retry_count++;
-            continue;  // Loop back to read next packet
+            continue;  // 继续读下一个包
         }
 
-        // Successfully got a valid frame, break out of retry loop
+        // 成功拿到有效帧，退出重试循环。
         break;
     }
 
-    // Check if we exhausted retries
+    // 超过重试上限则判定失败。
     if (retry_count >= MAX_DECODE_RETRIES || !mpp_frame) {
         LOGW("Decode failed after ", retry_count, " retries");
         if (mpp_frame) {
@@ -472,8 +472,8 @@ bool MppSource::read(cv::Mat& frame) {
         rga_buffer_t src_buf = {};
         src_buf.width = frm_width;
         src_buf.height = frm_height;
-        src_buf.wstride = frm_h_stride;  // horizontal stride (may differ from width)
-        src_buf.hstride = frm_v_stride;  // vertical stride (may differ from height)
+        src_buf.wstride = frm_h_stride;  // 水平 stride（可能大于 width）
+        src_buf.hstride = frm_v_stride;  // 垂直 stride（可能大于 height）
         src_buf.format = RK_FORMAT_YCbCr_420_SP;
         src_buf.vir_addr = buf_ptr;
 
@@ -499,18 +499,18 @@ bool MppSource::read(cv::Mat& frame) {
             // stride 与 width/height 不一致时，需要按行拷贝到紧凑内存布局。
             cv::Mat yuv_cropped;
             if (frm_h_stride != frm_width || frm_v_stride != frm_height) {
-                // Need to handle stride - create proper NV12 layout
+                // stride 不一致时按行拷贝为紧凑 NV12 布局。
                 cv::Mat y_plane(frm_height, frm_width, CV_8UC1);
                 cv::Mat uv_plane(frm_height / 2, frm_width / 2, CV_8UC2);
 
-                // Copy Y plane row by row
+                // 按行拷贝 Y 平面
                 for (int i = 0; i < frm_height; i++) {
                     memcpy(y_plane.ptr(i),
                            (uint8_t*)buf_ptr + i * frm_h_stride,
                            frm_width);
                 }
 
-                // Copy UV plane row by row
+                // 按行拷贝 UV 平面
                 uint8_t* uv_src = (uint8_t*)buf_ptr + frm_h_stride * frm_v_stride;
                 for (int i = 0; i < frm_height / 2; i++) {
                     memcpy(uv_plane.ptr(i),
@@ -522,7 +522,7 @@ bool MppSource::read(cv::Mat& frame) {
                 yuv_cropped = cv::Mat(frm_height * 3 / 2, frm_width, CV_8UC1);
                 y_plane.copyTo(yuv_cropped(cv::Rect(0, 0, frm_width, frm_height)));
 
-                // Reshape UV for copying
+                // 重排 UV 形状后拼接到 NV12 连续缓冲
                 cv::Mat uv_reshaped(frm_height / 2, frm_width, CV_8UC1,
                                    uv_plane.data);
                 uv_reshaped.copyTo(
@@ -549,6 +549,24 @@ bool MppSource::read(cv::Mat& frame) {
 
     current_frame_++;
     return true;
+}
+
+ReadStatus MppSource::readFrameEx(CaptureFrame& frame) {
+    frame.owner.reset();
+    frame.mat.release();
+
+    cv::Mat mat;
+    if (read(mat)) {
+        frame.mat = std::move(mat);
+        return ReadStatus::FrameReady;
+    }
+
+    const bool stream_like = uri_.find("rtsp://") == 0 || uri_.find("rtmp://") == 0 ||
+                             uri_.find("http://") == 0 || uri_.find("https://") == 0;
+    if (stream_like && is_opened_.load()) {
+        return ReadStatus::RecoverableError;
+    }
+    return ReadStatus::EndOfStream;
 }
 
 void MppSource::release() {
@@ -586,7 +604,7 @@ SourceType MppSource::getType() const {
 }
 
 // ============================================================================
-// MPP-specific Methods
+// MPP 扩展方法
 // ============================================================================
 
 double MppSource::getDecodeLatencyMs() const {
@@ -613,7 +631,7 @@ int MppSource::getDmaBufFd() const {
 
 #else  // !RKAPP_WITH_MPP
 
-// Stub implementation when MPP is not available
+// MPP 不可用时的桩实现
 namespace rkapp::capture {
 
 struct MppSource::Impl {};
@@ -628,6 +646,7 @@ bool MppSource::open(const std::string&) {
 }
 
 bool MppSource::read(cv::Mat&) { return false; }
+ReadStatus MppSource::readFrameEx(CaptureFrame&) { return ReadStatus::FatalError; }
 void MppSource::release() { is_opened_ = false; }
 bool MppSource::isOpened() const { return false; }
 double MppSource::getFPS() const { return 0.0; }

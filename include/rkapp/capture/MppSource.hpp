@@ -8,27 +8,26 @@
 namespace rkapp::capture {
 
 /**
- * @brief MPP (Media Process Platform) hardware-accelerated video source
+ * @brief MPP（Media Process Platform）硬件解码输入源
  *
- * Uses RK3588 VPU for hardware video decoding with the following benefits:
- * - H.264/H.265/VP9 decoding at up to 8K@60fps
- * - ~4ms decode latency vs ~25ms OpenCV software decode
- * - DMA-BUF output for zero-copy to RGA/NPU
- * - Low CPU usage (~5% vs ~30% software decode)
+ * 通过 RK3588 VPU 执行硬件解码，典型收益：
+ * - 支持 H.264/H.265/VP9 等编码
+ * - 解码延迟和 CPU 占用通常低于纯软件解码
+ * - 可输出 DMA-BUF 以衔接零拷贝链路（RGA/NPU）
  *
- * Supported inputs:
- * - Video files (MP4, MKV, AVI with H.264/H.265)
- * - RTSP streams (rtsp://...)
+ * 支持输入：
+ * - 视频文件（MP4/MKV/AVI 等）
+ * - RTSP 流（rtsp://...）
  *
- * @note Requires librockchip_mpp.so and appropriate kernel drivers
+ * @note 需要系统提供 `librockchip_mpp.so` 及对应内核驱动
  *
- * Usage:
+ * 使用示例：
  * @code
  *   MppSource src;
- *   src.open("video.mp4");  // or "rtsp://..." or "/dev/video0"
+ *   src.open("video.mp4");
  *   cv::Mat frame;
  *   while (src.read(frame)) {
- *       // Process frame (BGR format)
+ *       // 处理 BGR 帧
  *   }
  * @endcode
  */
@@ -37,35 +36,36 @@ public:
     MppSource();
     ~MppSource() override;
 
-    // Disable copy (MPP context is not copyable)
+    // 禁止拷贝（MPP 上下文不可安全复制）。
     MppSource(const MppSource&) = delete;
     MppSource& operator=(const MppSource&) = delete;
 
-    // Disable move (std::atomic members cannot be moved)
+    // 禁止移动（包含原子成员与底层句柄状态）。
     MppSource(MppSource&&) = delete;
     MppSource& operator=(MppSource&&) = delete;
 
-    // ========== ISource Interface ==========
+    // ========== ISource 接口 ==========
 
     /**
-     * @brief Open video source with MPP hardware decoding
+     * @brief 打开输入源并初始化 MPP 解码链路
      *
-     * @param uri Video file path or RTSP URL
-     * @return true if successfully opened
+     * @param uri 视频文件路径或 RTSP URL
+     * @return 是否打开成功
      *
-     * @note For RTSP streams, uses FFmpeg for demuxing + MPP for decoding
+     * @note RTSP/容器拆包由 FFmpeg 完成，MPP 负责纯解码
      */
     bool open(const std::string& uri) override;
 
     /**
-     * @brief Read next frame with hardware decoding
+     * @brief 读取下一帧（硬件解码）
      *
-     * @param frame Output BGR image (converted from YUV via RGA if available)
-     * @return true if frame was successfully read
+     * @param frame 输出 BGR 图像（必要时做 YUV->BGR 转换）
+     * @return 读取是否成功
      *
-     * @note Output format is always BGR (cv::Mat CV_8UC3) for compatibility
+     * @note 对外统一返回 BGR（`cv::Mat CV_8UC3`）
      */
     bool read(cv::Mat& frame) override;
+    ReadStatus readFrameEx(CaptureFrame& frame) override;
 
     void release() override;
     bool isOpened() const override;
@@ -77,36 +77,30 @@ public:
 
     SourceType getType() const override;
 
-    // ========== MPP-specific Methods ==========
+    // ========== MPP 扩展方法 ==========
 
     /**
-     * @brief Check if MPP hardware decoding is available
-     * @return true if librockchip_mpp is loaded and VPU is accessible
+     * @brief 检查 MPP 硬解码能力是否可用
      */
     static bool isMppAvailable();
 
     /**
-     * @brief Get decode latency statistics
-     * @return Average decode time in milliseconds
+     * @brief 获取平均解码时延（毫秒）
      */
     double getDecodeLatencyMs() const;
 
     /**
-     * @brief Enable/disable DMA-BUF output mode
+     * @brief 启用/关闭 DMA-BUF 输出模式
      *
-     * When enabled, frames are kept in DMA-BUF memory for zero-copy
-     * transfer to RGA/NPU. Call getDmaBufFd() to get the file descriptor.
-     *
-     * @param enable true to enable DMA-BUF mode
+     * 启用后，当前帧可通过 `getDmaBufFd()` 导出 fd 用于零拷贝传递。
      */
     void setDmaBufMode(bool enable);
 
     /**
-     * @brief Get DMA-BUF file descriptor for current frame
+     * @brief 获取当前帧 DMA-BUF 文件描述符
      *
-     * Only valid when DMA-BUF mode is enabled and after read() returns true.
-     *
-     * @return Duplicated DMA-BUF fd, or -1 if not available (caller must close)
+     * 仅在 DMA-BUF 模式且 `read()` 成功后有效。
+     * 返回的是 `dup` 后 fd，调用方负责 `close`。
      */
     int getDmaBufFd() const;
 

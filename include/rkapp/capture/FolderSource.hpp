@@ -5,6 +5,7 @@
 
 namespace rkapp::capture {
 
+// 文件夹输入源：按文件名顺序逐张读取图片用于离线推理。
 class FolderSource : public ISource {
 public:
   FolderSource();

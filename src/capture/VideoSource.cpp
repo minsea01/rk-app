@@ -11,7 +11,7 @@ VideoSource::~VideoSource() { release(); }
 bool VideoSource::open(const std::string& video_path) {
   video_path_ = video_path;
 
-  // Handle RTSP URLs and video files
+  // 支持 RTSP/RTMP/HTTP 流与本地视频文件。
   bool result = cap_.open(video_path_);
 
   if (!result) {
@@ -19,19 +19,19 @@ bool VideoSource::open(const std::string& video_path) {
     return false;
   }
 
-  // Reduce capture buffering for streaming sources to minimize latency/jitter.
-  // Note: not all backends honor this setting (FFmpeg/GStreamer may ignore it).
+  // 流媒体场景尝试把缓冲压低，减少延迟与抖动。
+  // 注意：不同后端（FFmpeg/GStreamer）不一定遵守该设置。
   if (isStreamSource()) {
     (void)cap_.set(cv::CAP_PROP_BUFFERSIZE, 1);
   }
 
-  // Get video properties
+  // 读取流/文件属性。
   fps_ = cap_.get(cv::CAP_PROP_FPS);
   total_frames_ = static_cast<int>(cap_.get(cv::CAP_PROP_FRAME_COUNT));
   width_ = static_cast<int>(cap_.get(cv::CAP_PROP_FRAME_WIDTH));
   height_ = static_cast<int>(cap_.get(cv::CAP_PROP_FRAME_HEIGHT));
 
-  // For RTSP streams, frame count might be -1
+  // RTSP 等实时流通常没有总帧数。
   if (total_frames_ < 0) {
     total_frames_ = INT_MAX;
   }
@@ -66,6 +66,25 @@ bool VideoSource::read(cv::Mat& frame) {
   }
 
   return result;
+}
+
+ReadStatus VideoSource::readFrameEx(CaptureFrame& frame) {
+  frame.owner.reset();
+  frame.mat.release();
+
+  cv::Mat mat;
+  if (read(mat)) {
+    frame.mat = std::move(mat);
+    return ReadStatus::FrameReady;
+  }
+
+  if (!isStreamSource()) {
+    return ReadStatus::EndOfStream;
+  }
+  if (reconnect_attempts_ >= kMaxReconnectAttempts) {
+    return ReadStatus::FatalError;
+  }
+  return ReadStatus::RecoverableError;
 }
 
 bool VideoSource::tryReconnect() {
@@ -120,7 +139,7 @@ int VideoSource::getTotalFrames() const { return total_frames_; }
 int VideoSource::getCurrentFrame() const { return current_frame_; }
 
 SourceType VideoSource::getType() const {
-  // Simple heuristic to distinguish RTSP from video file
+  // 用 URI 前缀做轻量判定。
   if (video_path_.find("rtsp://") == 0 || video_path_.find("rtmp://") == 0) {
     return SourceType::RTSP;
   }
