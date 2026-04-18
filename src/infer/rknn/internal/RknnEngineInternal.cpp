@@ -14,8 +14,47 @@
 
 namespace rkapp::infer::rknn_internal {
 
+// RKNN 内部工具：sidecar 解析、输出布局适配、RAW/DFL 解码与 NMS。
 namespace {
 
+std::vector<std::string> modelSidecarCandidates(const std::string& model_path) {
+  return {model_path + ".json", model_path + ".meta"};
+}
+
+bool modelMetaHasAny(const ModelMeta& meta) {
+  return meta.reg_max > 0 || !meta.strides.empty() || !meta.head.empty() || meta.output_index >= 0 ||
+         meta.num_classes > 0 || meta.has_objectness >= 0 || meta.task != "detect" ||
+         meta.num_keypoints > 0;
+}
+
+void mergeModelMetaMissingFields(ModelMeta& dst, const ModelMeta& src) {
+  if (dst.reg_max <= 0 && src.reg_max > 0) {
+    dst.reg_max = src.reg_max;
+  }
+  if (dst.strides.empty() && !src.strides.empty()) {
+    dst.strides = src.strides;
+  }
+  if (dst.head.empty() && !src.head.empty()) {
+    dst.head = src.head;
+  }
+  if (dst.output_index < 0 && src.output_index >= 0) {
+    dst.output_index = src.output_index;
+  }
+  if (dst.num_classes <= 0 && src.num_classes > 0) {
+    dst.num_classes = src.num_classes;
+  }
+  if (dst.has_objectness < 0 && src.has_objectness >= 0) {
+    dst.has_objectness = src.has_objectness;
+  }
+  if (dst.task == "detect" && src.task != "detect") {
+    dst.task = src.task;
+  }
+  if (dst.num_keypoints <= 0 && src.num_keypoints > 0) {
+    dst.num_keypoints = src.num_keypoints;
+  }
+}
+
+// 移除 sidecar 中的行注释/块注释，降低正则解析噪声。
 std::string stripComments(const std::string& content) {
   std::string out;
   out.reserve(content.size());
@@ -79,6 +118,7 @@ std::vector<Detection> decodeAndPostprocess(const float* logits,
                                             const rkapp::preprocess::LetterboxInfo& letterbox_info,
                                             const AnchorLayout* dfl_layout,
                                             const char* log_tag) {
+  // 解码主流程：先按 head 做 RAW/DFL 解析，再统一 NMS。
   std::vector<Detection> dets;
   int N = out_n;
   int C = out_c;
@@ -91,6 +131,7 @@ std::vector<Detection> decodeAndPostprocess(const float* logits,
   const float img_h = static_cast<float>(original_size.height);
 
   auto clamp_det = [&](Detection& d) {
+    // 把框裁剪到原图边界内，避免越界。
     d.x = std::max(0.0f, std::min(d.x, img_w));
     d.y = std::max(0.0f, std::min(d.y, img_h));
     d.w = std::max(0.0f, std::min(d.w, img_w - d.x));
@@ -142,6 +183,7 @@ std::vector<Detection> decodeAndPostprocess(const float* logits,
   }
 
   auto decode_raw = [&]() {
+    // RAW 头：通道布局 [cx,cy,w,h,(obj),cls...]
     if (C < 4) {
       LOGW(log_tag, ": raw decode aborted due to insufficient channels (C=", C, ")");
       return;
@@ -202,6 +244,7 @@ std::vector<Detection> decodeAndPostprocess(const float* logits,
   };
 
   if (use_dfl) {
+    // DFL 头：前 4*reg_max 为边分布，后续为类别（可选关键点）。
     const int cls_ch = cls_ch_meta;
     if (num_classes < 0) num_classes = cls_ch;
     if (!dfl_layout || !dfl_layout->valid ||
@@ -243,7 +286,7 @@ std::vector<Detection> decodeAndPostprocess(const float* logits,
         d.class_id = best_cls;
         d.class_name = "class_" + std::to_string(best_cls);
 
-        // Decode keypoints for pose models
+        // 姿态模型：额外解码关键点 (x,y,visibility)。
         if (model_meta.num_keypoints > 0) {
           const int kp_base = 4 * reg_max + cls_ch;
           d.keypoints.reserve(model_meta.num_keypoints);
@@ -253,7 +296,7 @@ std::vector<Detection> decodeAndPostprocess(const float* logits,
             float vis = sigmoid(logits[(kp_base + k * 3 + 2) * N + i]);
             float kx = layout.anchor_cx[i] + raw_x * 2.0f * s;
             float ky = layout.anchor_cy[i] + raw_y * 2.0f * s;
-            // Reverse letterbox transform to original image coordinates
+            // 把关键点从 letterbox 坐标还原到原图坐标。
             kx = (kx - dx) / scale;
             ky = (ky - dy) / scale;
             kx = std::max(0.0f, std::min(kx, img_w));
@@ -287,6 +330,7 @@ const float* maybeTransposeOutput(const float* logits_data,
                                   int dim1,
                                   int dim2,
                                   std::vector<float>& transpose_buf) {
+  // 某些导出为 [N,C]，这里转为统一的 [C,N] 访问布局。
   if (n_dims >= 3 && dim1 == out_n && dim2 == out_c) {
     size_t total_elems = static_cast<size_t>(out_n) * out_c;
     transpose_buf.resize(total_elems);
@@ -322,129 +366,7 @@ bool readFile(const std::string& path, std::vector<uint8_t>& out, std::string& e
 }
 
 ModelMeta loadModelMeta(const std::string& model_path) {
-  ModelMeta meta;
-  const std::vector<std::string> candidates = {
-      model_path + ".json",
-      model_path + ".meta",
-      "artifacts/models/decode_meta.json"};
-
-  auto parse_int = [](const std::string& content, const std::string& key) -> int {
-    try {
-      std::smatch m;
-      std::regex re("(^|[^A-Za-z0-9_])\"?" + key + "\"?\\s*[:=]\\s*([0-9]+)");
-      if (std::regex_search(content, m, re) && m.size() > 2) {
-        return std::stoi(m[2].str());
-      }
-    } catch (const std::exception&) {
-    }
-    return -1;
-  };
-
-  auto parse_bool = [](const std::string& content, const std::string& key) -> int {
-    try {
-      std::smatch m;
-      std::regex re("(^|[^A-Za-z0-9_])\"?" + key + "\"?\\s*[:=]\\s*(true|false|0|1)",
-                    std::regex::icase);
-      if (std::regex_search(content, m, re) && m.size() > 2) {
-        const std::string v = rkapp::common::toLowerCopy(m[2].str());
-        if (v == "1" || v == "true") return 1;
-        if (v == "0" || v == "false") return 0;
-      }
-    } catch (const std::exception&) {
-    }
-    return -1;
-  };
-
-  auto parse_strides = [](const std::string& content) -> std::vector<int> {
-    std::vector<int> out;
-    std::regex re(R"((^|[^A-Za-z0-9_])\"?strides\"?\s*[:=]\s*\[([^\]]+)\])");
-    std::smatch m;
-    if (!std::regex_search(content, m, re) || m.size() < 3) return out;
-    std::string body = m[2].str();
-    std::stringstream ss(body);
-    std::string tok;
-    while (std::getline(ss, tok, ',')) {
-      try {
-        out.push_back(std::stoi(tok));
-      } catch (...) {
-      }
-    }
-    return out;
-  };
-
-  auto parse_head = [](const std::string& content) -> std::string {
-    std::smatch m;
-    std::regex re_quoted(R"("head"\s*[:=]\s*\"?([a-zA-Z]+)\"?)");
-    if (std::regex_search(content, m, re_quoted) && m.size() > 1) {
-      return rkapp::common::toLowerCopy(m[1].str());
-    }
-    std::regex re_unquoted(R"((^|[^A-Za-z0-9_])head\s*[:=]\s*\"?([a-zA-Z]+)\"?)");
-    if (std::regex_search(content, m, re_unquoted) && m.size() > 2) {
-      return rkapp::common::toLowerCopy(m[2].str());
-    }
-    return {};
-  };
-
-  for (const auto& path : candidates) {
-    std::ifstream f(path);
-    if (!f.is_open()) continue;
-
-    std::string content((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
-    if (content.empty()) continue;
-
-    std::string sanitized = stripComments(content);
-    int reg = parse_int(sanitized, "reg_max");
-    if (reg > 0) meta.reg_max = reg;
-
-    auto strides = parse_strides(sanitized);
-    if (!strides.empty()) meta.strides = std::move(strides);
-
-    std::string head = parse_head(sanitized);
-    if (!head.empty()) meta.head = std::move(head);
-
-    int out_idx = parse_int(sanitized, "output_index");
-    if (out_idx < 0) out_idx = parse_int(sanitized, "output_idx");
-    if (out_idx >= 0) meta.output_index = out_idx;
-
-    int num_classes = parse_int(sanitized, "num_classes");
-    if (num_classes < 0) num_classes = parse_int(sanitized, "classes");
-    if (num_classes < 0) num_classes = parse_int(sanitized, "nc");
-    if (num_classes > 0) meta.num_classes = num_classes;
-
-    int has_obj = parse_bool(sanitized, "has_objectness");
-    if (has_obj < 0) has_obj = parse_bool(sanitized, "objectness");
-    if (has_obj < 0) has_obj = parse_bool(sanitized, "has_obj");
-    if (has_obj >= 0) meta.has_objectness = has_obj;
-
-    std::string task = parse_head(sanitized);  // reuse string parser
-    // parse_head only accepts "dfl"/"raw", so use a dedicated regex for "task"
-    {
-      std::smatch tm;
-      std::regex re_task(R"("task"\s*[:=]\s*"?([a-zA-Z]+)"?)");
-      if (std::regex_search(sanitized, tm, re_task) && tm.size() > 1) {
-        std::string t = rkapp::common::toLowerCopy(tm[1].str());
-        if (t == "detect" || t == "pose") {
-          meta.task = std::move(t);
-        }
-      }
-    }
-
-    int num_kpts = parse_int(sanitized, "num_keypoints");
-    if (num_kpts < 0) num_kpts = parse_int(sanitized, "kpt_shape");
-    if (num_kpts > 0) meta.num_keypoints = num_kpts;
-
-    if (meta.reg_max > 0 || !meta.strides.empty() || !meta.head.empty() ||
-        meta.output_index >= 0 || meta.num_classes > 0 || meta.has_objectness >= 0 ||
-        meta.task != "detect" || meta.num_keypoints > 0) {
-      LOGI("RknnEngine: loaded decode metadata from ", path);
-      if (meta.num_keypoints > 0) {
-        LOGI("RknnEngine: pose model (", meta.num_keypoints, " keypoints)");
-      }
-      break;
-    }
-  }
-
-  return meta;
+  return rkapp::infer::loadModelMetaFromPath(model_path).meta;
 }
 
 std::vector<Detection> decodeOutputAndNms(

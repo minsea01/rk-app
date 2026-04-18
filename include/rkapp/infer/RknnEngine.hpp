@@ -8,6 +8,7 @@
 #include <vector>
 #include <opencv2/opencv.hpp>
 #include "rkapp/infer/IInferEngine.hpp"
+#include "rkapp/infer/ModelMeta.hpp"
 
 // 前置声明：零拷贝路径会使用 DMA-BUF 描述符，不在此处引入具体实现。
 namespace rkapp::common {
@@ -20,27 +21,13 @@ struct LetterboxInfo;
 
 namespace rkapp::infer {
 
-// 模型元信息（通常来自模型旁路 metadata 文件）
-// 用于决定输出张量如何解码（raw/dfl）、类别数、输出索引等。
-struct ModelMeta {
-  int reg_max = -1;
-  std::vector<int> strides;
-  std::string head; // "dfl" / "raw" / ""（空表示未知）
-  int output_index = -1;  // 多输出模型时，指定用于检测的输出分支
-  int num_classes = -1;   // 类别数（建议显式填写，避免推断歧义）
-  int has_objectness = -1;  // -1 未知，0 无 obj 分支，1 有 obj 分支
-  std::string task{"detect"};  // "detect" | "pose"
-  int num_keypoints = 0;       // 姿态模型关键点数量（纯检测时为 0）
-};
-
 class RknnEngine : public IInferEngine {
 public:
   RknnEngine();
   ~RknnEngine() override;
 
   // 初始化模型与运行时上下文。
-  // img_size 用于与模型输入形状进行一致性检查。
-  bool init(const std::string& model_path, int img_size = 640) override;
+  bool init(const ModelSpec& model_spec) override;
 
   // 通用推理入口：内部会做 letterbox 预处理，再调用 inferPreprocessed。
   std::vector<Detection> infer(const cv::Mat& image) override;
@@ -110,10 +97,11 @@ private:
   
   // 自动推断/缓存的解码参数（初始化成功后由 metadata 和输出张量共同确定）
   int num_classes_ = -1;
-  bool has_objness_ = true;  // Most YOLO exports include objectness score
+  bool has_objness_ = true;  // 大多数 YOLO 导出都包含 objectness 分支
   std::vector<std::string> class_names_;
   DecodeParams decode_params_;
   ModelMeta model_meta_;
+  std::string model_meta_source_;
 };
 
 } // namespace rkapp::infer

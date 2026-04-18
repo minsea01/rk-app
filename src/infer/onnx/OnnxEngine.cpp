@@ -12,6 +12,7 @@
 
 namespace rkapp::infer {
 
+// ONNX Runtime 运行时状态（PImpl 实体）。
 struct OnnxEngine::Impl {
   std::unique_ptr<Ort::Env> env;
   std::unique_ptr<Ort::Session> session;
@@ -21,16 +22,18 @@ struct OnnxEngine::Impl {
   std::vector<std::string> output_names;
   bool use_cuda = false;
   onnx_internal::QuantParams output_quant;
-  onnx_internal::DecodeMeta decode_meta;
+  ModelMeta decode_meta;
+  std::string decode_meta_source;
 };
 
 OnnxEngine::OnnxEngine() = default;
 OnnxEngine::~OnnxEngine() { release(); }
 
-bool OnnxEngine::init(const std::string& model_path, int img_size) {
+bool OnnxEngine::init(const ModelSpec& model_spec) {
   try {
-    model_path_ = model_path;
-    input_size_ = img_size;
+    // 初始化基础状态与 ORT 会话配置。
+    model_path_ = model_spec.model_path;
+    input_size_ = model_spec.input_size;
     impl_ = std::make_unique<Impl>();
 
     LOGI("OnnxEngine: Initializing with model ", model_path_, " (size: ", input_size_, ")");
@@ -40,6 +43,7 @@ bool OnnxEngine::init(const std::string& model_path, int img_size) {
     session_options.SetIntraOpNumThreads(0);
     session_options.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
 
+    // 优先尝试 CUDA，失败后自动回退 CPU。
     LOGI("OnnxEngine: Attempting CUDA provider (device ", cuda_device_id_, ")...");
     try {
       OrtCUDAProviderOptions cuda_opts{};
@@ -58,6 +62,7 @@ bool OnnxEngine::init(const std::string& model_path, int img_size) {
     impl_->memory_info = std::make_unique<Ort::MemoryInfo>(
         Ort::MemoryInfo::CreateCpu(OrtDeviceAllocator, OrtMemTypeCPU));
 
+    // 缓存输入输出节点名称，避免每帧查询。
     const size_t num_input_nodes = impl_->session->GetInputCount();
     for (size_t i = 0; i < num_input_nodes; i++) {
       auto name = impl_->session->GetInputNameAllocated(i, impl_->allocator);
@@ -69,6 +74,7 @@ bool OnnxEngine::init(const std::string& model_path, int img_size) {
       impl_->output_names.push_back(name.get());
     }
 
+    // 解析量化参数（优先 metadata，其次 sidecar/fallback）。
     if (!impl_->output_names.empty()) {
       impl_->output_quant = onnx_internal::resolveOutputQuantParams(
           model_path_, impl_->output_names[0], *impl_->session, impl_->allocator);
@@ -96,15 +102,19 @@ bool OnnxEngine::init(const std::string& model_path, int img_size) {
       }
     }
 
-    impl_->decode_meta = onnx_internal::parseDecodeMetaFromSidecar(model_path_);
-    if (impl_->decode_meta.hasAny()) {
-      LOGI("OnnxEngine: Loaded decode metadata (head=",
+    impl_->decode_meta = model_spec.decode_meta;
+    impl_->decode_meta_source = model_spec.decode_meta_path;
+    if (modelMetaHasAny(impl_->decode_meta)) {
+      LOGI("OnnxEngine: Using decode metadata",
+           impl_->decode_meta_source.empty() ? "" : " from " + impl_->decode_meta_source,
+           " (head=",
            impl_->decode_meta.head.empty() ? "auto" : impl_->decode_meta.head,
            ", reg_max=", impl_->decode_meta.reg_max, ", num_classes=",
            impl_->decode_meta.num_classes, ", has_objectness=",
            impl_->decode_meta.has_objectness, ")");
     } else {
-      LOGW("OnnxEngine: No decode metadata found; using conservative auto decode");
+      LOGW("OnnxEngine: No decode metadata supplied for ", model_path_,
+           "; using conservative auto decode");
     }
 
     unsupported_model_ = false;
@@ -129,6 +139,7 @@ std::vector<Detection> OnnxEngine::infer(const cv::Mat& image) {
   }
 
   try {
+    // 预处理：letterbox -> BGR2RGB -> 归一化 -> CHW。
     rkapp::preprocess::LetterboxInfo letterbox_info;
     cv::Mat processed = rkapp::preprocess::Preprocess::letterbox(image, input_size_, letterbox_info);
     if (processed.empty()) {
@@ -150,6 +161,7 @@ std::vector<Detection> OnnxEngine::infer(const cv::Mat& image) {
     for (auto& n : impl_->input_names) in_names.push_back(n.c_str());
     for (auto& n : impl_->output_names) out_names.push_back(n.c_str());
 
+    // 执行 ONNX 推理。
     auto outputs = impl_->session->Run(Ort::RunOptions{nullptr}, in_names.data(), inputs.data(),
                                        inputs.size(), out_names.data(), out_names.size());
     if (outputs.empty()) {
@@ -160,6 +172,7 @@ std::vector<Detection> OnnxEngine::infer(const cv::Mat& image) {
       LOGW("OnnxEngine: multiple outputs detected (", outputs.size(), "), using first tensor only");
     }
 
+    // 解析输出并执行 NMS。
     bool unsupported = false;
     auto dets = onnx_internal::parseOutput(outputs[0], letterbox_info, image.size(), input_size_,
                                            decode_params_, impl_->decode_meta,
@@ -197,6 +210,7 @@ void OnnxEngine::warmup() {
 void OnnxEngine::release() {
   std::lock_guard<std::recursive_mutex> lock(engine_mtx_);
   if (!impl_) return;
+  // 按创建顺序逆序释放，避免悬空引用。
   impl_->session.reset();
   impl_->env.reset();
   impl_->memory_info.reset();

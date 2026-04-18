@@ -13,9 +13,16 @@
 #include "rkapp/infer/RknnDecodeUtils.hpp"
 
 namespace rkapp::infer::onnx_internal {
+using DecodeMeta = rkapp::infer::ModelMeta;
 
+// ONNX 内部工具：量化参数解析、decode metadata 读取与输出解码。
 namespace {
 
+std::vector<std::string> modelSidecarCandidates(const std::string& model_path) {
+  return {model_path + ".json", model_path + ".meta"};
+}
+
+// 预处理 sidecar 文本：移除 //、/* */、# 注释，保留字符串字面量。
 std::string stripComments(const std::string& content) {
   std::string out;
   out.reserve(content.size());
@@ -75,6 +82,7 @@ std::string stripComments(const std::string& content) {
   return out;
 }
 
+// 去掉首尾空白。
 std::string trim(const std::string& s) {
   size_t start = 0;
   while (start < s.size() && std::isspace(static_cast<unsigned char>(s[start]))) {
@@ -87,6 +95,7 @@ std::string trim(const std::string& s) {
   return s.substr(start, end - start);
 }
 
+// 清理 key，生成可安全用于拼接字段名的 token。
 std::string sanitizeKey(const std::string& key) {
   std::string out;
   out.reserve(key.size());
@@ -100,6 +109,7 @@ std::string sanitizeKey(const std::string& key) {
   return out;
 }
 
+// 转义正则元字符，避免动态 key 破坏 regex。
 std::string escapeRegex(const std::string& value) {
   std::string out;
   out.reserve(value.size());
@@ -129,6 +139,7 @@ std::string escapeRegex(const std::string& value) {
   return out;
 }
 
+// 值解析工具（float/int/bool/list）。
 bool parseFloatValue(const std::string& value, float& out) {
   try {
     const std::string trimmed = trim(value);
@@ -269,6 +280,7 @@ bool parseIntField(const std::string& content, const std::string& key, int32_t& 
 QuantParams parseQuantFromText(const std::string& content,
                                const std::vector<std::string>& scale_keys,
                                const std::vector<std::string>& zero_keys) {
+  // 同时尝试多套候选 key，提高与不同导出工具的兼容性。
   QuantParams params;
   for (const auto& key : scale_keys) {
     float value = 0.0f;
@@ -295,6 +307,7 @@ QuantParams parseQuantFromMetadata(const Ort::Session& session,
                                    const std::vector<std::string>& zero_keys) {
   QuantParams params;
   try {
+    // 从 ONNX metadata map 读取自定义量化字段。
     auto metadata = session.GetModelMetadata();
     auto keys = metadata.GetCustomMetadataMapKeysAllocated(allocator);
     if (keys.empty()) {
@@ -344,8 +357,9 @@ QuantParams parseQuantFromMetadata(const Ort::Session& session,
 QuantParams parseQuantFromSidecar(const std::string& model_path,
                                   const std::vector<std::string>& scale_keys,
                                   const std::vector<std::string>& zero_keys) {
-  const std::vector<std::string> candidates = {
-      model_path + ".json", model_path + ".meta", "artifacts/models/decode_meta.json"};
+  // sidecar 搜索顺序：仅允许模型同名 sidecar，避免不同模型间元数据串扰。
+  const std::vector<std::string> candidates = modelSidecarCandidates(model_path);
+  QuantParams merged;
   for (const auto& path : candidates) {
     std::ifstream f(path);
     if (!f.is_open()) {
@@ -356,11 +370,16 @@ QuantParams parseQuantFromSidecar(const std::string& model_path,
       continue;
     }
     QuantParams params = parseQuantFromText(stripComments(content), scale_keys, zero_keys);
-    if (params.has_scale || params.has_zero_point) {
-      return params;
+    if (!merged.has_scale && params.has_scale) {
+      merged.scale = params.scale;
+      merged.has_scale = true;
+    }
+    if (!merged.has_zero_point && params.has_zero_point) {
+      merged.zero_point = params.zero_point;
+      merged.has_zero_point = true;
     }
   }
-  return QuantParams{};
+  return merged;
 }
 
 DecodeMeta parseDecodeMetaFromText(const std::string& content) {
@@ -402,6 +421,7 @@ DecodeMeta parseDecodeMetaFromText(const std::string& content) {
 }
 
 void mergeDecodeMetaMissingFields(DecodeMeta& dst, const DecodeMeta& src) {
+  // 仅填补缺失字段，避免覆盖更高优先级来源。
   if (dst.reg_max <= 0 && src.reg_max > 0) {
     dst.reg_max = src.reg_max;
   }
@@ -420,6 +440,7 @@ void mergeDecodeMetaMissingFields(DecodeMeta& dst, const DecodeMeta& src) {
 }
 
 bool resolveLayout(const std::vector<int64_t>& shape, int& N, int& C) {
+  // 支持 [1,C,N] / [1,N,C] / [N,C] 等常见布局。
   if (shape.size() == 3) {
     const int64_t d1 = shape[1];
     const int64_t d2 = shape[2];
@@ -482,6 +503,7 @@ QuantParams resolveOutputQuantParams(const std::string& model_path,
 
   QuantParams params = parseQuantFromMetadata(session, allocator, scale_keys, zero_keys);
   QuantParams sidecar = parseQuantFromSidecar(model_path, scale_keys, zero_keys);
+  // metadata 优先，缺失字段再由 sidecar 补齐。
   if (!params.has_scale && sidecar.has_scale) {
     params.scale = sidecar.scale;
     params.has_scale = true;
@@ -494,8 +516,7 @@ QuantParams resolveOutputQuantParams(const std::string& model_path,
 }
 
 DecodeMeta parseDecodeMetaFromSidecar(const std::string& model_path) {
-  const std::vector<std::string> candidates = {
-      model_path + ".json", model_path + ".meta", "artifacts/models/decode_meta.json"};
+  const std::vector<std::string> candidates = modelSidecarCandidates(model_path);
 
   DecodeMeta meta;
   for (const auto& path : candidates) {
@@ -509,8 +530,8 @@ DecodeMeta parseDecodeMetaFromSidecar(const std::string& model_path) {
     }
     DecodeMeta parsed = parseDecodeMetaFromText(stripComments(content));
     if (parsed.hasAny()) {
+      // 仅填充缺失字段，允许 json/meta 分别提供互补信息。
       mergeDecodeMetaMissingFields(meta, parsed);
-      break;
     }
   }
   return meta;
@@ -532,6 +553,7 @@ std::vector<Detection> parseOutput(Ort::Value& output,
   float* data = nullptr;
   std::vector<float> converted_data;
 
+  // 统一把输出转成 float 视图，量化张量先做反量化。
   switch (data_type) {
     case ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT: {
       data = output.GetTensorMutableData<float>();
@@ -602,6 +624,7 @@ std::vector<Detection> parseOutput(Ort::Value& output,
   }
 
   auto at = [&](int c, int i) -> float {
+    // 统一索引访问，屏蔽 [C,N] 与 [N,C] 差异。
     if (channels_first) return data[c * N + i];
     return data[i * C + c];
   };
@@ -621,6 +644,7 @@ std::vector<Detection> parseOutput(Ort::Value& output,
   } else if (decode_meta.head == "raw") {
     decode_head = DecodeHead::kRaw;
   } else {
+    // 未显式给出 head 时，基于通道结构进行保守判定。
     bool dfl_candidate = false;
     bool raw_candidate = false;
 
@@ -655,6 +679,7 @@ std::vector<Detection> parseOutput(Ort::Value& output,
   }
 
   if (decode_head == DecodeHead::kDfl) {
+    // DFL 路径：softmax+期望值恢复四边距离，再映射回原图坐标。
     int reg_max = decode_meta.reg_max;
     if (reg_max <= 0 && decode_meta.num_classes > 0) {
       const int remain = C - decode_meta.num_classes;
@@ -776,6 +801,7 @@ std::vector<Detection> parseOutput(Ort::Value& output,
       detections.push_back(det);
     }
   } else {
+    // RAW 路径：直接使用 cx,cy,w,h + (可选)objectness 解码。
     bool has_objness = false;
     if (decode_meta.has_objectness >= 0) {
       has_objness = decode_meta.has_objectness == 1;

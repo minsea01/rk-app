@@ -214,12 +214,11 @@ def _parse_text_meta(content: str) -> DecodeMeta:
 def load_decode_meta(
     model_path: Optional[Path], logger: Optional[logging.Logger] = None
 ) -> DecodeMeta:
-    """Load decode metadata from model sidecars or project-level fallback."""
+    """Load decode metadata from model-local sidecars only."""
     candidates = []
     if model_path is not None:
         candidates.append(Path(f"{model_path}.json"))
         candidates.append(Path(f"{model_path}.meta"))
-    candidates.append(Path("artifacts/models/decode_meta.json"))
 
     merged = normalize_decode_meta(None)
     for path in candidates:
@@ -248,7 +247,6 @@ def load_decode_meta(
                     merged[key] = parsed[key]
             if logger is not None:
                 logger.info("Loaded decode metadata from %s", path)
-            break
 
     return merged
 

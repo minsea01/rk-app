@@ -18,8 +18,10 @@
 
 namespace rkapp::infer {
 
+// DMA-BUF 推理分支：优先零拷贝直通，失败时回退到复制路径。
 namespace {
 
+// fd 生命周期守卫，避免异常路径泄漏句柄。
 struct ScopedFd {
   int fd = -1;
 
@@ -60,6 +62,7 @@ std::vector<Detection> RknnEngine::inferDmaBuf(
     const rkapp::preprocess::LetterboxInfo& letterbox_info) {
 
 #if RKNN_PLATFORM
+  // 先拍快照：后续在无锁阶段使用，减少状态锁持有时间。
   std::shared_ptr<Impl> impl;
   int input_size_snapshot = 0;
   ModelMeta model_meta_snapshot;
@@ -83,6 +86,7 @@ std::vector<Detection> RknnEngine::inferDmaBuf(
   }
 
   auto fallback_to_copy = [&]() -> std::vector<Detection> {
+    // 回退路径：DMA-BUF -> Mat -> 颜色转换 -> 常规推理。
     cv::Mat mat;
     if (!input.copyTo(mat)) {
       LOGE("RknnEngine::inferDmaBuf: Failed to copy DMA-BUF to Mat");
@@ -145,10 +149,12 @@ std::vector<Detection> RknnEngine::inferDmaBuf(
   const uint32_t out_index_snapshot = impl->out_attr.index;
 
   if (impl->input_fmt != RKNN_TENSOR_NHWC || impl->input_type != RKNN_TENSOR_UINT8) {
+    // 直接 DMA-FD 仅支持 NHWC UINT8。
     LOGW("RknnEngine::inferDmaBuf: Zero-copy requires NHWC UINT8, falling back to copy");
     return fallback_to_copy();
   }
   if (input.format() != rkapp::common::DmaBuf::PixelFormat::RGB888) {
+    // 当前直通路径只接受 RGB888，其他格式走回退转换。
     LOGW("RknnEngine::inferDmaBuf: Direct DMA-FD path expects RGB888 input, falling back to copy");
     return fallback_to_copy();
   }
@@ -167,6 +173,7 @@ std::vector<Detection> RknnEngine::inferDmaBuf(
 
   int ret = RKNN_SUCC;
 #if defined(RKAPP_RKNN_IO_MEM)
+  // RKNN IO_MEM 路径：由 SDK 负责 fd -> tensor 绑定。
   rknn_tensor_mem* input_mem = nullptr;
   rknn_mem_info mem_info{};
   mem_info.fd = dma_fd.get();
@@ -190,6 +197,7 @@ std::vector<Detection> RknnEngine::inferDmaBuf(
     return fallback_to_copy();
   }
 #else
+  // 旧接口路径：通过 pass_through + buf 传递 fd。
   rknn_input in{};
   in.index = 0;
   in.type = impl->input_type;
@@ -221,6 +229,7 @@ std::vector<Detection> RknnEngine::inferDmaBuf(
   }
 
   const size_t logits_elems = static_cast<size_t>(out_elems_snapshot);
+  // thread_local 减少重复分配。
   thread_local std::vector<float> logits_local;
   logits_local.resize(logits_elems);
 
@@ -263,6 +272,7 @@ std::vector<Detection> RknnEngine::inferDmaBuf(
   }
   return nms_result;
 #else
+  // 编译期未启用 DMA-FD，则仅提示并回退。
   static std::once_flag warn_once;
   std::call_once(warn_once, []() {
     LOGW("RknnEngine::inferDmaBuf: DMA-FD input disabled; enable ENABLE_RKNN_DMA_FD to use it");
@@ -271,6 +281,7 @@ std::vector<Detection> RknnEngine::inferDmaBuf(
 #endif
 
 #else
+  // 非 RKNN 平台：保留功能可用，退化到复制路径。
   {
     std::lock_guard<std::mutex> state_lock(state_mutex_);
     if (!is_initialized_) {

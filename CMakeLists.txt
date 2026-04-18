@@ -252,12 +252,16 @@ if (ENABLE_MPP)
 endif()
 
 # Shared decode utilities used by RKNN path and tests
+add_library(rkapp_model_meta src/infer/ModelMeta.cpp)
+target_include_directories(rkapp_model_meta PUBLIC include)
+
 set(RKAPP_DECODE_UTILS_SOURCES
   src/infer/rknn/RknnDecodeUtils.cpp
   src/infer/rknn/RknnDecodeOptimized.cpp
 )
 add_library(rkapp_decode_utils ${RKAPP_DECODE_UTILS_SOURCES})
 target_include_directories(rkapp_decode_utils PUBLIC include)
+target_link_libraries(rkapp_decode_utils PUBLIC rkapp_model_meta)
 
 if(RKAPP_ENABLE_CPP_TESTS)
   # C++ tests are in tests/cpp/CMakeLists.txt and depend on core libraries.
@@ -289,7 +293,7 @@ if (ENABLE_ONNX)
     )
     add_library(rkapp_infer_onnx ${RKAPP_ONNX_SOURCES})
     target_include_directories(rkapp_infer_onnx PUBLIC include)
-    target_link_libraries(rkapp_infer_onnx PUBLIC ${OpenCV_LIBS} rkapp_core rkapp_decode_utils)
+    target_link_libraries(rkapp_infer_onnx PUBLIC ${OpenCV_LIBS} rkapp_core rkapp_decode_utils rkapp_model_meta)
 
     # Prefer external ORT if ORT_HOME is set; fallback to third_party
     if(DEFINED ENV{ORT_HOME})
@@ -341,7 +345,7 @@ if (ENABLE_RKNN)
     )
     add_library(rkapp_infer_rknn ${RKAPP_RKNN_SOURCES})
     target_include_directories(rkapp_infer_rknn PUBLIC include)
-    target_link_libraries(rkapp_infer_rknn PUBLIC ${OpenCV_LIBS} rkapp_decode_utils)
+    target_link_libraries(rkapp_infer_rknn PUBLIC ${OpenCV_LIBS} rkapp_decode_utils rkapp_model_meta)
     # RKNN SDK
     target_include_directories(rkapp_infer_rknn PRIVATE ${RKNN_HOME}/include)
     target_link_libraries(rkapp_infer_rknn PRIVATE ${RKNN_API_LIB})

@@ -24,16 +24,29 @@
 
 namespace rkapp::infer {
 
+// RKNN 引擎主实现：负责模型加载、输入输出校验、推理执行与资源管理。
+
 RknnEngine::RknnEngine() = default;
 RknnEngine::~RknnEngine() { release(); }
 
-bool RknnEngine::init(const std::string& model_path, int img_size) {
+bool RknnEngine::init(const ModelSpec& model_spec) {
   // 重新初始化时先释放旧上下文，避免句柄泄漏或状态串扰。
   release();
 
   auto new_impl = std::make_shared<Impl>();
   // 读取模型元信息（head 类型、类别数、输出索引等），后续会严格校验。
-  ModelMeta model_meta = rknn_internal::loadModelMeta(model_path);
+  ModelMeta model_meta = model_spec.decode_meta;
+  std::string model_meta_source = model_spec.decode_meta_path;
+  if (modelMetaHasAny(model_meta)) {
+    LOGI("RknnEngine: Using decode metadata",
+         model_meta_source.empty() ? "" : " from " + model_meta_source,
+         " (head=", model_meta.head.empty() ? "auto" : model_meta.head,
+         ", reg_max=", model_meta.reg_max, ", num_classes=", model_meta.num_classes,
+         ", has_objectness=", model_meta.has_objectness, ")");
+  } else {
+    LOGW("RknnEngine: No decode metadata supplied for ", model_spec.model_path,
+         "; initialization will rely on runtime tensor inspection only");
+  }
   int inferred_num_classes = -1;
   bool inferred_has_objness = true;
  
@@ -50,14 +63,14 @@ bool RknnEngine::init(const std::string& model_path, int img_size) {
   std::vector<uint8_t> blob;
   std::string read_err;
   // 先把 rknn 文件读入内存，再调用 rknn_init。
-  if (!rknn_internal::readFile(model_path, blob, read_err)) {
-    LOGE("RknnEngine: failed to read model file: ", model_path,
-         " (exists=", std::filesystem::exists(model_path), ", reason=", read_err, ")");
+  if (!rknn_internal::readFile(model_spec.model_path, blob, read_err)) {
+    LOGE("RknnEngine: failed to read model file: ", model_spec.model_path,
+         " (exists=", std::filesystem::exists(model_spec.model_path), ", reason=", read_err, ")");
     cleanup();
     return false;
   }
   if (blob.empty()) {
-    LOGE("RknnEngine: model file empty: ", model_path);
+    LOGE("RknnEngine: model file empty: ", model_spec.model_path);
     cleanup();
     return false;
   }
@@ -203,10 +216,11 @@ bool RknnEngine::init(const std::string& model_path, int img_size) {
     cleanup();
     return false;
   }
-  if (input_h > 0 && input_w > 0 && (input_h != img_size || input_w != img_size)) {
+  if (input_h > 0 && input_w > 0 &&
+      (input_h != model_spec.input_size || input_w != model_spec.input_size)) {
     // 仅告警不失败：允许配置尺寸与模型不一致，但结果可能异常或性能下降。
     LOGW("RknnEngine: Input size mismatch with model (model=", input_w, "x", input_h,
-         ", cfg=", img_size, "x", img_size, ")");
+         ", cfg=", model_spec.input_size, "x", model_spec.input_size, ")");
   }
 
   int best_output_idx = 0;
@@ -332,7 +346,8 @@ bool RknnEngine::init(const std::string& model_path, int img_size) {
       cleanup();
       return false;
     }
-    AnchorLayout layout = build_anchor_layout(img_size, new_impl->out_n, model_meta.strides);
+    AnchorLayout layout =
+        build_anchor_layout(model_spec.input_size, new_impl->out_n, model_meta.strides);
     if (!layout.valid) {
       LOGE("RknnEngine: anchor layout invalid for provided strides");
       cleanup();
@@ -349,12 +364,14 @@ bool RknnEngine::init(const std::string& model_path, int img_size) {
   // 走到这里说明初始化流程完成，将新状态一次性替换进对象。
   {
     std::lock_guard<std::mutex> state_lock(state_mutex_);
-    model_path_ = model_path;
-    input_size_ = img_size;
+    model_path_ = model_spec.model_path;
+    input_size_ = model_spec.input_size;
     model_meta_ = std::move(model_meta);
+    model_meta_source_ = std::move(model_meta_source);
     impl_ = std::move(new_impl);
     num_classes_ = inferred_num_classes;
     has_objness_ = inferred_has_objness;
+    class_names_ = model_spec.class_names;
     is_initialized_ = true;
   }
   LOGI("RknnEngine: Initialized");

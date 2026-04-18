@@ -1,13 +1,12 @@
 /**
- * SIMD-optimized DFL decoding for ARM NEON (RK3588)
+ * ARM NEON（RK3588）下的 DFL SIMD 解码实现。
  *
- * Performance improvements:
- * - NEON vectorization for max/sum and projection
- * - Scalar exp() for accuracy (can be a bottleneck)
+ * 优化点：
+ * - max/sum/projection 使用 NEON 向量化
+ * - exp 保持标量实现以优先保证数值稳定
  *
- * Notes:
- * - reg_max is guarded (<= 32).
- * - If you need more speed, consider a vector exp approximation behind a build flag.
+ * 约束：
+ * - reg_max 受限于 <= 32
  */
 
 #include "rkapp/infer/RknnDecodeOptimized.hpp"
@@ -22,26 +21,21 @@
 namespace rkapp::infer {
 
 /**
- * NEON-optimized DFL softmax + projection
+ * NEON 优化的 DFL softmax + 期望投影
  *
- * Computes expected value of the distribution:
+ * 计算分布期望：
  * sum_k( softmax(logits[ch:ch+reg_max]) * k )
- *
- * @param logits Pointer to start of distribution (reg_max elements)
- * @param reg_max Distribution size (typically 16)
- * @param probs_buf Temporary buffer for softmax probabilities (size >= reg_max)
- * @return Expected value of the distribution
  */
 float dfl_decode_neon_single(const float* logits, int reg_max, float* probs_buf) {
-    // Find max for numerical stability
+    // 先求最大值，提升 softmax 数值稳定性。
     float max_val = -1e30f;
 
 #if RKAPP_HAS_NEON
     if (reg_max == 16) {
-        // Optimized path for reg_max=16 (YOLOv8 default)
+        // reg_max=16 的专用快速路径（YOLOv8 常见）。
         float32x4_t vmax = vdupq_n_f32(-1e30f);
 
-        // Process 16 elements in 4x4 SIMD blocks
+        // 4x4 SIMD 处理 16 个元素。
         float32x4_t v0 = vld1q_f32(logits + 0);
         float32x4_t v1 = vld1q_f32(logits + 4);
         float32x4_t v2 = vld1q_f32(logits + 8);
@@ -52,14 +46,14 @@ float dfl_decode_neon_single(const float* logits, int reg_max, float* probs_buf)
         vmax = vmaxq_f32(vmax, v2);
         vmax = vmaxq_f32(vmax, v3);
 
-        // Horizontal max across vmax
+        // 向量内归约最大值。
         float32x2_t vmax_high = vget_high_f32(vmax);
         float32x2_t vmax_low = vget_low_f32(vmax);
         float32x2_t vmax_pair = vpmax_f32(vmax_low, vmax_high);
         vmax_pair = vpmax_f32(vmax_pair, vmax_pair);
         max_val = vget_lane_f32(vmax_pair, 0);
 
-        // Compute exp(x - max) and accumulate sum
+        // 计算 exp(x-max) 并累计和。
         float32x4_t vmax_dup = vdupq_n_f32(max_val);
 
         v0 = vsubq_f32(v0, vmax_dup);
@@ -67,7 +61,7 @@ float dfl_decode_neon_single(const float* logits, int reg_max, float* probs_buf)
         v2 = vsubq_f32(v2, vmax_dup);
         v3 = vsubq_f32(v3, vmax_dup);
 
-        // Scalar exp for accuracy (16 values)
+        // exp 仍用标量实现，优先精度。
         vst1q_f32(probs_buf + 0, v0);
         vst1q_f32(probs_buf + 4, v1);
         vst1q_f32(probs_buf + 8, v2);
@@ -77,13 +71,13 @@ float dfl_decode_neon_single(const float* logits, int reg_max, float* probs_buf)
             probs_buf[k] = std::exp(probs_buf[k]);
         }
 
-        // Load exp results back for sum
+        // 重新载入 exp 结果用于向量求和。
         v0 = vld1q_f32(probs_buf + 0);
         v1 = vld1q_f32(probs_buf + 4);
         v2 = vld1q_f32(probs_buf + 8);
         v3 = vld1q_f32(probs_buf + 12);
 
-        // Sum all exp values
+        // 求和得到 softmax 分母。
         float32x4_t vsum = vaddq_f32(vaddq_f32(v0, v1), vaddq_f32(v2, v3));
         float32x2_t vsum_high = vget_high_f32(vsum);
         float32x2_t vsum_low = vget_low_f32(vsum);
@@ -93,14 +87,14 @@ float dfl_decode_neon_single(const float* logits, int reg_max, float* probs_buf)
 
         if (sum < 1e-10f) sum = 1e-10f;
 
-        // Normalize and compute dot product with [0, 1, ..., 15]
+        // 归一化后与索引权重做点积。
         float32x4_t vsum_inv = vdupq_n_f32(1.0f / sum);
         v0 = vmulq_f32(v0, vsum_inv);
         v1 = vmulq_f32(v1, vsum_inv);
         v2 = vmulq_f32(v2, vsum_inv);
         v3 = vmulq_f32(v3, vsum_inv);
 
-        // Dot product with index weights [0,1,2,3, 4,5,6,7, 8,9,10,11, 12,13,14,15]
+        // 与索引权重 [0..15] 做点积。
         alignas(16) static const float weights0[4] = {0.0f, 1.0f, 2.0f, 3.0f};
         alignas(16) static const float weights1[4] = {4.0f, 5.0f, 6.0f, 7.0f};
         alignas(16) static const float weights2[4] = {8.0f, 9.0f, 10.0f, 11.0f};
@@ -116,7 +110,7 @@ float dfl_decode_neon_single(const float* logits, int reg_max, float* probs_buf)
         vdot = vmlaq_f32(vdot, v2, w2);
         vdot = vmlaq_f32(vdot, v3, w3);
 
-        // Horizontal sum
+        // 水平求和。
         float32x2_t vdot_high = vget_high_f32(vdot);
         float32x2_t vdot_low = vget_low_f32(vdot);
         float32x2_t vdot_pair = vadd_f32(vdot_low, vdot_high);
@@ -126,7 +120,7 @@ float dfl_decode_neon_single(const float* logits, int reg_max, float* probs_buf)
     }
 #endif
 
-    // Fallback scalar path for non-16 reg_max or non-NEON
+    // 非 reg_max=16 或无 NEON 时走标量回退。
     for (int k = 0; k < reg_max; ++k) {
         max_val = std::max(max_val, logits[k]);
     }
@@ -147,14 +141,10 @@ float dfl_decode_neon_single(const float* logits, int reg_max, float* probs_buf)
 }
 
 /**
- * Optimized DFL decode for all 4 sides (l, t, r, b)
+ * 四边（l/t/r/b）DFL 解码
  *
- * @param logits Full prediction tensor in (C, N) layout where C = 4*reg_max + num_classes
- * @param anchor_idx Spatial index (which of the N anchors)
- * @param N Total number of anchors
- * @param reg_max DFL distribution size
- * @param probs_buf Temporary buffer (size >= reg_max)
- * @return [l, t, r, b] distances in grid units
+ * 输入 logits 为 (C,N) 布局，其中 C=4*reg_max+num_classes。
+ * 返回值为 [l,t,r,b]（网格单位）。
  */
 std::array<float, 4> dfl_decode_4sides_optimized(
     const float* logits,
@@ -172,8 +162,8 @@ std::array<float, 4> dfl_decode_4sides_optimized(
     for (int side = 0; side < 4; ++side) {
         int ch_base = side * reg_max;
 
-        // Extract distribution for this side at this anchor
-        // Layout: logits[(ch + k) * N + anchor_idx] for k in [0, reg_max)
+        // 提取当前边在当前 anchor 的分布向量。
+        // 布局：logits[(ch + k) * N + anchor_idx]
         alignas(16) float dist[32];  // Max reg_max = 32
         for (int k = 0; k < reg_max; ++k) {
             dist[k] = logits[(ch_base + k) * N + anchor_idx];
