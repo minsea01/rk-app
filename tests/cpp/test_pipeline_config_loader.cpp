@@ -1,0 +1,234 @@
+#include <gtest/gtest.h>
+
+#include <chrono>
+#include <filesystem>
+#include <fstream>
+#include <stdexcept>
+#include <string>
+
+#include "rkapp/infer/ModelMeta.hpp"
+#include "rkapp/infer/OnnxEngine.hpp"
+#include "rkapp/pipeline/DetectionPipeline.hpp"
+
+namespace fs = std::filesystem;
+
+namespace {
+
+fs::path repoRoot() {
+  return fs::path(__FILE__).parent_path().parent_path().parent_path();
+}
+
+fs::path makeTempDir(const std::string& prefix) {
+  const auto unique = std::chrono::steady_clock::now().time_since_epoch().count();
+  fs::path dir = fs::temp_directory_path() / (prefix + std::to_string(unique));
+  fs::create_directories(dir);
+  return dir;
+}
+
+}  // namespace
+
+TEST(PipelineConfigNormalize, ResolvesStructuredModelSpecAndSidecar) {
+  rkapp::pipeline::PipelineConfig config;
+  config.source.uri = "assets";
+  config.source.type = rkapp::capture::SourceType::FOLDER;
+  config.source.use_mpp_decode = false;
+  config.model.model_path = (repoRoot() / "artifacts/models/best_int8.rknn").string();
+  config.model.input_size = 640;
+  config.model.conf_threshold = 0.42f;
+  config.model.iou_threshold = 0.33f;
+  config.model.max_detections = 77;
+  config.model.min_box_size = 12.0f;
+  config.model.max_box_size = 320.0f;
+  config.model.min_aspect_ratio = 0.25f;
+  config.model.max_aspect_ratio = 3.0f;
+  config.model.use_npu_multicore = false;
+  config.model.use_zero_copy = false;
+  config.preprocess.use_rga_preprocess = false;
+  config.preprocess.enable_undistort = true;
+  config.preprocess.calibration_file = "camera.yaml";
+  config.preprocess.profile = "quality";
+  config.output.enable_profiling = true;
+
+  std::vector<std::string> warnings;
+  const auto normalized = rkapp::pipeline::normalizePipelineConfig(config, &warnings);
+
+  EXPECT_TRUE(warnings.empty());
+  EXPECT_EQ(normalized.source.uri, "assets");
+  EXPECT_EQ(normalized.source.type, rkapp::capture::SourceType::FOLDER);
+  EXPECT_FALSE(normalized.source.use_mpp_decode);
+  EXPECT_EQ(normalized.model.model_path,
+            (repoRoot() / "artifacts/models/best_int8.rknn").string());
+  EXPECT_EQ(normalized.model.input_size, 640);
+  EXPECT_FLOAT_EQ(normalized.model.conf_threshold, 0.42f);
+  EXPECT_FLOAT_EQ(normalized.model.iou_threshold, 0.33f);
+  EXPECT_EQ(normalized.model.max_detections, 77);
+  EXPECT_FLOAT_EQ(normalized.model.min_box_size, 12.0f);
+  EXPECT_FLOAT_EQ(normalized.model.max_box_size, 320.0f);
+  EXPECT_FLOAT_EQ(normalized.model.min_aspect_ratio, 0.25f);
+  EXPECT_FLOAT_EQ(normalized.model.max_aspect_ratio, 3.0f);
+  EXPECT_FALSE(normalized.model.use_npu_multicore);
+  EXPECT_FALSE(normalized.model.use_zero_copy);
+  EXPECT_FALSE(normalized.preprocess.use_rga_preprocess);
+  EXPECT_TRUE(normalized.preprocess.enable_undistort);
+  EXPECT_EQ(normalized.preprocess.calibration_file, "camera.yaml");
+  EXPECT_EQ(normalized.preprocess.profile, "quality");
+  EXPECT_TRUE(normalized.output.enable_profiling);
+  EXPECT_EQ(normalized.model.decode_meta.num_classes, 1);
+  EXPECT_EQ(normalized.model.decode_meta.has_objectness, 0);
+  EXPECT_EQ(normalized.model.decode_meta.head, "raw");
+  EXPECT_NE(normalized.model.decode_meta_path.find("best_int8.rknn.json"), std::string::npos);
+}
+
+TEST(PipelineConfigLoader, LoadsCanonicalStructuredSchema) {
+  const fs::path dir = makeTempDir("rkapp_cfg_loader_");
+  const fs::path model = dir / "demo.onnx";
+  std::ofstream(model).put('\n');
+  std::ofstream(model.string() + ".json")
+      << R"({"head":"dfl","reg_max":16,"strides":[8,16,32],"num_classes":3})";
+
+  const fs::path config_path = dir / "detect.yaml";
+  std::ofstream(config_path) << R"(
+source:
+  type: video
+  uri: "clip.mp4"
+  use_mpp_decode: false
+engine:
+  type: onnx
+  model: "demo.onnx"
+  input_size: [416, 416]
+postprocess:
+  conf_threshold: 0.4
+  nms_threshold: 0.3
+  max_detections: 25
+  min_box_size: 16
+  aspect_ratio_range: [0.4, 2.5]
+classes:
+  names: [person, bicycle, car]
+preprocess:
+  profile: balanced
+output:
+  type: tcp
+  enable_profiling: true
+  tcp:
+    host: "127.0.0.1"
+    port: 9010
+    queue_size: 8
+failure:
+  frame_error_limit: 4
+  source_recovery_grace_ms: 2500
+  max_reconnect_attempts: 6
+  initial_backoff_ms: 150
+  max_backoff_ms: 1200
+)";
+
+  const auto loaded = rkapp::pipeline::loadPipelineConfigFile(config_path.string());
+
+  EXPECT_TRUE(loaded.warnings.empty());
+  EXPECT_EQ(loaded.config.source.type, rkapp::capture::SourceType::VIDEO);
+  EXPECT_EQ(loaded.config.source.uri, (dir / "clip.mp4").string());
+  EXPECT_FALSE(loaded.config.source.use_mpp_decode);
+  EXPECT_EQ(loaded.config.model.backend, rkapp::pipeline::PipelineConfig::ModelBackend::ONNX);
+  EXPECT_EQ(loaded.config.model.input_size, 416);
+  EXPECT_FLOAT_EQ(loaded.config.model.conf_threshold, 0.4f);
+  EXPECT_FLOAT_EQ(loaded.config.model.iou_threshold, 0.3f);
+  EXPECT_EQ(loaded.config.model.max_detections, 25);
+  EXPECT_FLOAT_EQ(loaded.config.model.min_box_size, 16.0f);
+  EXPECT_FLOAT_EQ(loaded.config.model.min_aspect_ratio, 0.4f);
+  EXPECT_FLOAT_EQ(loaded.config.model.max_aspect_ratio, 2.5f);
+  EXPECT_EQ(loaded.config.model.class_names.size(), 3u);
+  EXPECT_EQ(loaded.config.preprocess.profile, "balanced");
+  EXPECT_TRUE(loaded.config.output.enable_profiling);
+  EXPECT_EQ(loaded.config.output.host, "127.0.0.1");
+  EXPECT_EQ(loaded.config.output.port, 9010);
+  EXPECT_EQ(loaded.config.output.queue_size, 8);
+  EXPECT_EQ(loaded.config.failure.frame_error_limit, 4);
+  EXPECT_EQ(loaded.config.failure.source_recovery_grace_ms, 2500);
+  EXPECT_EQ(loaded.config.failure.max_reconnect_attempts, 6);
+  EXPECT_EQ(loaded.config.failure.initial_backoff_ms, 150);
+  EXPECT_EQ(loaded.config.failure.max_backoff_ms, 1200);
+  EXPECT_EQ(loaded.config.model.decode_meta.head, "dfl");
+  EXPECT_EQ(loaded.config.model.decode_meta.reg_max, 16);
+  EXPECT_EQ(loaded.config.model.decode_meta.num_classes, 3);
+  EXPECT_NE(loaded.config.model.decode_meta_path.find("demo.onnx.json"), std::string::npos);
+
+  fs::remove_all(dir);
+}
+
+TEST(PipelineConfigLoader, RejectsDeprecatedInputAndNmsAliases) {
+  const fs::path dir = makeTempDir("rkapp_cfg_loader_deprecated_");
+  const fs::path config_path = dir / "detect.yaml";
+  std::ofstream(config_path) << R"(
+input:
+  type: video
+  video:
+    path: "clip.mp4"
+engine:
+  type: onnx
+  imgsz: 416
+  model: "demo.onnx"
+nms:
+  conf_thres: 0.4
+)";
+
+  EXPECT_THROW(
+      {
+        try {
+          (void)rkapp::pipeline::loadPipelineConfigFile(config_path.string());
+        } catch (const std::runtime_error& e) {
+          EXPECT_NE(std::string(e.what()).find("Deprecated config key"), std::string::npos);
+          throw;
+        }
+      },
+      std::runtime_error);
+
+  fs::remove_all(dir);
+}
+
+TEST(PipelineConfigLoader, ModelLocalSidecarOverridesMissingMetadata) {
+  const fs::path dir = makeTempDir("rkapp_cfg_loader_override_");
+  const fs::path model = dir / "demo.rknn";
+  std::ofstream(model).put('\n');
+  std::ofstream(model.string() + ".json")
+      << R"({"head":"raw","num_classes":1,"has_objectness":0,"output_index":0})";
+  std::ofstream(model.string() + ".meta")
+      << "task=detect\nnum_classes=1\nhas_objectness=false\n";
+
+  rkapp::pipeline::PipelineConfig config;
+  config.model.model_path = model.string();
+  const auto normalized = rkapp::pipeline::normalizePipelineConfig(config);
+
+  EXPECT_EQ(normalized.model.decode_meta.head, "raw");
+  EXPECT_EQ(normalized.model.decode_meta.num_classes, 1);
+  EXPECT_EQ(normalized.model.decode_meta.has_objectness, 0);
+  EXPECT_EQ(normalized.model.decode_meta.output_index, 0);
+  EXPECT_NE(normalized.model.decode_meta_path.find("demo.rknn.json"), std::string::npos);
+
+  fs::remove_all(dir);
+}
+
+TEST(PipelineConfigLoader, BestInt8UsesModelLocalSidecar) {
+  const auto loaded = rkapp::infer::loadModelMetaFromPath(
+      (repoRoot() / "artifacts/models/best_int8.rknn").string());
+  EXPECT_EQ(loaded.meta.head, "raw");
+  EXPECT_EQ(loaded.meta.num_classes, 1);
+  EXPECT_EQ(loaded.meta.has_objectness, 0);
+  EXPECT_EQ(loaded.meta.output_index, 0);
+  EXPECT_NE(loaded.source_path.find("best_int8.rknn.json"), std::string::npos);
+}
+
+TEST(PipelineFactory, CreateEngineRespectsExplicitBackend) {
+  rkapp::pipeline::PipelineConfig::ModelSpec model;
+  model.backend = rkapp::pipeline::PipelineConfig::ModelBackend::ONNX;
+  model.model_path = "model.bin";
+  model.decode_meta.head = "raw";
+  model.decode_meta.num_classes = 1;
+  model.decode_meta.has_objectness = 0;
+
+  auto engine = rkapp::pipeline::createEngine(model);
+#if RKAPP_WITH_ONNX
+  ASSERT_NE(engine, nullptr);
+  EXPECT_NE(dynamic_cast<rkapp::infer::OnnxEngine*>(engine.get()), nullptr);
+#else
+  EXPECT_EQ(engine, nullptr);
+#endif
+}

@@ -58,13 +58,24 @@ if(ENABLE_COVERAGE)
 endif()
 
 # Test executable for RKNN decode utilities
-add_executable(test_rknn_decode test_rknn_decode.cpp)
+add_executable(test_rknn_decode
+    test_rknn_decode.cpp
+    ${CMAKE_SOURCE_DIR}/src/infer/rknn/internal/RknnEngineInternal.cpp
+)
+
+target_include_directories(test_rknn_decode
+    PRIVATE
+        include
+        ${CMAKE_SOURCE_DIR}/src/infer/rknn/internal
+)
 
 target_link_libraries(test_rknn_decode
     PRIVATE
         GTest::gtest
         GTest::gtest_main
         rkapp_decode_utils
+        rkapp_core
+        ${OpenCV_LIBS}
 )
 
 add_test(NAME RknnDecodeTests COMMAND test_rknn_decode)
@@ -77,6 +88,41 @@ set_tests_properties(RknnDecodeTests PROPERTIES
 if(ENABLE_COVERAGE)
     target_compile_options(test_rknn_decode PRIVATE --coverage)
     target_link_options(test_rknn_decode PRIVATE --coverage)
+endif()
+
+add_executable(test_rknn_engine_local
+    test_rknn_engine_local.cpp
+    ${CMAKE_SOURCE_DIR}/src/infer/rknn/RknnEngine.cpp
+    ${CMAKE_SOURCE_DIR}/src/infer/rknn/internal/RknnEngineInternal.cpp
+    ${CMAKE_SOURCE_DIR}/src/infer/rknn/internal/RknnEngineDma.cpp
+)
+
+target_include_directories(test_rknn_engine_local
+    PRIVATE
+        include
+        ${CMAKE_SOURCE_DIR}/src/infer/rknn/internal
+)
+
+target_link_libraries(test_rknn_engine_local
+    PRIVATE
+        GTest::gtest
+        GTest::gtest_main
+        rkapp_core
+        rkapp_decode_utils
+        rkapp_model_meta
+        ${OpenCV_LIBS}
+)
+
+add_test(NAME RknnEngineLocalTests COMMAND test_rknn_engine_local)
+
+set_tests_properties(RknnEngineLocalTests PROPERTIES
+    TIMEOUT 30
+    LABELS "unit"
+)
+
+if(ENABLE_COVERAGE)
+    target_compile_options(test_rknn_engine_local PRIVATE --coverage)
+    target_link_options(test_rknn_engine_local PRIVATE --coverage)
 endif()
 
 # Test executable for RKNN inference consistency
@@ -175,4 +221,26 @@ set_tests_properties(DetectionPipelineFactoryTests PROPERTIES
 if(ENABLE_COVERAGE)
     target_compile_options(test_pipeline_factory PRIVATE --coverage)
     target_link_options(test_pipeline_factory PRIVATE --coverage)
+endif()
+
+# Test executable for structured pipeline config loader and model metadata wiring
+add_executable(test_pipeline_config_loader test_pipeline_config_loader.cpp)
+
+target_link_libraries(test_pipeline_config_loader
+    PRIVATE
+        GTest::gtest
+        GTest::gtest_main
+        rkapp_pipeline
+)
+
+add_test(NAME PipelineConfigLoaderTests COMMAND test_pipeline_config_loader)
+
+set_tests_properties(PipelineConfigLoaderTests PROPERTIES
+    TIMEOUT 30
+    LABELS "unit"
+)
+
+if(ENABLE_COVERAGE)
+    target_compile_options(test_pipeline_config_loader PRIVATE --coverage)
+    target_link_options(test_pipeline_config_loader PRIVATE --coverage)
 endif()

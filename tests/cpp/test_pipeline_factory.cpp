@@ -7,7 +7,7 @@ namespace {
 
 TEST(DetectionPipelineFactoryTest, CreateSourceHandlesGigeType) {
   rkapp::pipeline::PipelineConfig config;
-  config.source_type = rkapp::capture::SourceType::GIGE;
+  config.source.type = rkapp::capture::SourceType::GIGE;
 
   auto source = rkapp::pipeline::createSource(config);
   ASSERT_NE(source, nullptr);
@@ -20,7 +20,7 @@ TEST(DetectionPipelineFactoryTest, CreateSourceHandlesGigeType) {
 
 TEST(DetectionPipelineFactoryTest, CreateSourceHandlesCsiType) {
   rkapp::pipeline::PipelineConfig config;
-  config.source_type = rkapp::capture::SourceType::CSI;
+  config.source.type = rkapp::capture::SourceType::CSI;
 
   auto source = rkapp::pipeline::createSource(config);
   ASSERT_NE(source, nullptr);

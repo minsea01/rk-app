@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Unit tests for decode metadata helpers."""
 
+import hashlib
 import json
+from pathlib import Path
 
 from apps.utils.decode_meta import (
     load_decode_meta,
@@ -57,6 +59,59 @@ def test_load_decode_meta_from_model_sidecar(tmp_path):
             }
         )
     )
+
+    meta = load_decode_meta(model_path)
+    assert meta["head"] == "raw"
+    assert meta["num_classes"] == 1
+    assert meta["has_objectness"] == 0
+
+
+def test_load_decode_meta_does_not_fallback_to_project_default(tmp_path, monkeypatch):
+    model_path = tmp_path / "demo.rknn"
+    model_path.write_bytes(b"fake")
+
+    project_default = tmp_path / "artifacts" / "models" / "decode_meta.json"
+    project_default.parent.mkdir(parents=True)
+    project_default.write_text(
+        json.dumps(
+            {
+                "head": "dfl",
+                "reg_max": 16,
+                "num_classes": 80,
+            }
+        )
+    )
+
+    monkeypatch.chdir(tmp_path)
+    meta = load_decode_meta(model_path)
+
+    assert meta["head"] is None
+    assert meta["reg_max"] is None
+    assert meta["num_classes"] is None
+
+
+def test_load_decode_meta_merges_adjacent_sidecars(tmp_path):
+    model_path = tmp_path / "demo.rknn"
+    model_path.write_bytes(b"fake")
+
+    (tmp_path / "demo.rknn.json").write_text(json.dumps({"head": "raw"}))
+    (tmp_path / "demo.rknn.meta").write_text("num_classes=3\nhas_objectness=false\n")
+
+    meta = load_decode_meta(model_path)
+
+    assert meta["head"] == "raw"
+    assert meta["num_classes"] == 3
+    assert meta["has_objectness"] == 0
+
+
+def test_best_int8_fixture_is_known_person_raw_model():
+    repo_root = Path(__file__).resolve().parents[2]
+    model_path = repo_root / "artifacts" / "models" / "best_int8.rknn"
+    digest = hashlib.sha256(model_path.read_bytes()).hexdigest()
+
+    # This pins the tracked deployment fixture to the validated person model binary.
+    # If the binary changes, the adjacent sidecar must be re-validated.
+    assert digest == "ba6082678f3c0f6dd4930782d594f516c4acbe9caf65f8e457162d07b488e571"
 
     meta = load_decode_meta(model_path)
     assert meta["head"] == "raw"

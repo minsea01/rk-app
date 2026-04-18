@@ -1,10 +1,14 @@
 #include "rkapp/infer/RknnDecodeUtils.hpp"
 #include "rkapp/infer/RknnDecodeOptimized.hpp"
+#include "RknnEngineInternal.hpp"
 
 #include <gtest/gtest.h>
 
 #include <array>
+#include <chrono>
 #include <cmath>
+#include <filesystem>
+#include <fstream>
 #include <random>
 #include <vector>
 
@@ -13,6 +17,10 @@ using rkapp::infer::build_anchor_layout;
 using rkapp::infer::dfl_decode_4sides_optimized;
 using rkapp::infer::dfl_decode_neon_single;
 using rkapp::infer::resolve_stride_set;
+using rkapp::infer::ModelMeta;
+using rkapp::infer::rknn_internal::loadModelMeta;
+
+namespace fs = std::filesystem;
 
 namespace {
 
@@ -31,6 +39,23 @@ float softmax_expected_value(const float* logits, int reg_max) {
   if (sum < 1e-10f) sum = 1e-10f;
   return proj / sum;
 }
+
+fs::path makeTempDir(const std::string& prefix) {
+  const auto unique = std::chrono::steady_clock::now().time_since_epoch().count();
+  fs::path dir = fs::temp_directory_path() / (prefix + std::to_string(unique));
+  fs::create_directories(dir);
+  return dir;
+}
+
+struct ScopedCurrentPath {
+  explicit ScopedCurrentPath(const fs::path& path) : original(fs::current_path()) {
+    fs::current_path(path);
+  }
+
+  ~ScopedCurrentPath() { fs::current_path(original); }
+
+  fs::path original;
+};
 
 }  // namespace
 
@@ -104,4 +129,56 @@ TEST(RknnDecodeOptimized, Decode4SidesExtractMatchesScalarReference) {
       EXPECT_NEAR(out[side], want, 1e-4f) << "anchor_idx=" << anchor_idx << " side=" << side;
     }
   }
+}
+
+TEST(RknnDecodeMetadata, LoadsModelLocalSidecar) {
+  const fs::path dir = makeTempDir("rkapp_rknn_meta_local_");
+  const fs::path model = dir / "demo.rknn";
+  std::ofstream(model).put('\n');
+  std::ofstream(model.string() + ".json")
+      << R"({"head":"raw","num_classes":3,"has_objectness":false})";
+
+  const ModelMeta meta = loadModelMeta(model.string());
+
+  EXPECT_EQ(meta.head, "raw");
+  EXPECT_EQ(meta.num_classes, 3);
+  EXPECT_EQ(meta.has_objectness, 0);
+
+  fs::remove_all(dir);
+}
+
+TEST(RknnDecodeMetadata, DoesNotFallbackToProjectDecodeMeta) {
+  const fs::path dir = makeTempDir("rkapp_rknn_meta_nofallback_");
+  const fs::path model = dir / "demo.rknn";
+  std::ofstream(model).put('\n');
+  fs::create_directories(dir / "artifacts" / "models");
+  std::ofstream(dir / "artifacts" / "models" / "decode_meta.json")
+      << R"({"head":"dfl","reg_max":16,"num_classes":80})";
+
+  {
+    ScopedCurrentPath cwd(dir);
+    const ModelMeta meta = loadModelMeta(model.string());
+
+    EXPECT_TRUE(meta.head.empty());
+    EXPECT_EQ(meta.reg_max, -1);
+    EXPECT_EQ(meta.num_classes, -1);
+  }
+
+  fs::remove_all(dir);
+}
+
+TEST(RknnDecodeMetadata, MergesAdjacentSidecars) {
+  const fs::path dir = makeTempDir("rkapp_rknn_meta_merge_");
+  const fs::path model = dir / "demo.rknn";
+  std::ofstream(model).put('\n');
+  std::ofstream(model.string() + ".json") << R"({"head":"raw"})";
+  std::ofstream(model.string() + ".meta") << "num_classes=2\nhas_objectness=false\n";
+
+  const ModelMeta meta = loadModelMeta(model.string());
+
+  EXPECT_EQ(meta.head, "raw");
+  EXPECT_EQ(meta.num_classes, 2);
+  EXPECT_EQ(meta.has_objectness, 0);
+
+  fs::remove_all(dir);
 }

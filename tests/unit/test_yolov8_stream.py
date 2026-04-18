@@ -4,9 +4,102 @@
 Tests high-performance streaming RKNN inference pipeline.
 """
 
+import sys
+from types import ModuleType, SimpleNamespace
+from unittest.mock import MagicMock, patch
+
+import numpy as np
 import pytest
 
 from apps.yolov8_stream import parse_source, StageStats
+
+
+class FakeCapture:
+    def __init__(self, frame):
+        self.frame = frame
+        self.opened = True
+
+    def isOpened(self):
+        return self.opened
+
+    def read(self):
+        return True, self.frame.copy()
+
+    def release(self):
+        self.opened = False
+
+    def set(self, *_args):
+        return True
+
+    def get(self, *_args):
+        return 0
+
+
+class FakeRKNNLite:
+    instances = []
+
+    def __init__(self):
+        self.inference_calls = 0
+        self.released = False
+        type(self).instances.append(self)
+
+    @classmethod
+    def reset(cls):
+        cls.instances.clear()
+
+    def load_rknn(self, _path):
+        return 0
+
+    def init_runtime(self, core_mask=0):
+        self.core_mask = core_mask
+        return 0
+
+    def inference(self, inputs):
+        self.inference_calls += 1
+        return [np.zeros((1, 1, 6), dtype=np.float32)]
+
+    def release(self):
+        self.released = True
+
+
+def _install_fake_rknn(monkeypatch, fake_cls):
+    rknnlite_module = ModuleType("rknnlite")
+    api_module = ModuleType("rknnlite.api")
+    api_module.RKNNLite = fake_cls
+    rknnlite_module.api = api_module
+    monkeypatch.setitem(sys.modules, "rknnlite", rknnlite_module)
+    monkeypatch.setitem(sys.modules, "rknnlite.api", api_module)
+
+
+def _make_preprocess_config():
+    return SimpleNamespace(
+        profile="balanced",
+        roi_enable=False,
+        white_balance_enable=False,
+        gamma_enable=False,
+        denoise_enable=False,
+    )
+
+
+def _make_stream_args(tmp_path):
+    from apps.yolov8_stream import build_arg_parser
+
+    model_path = tmp_path / "demo.rknn"
+    model_path.write_bytes(b"fake")
+    return build_arg_parser().parse_args(
+        [
+            "--model",
+            str(model_path),
+            "--queue",
+            "2",
+            "--warmup",
+            "0",
+            "--max-frames",
+            "1",
+            "--log-level",
+            "DEBUG",
+        ]
+    )
 
 
 class TestParseSource:
@@ -403,3 +496,94 @@ class TestArgumentParser:
         assert args.undistort_enable is None
         assert args.gamma_enable is None
         assert args.denoise_enable is None
+
+
+class TestRunStreamRobustness:
+    def test_run_stream_continues_after_single_preprocess_failure(self, tmp_path, monkeypatch):
+        import apps.yolov8_stream as stream
+
+        FakeRKNNLite.reset()
+        _install_fake_rknn(monkeypatch, FakeRKNNLite)
+
+        args = _make_stream_args(tmp_path)
+        frame = np.zeros((32, 32, 3), dtype=np.uint8)
+        mock_logger = MagicMock()
+        attempts = {"count": 0}
+
+        def fake_run_preprocess(*_args, **_kwargs):
+            attempts["count"] += 1
+            if attempts["count"] == 1:
+                raise ValueError("bad frame")
+            return frame.copy(), {"ratio_pad": (1.0, (0.0, 0.0))}, frame.copy()
+
+        with patch.object(stream.cv2, "VideoCapture", return_value=FakeCapture(frame)):
+            with patch.object(stream, "build_preprocess_config", return_value=_make_preprocess_config()):
+                with patch.object(stream, "run_preprocess", side_effect=fake_run_preprocess):
+                    with patch.object(
+                        stream,
+                        "decode_predictions",
+                        return_value=(
+                            np.empty((0, 4), dtype=np.float32),
+                            np.empty((0,), dtype=np.float32),
+                            np.empty((0,), dtype=np.int32),
+                        ),
+                    ):
+                        with patch.object(
+                            stream, "map_boxes_back", side_effect=lambda boxes, _meta: boxes
+                        ):
+                            with patch.object(stream, "load_decode_meta", return_value={}):
+                                with patch.object(stream, "logger", mock_logger):
+                                    stream.run_stream(args)
+
+        assert FakeRKNNLite.instances[-1].inference_calls >= 1
+        assert any(
+            len(call.args) >= 2
+            and call.args[0] == "%s failed on frame %d/%d; dropping frame and continuing: %s"
+            and call.args[1] == "Preprocess"
+            for call in mock_logger.warning.call_args_list
+        )
+
+    def test_run_stream_continues_after_single_postprocess_failure(self, tmp_path, monkeypatch):
+        import apps.yolov8_stream as stream
+
+        FakeRKNNLite.reset()
+        _install_fake_rknn(monkeypatch, FakeRKNNLite)
+
+        args = _make_stream_args(tmp_path)
+        frame = np.zeros((32, 32, 3), dtype=np.uint8)
+        mock_logger = MagicMock()
+        decode_calls = {"count": 0}
+
+        def fake_decode(*_args, **_kwargs):
+            decode_calls["count"] += 1
+            if decode_calls["count"] == 1:
+                raise ValueError("bad decode")
+            return (
+                np.empty((0, 4), dtype=np.float32),
+                np.empty((0,), dtype=np.float32),
+                np.empty((0,), dtype=np.int32),
+            )
+
+        with patch.object(stream.cv2, "VideoCapture", return_value=FakeCapture(frame)):
+            with patch.object(stream, "build_preprocess_config", return_value=_make_preprocess_config()):
+                with patch.object(
+                    stream,
+                    "run_preprocess",
+                    return_value=(frame.copy(), {"ratio_pad": (1.0, (0.0, 0.0))}, frame.copy()),
+                ):
+                    with patch.object(stream, "decode_predictions", side_effect=fake_decode):
+                        with patch.object(
+                            stream, "map_boxes_back", side_effect=lambda boxes, _meta: boxes
+                        ):
+                            with patch.object(stream, "load_decode_meta", return_value={}):
+                                with patch.object(stream, "logger", mock_logger):
+                                    stream.run_stream(args)
+
+        assert decode_calls["count"] >= 2
+        assert FakeRKNNLite.instances[-1].inference_calls >= 2
+        assert any(
+            len(call.args) >= 2
+            and call.args[0] == "%s failed on frame %d/%d; dropping frame and continuing: %s"
+            and call.args[1] == "Postprocess"
+            for call in mock_logger.warning.call_args_list
+        )

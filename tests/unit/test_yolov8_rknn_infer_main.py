@@ -7,6 +7,7 @@ Note: Full main() testing requires rknnlite which is RK3588-specific.
 
 import tempfile
 from pathlib import Path
+from types import ModuleType, SimpleNamespace
 from unittest.mock import patch, MagicMock
 import sys
 
@@ -14,6 +15,57 @@ import pytest
 import numpy as np
 
 from apps.exceptions import ModelLoadError, RKNNError, PreprocessError, InferenceError
+
+
+class FakeCapture:
+    def __init__(self, frame):
+        self.frame = frame
+        self.opened = True
+
+    def isOpened(self):
+        return self.opened
+
+    def read(self):
+        return True, self.frame.copy()
+
+    def release(self):
+        self.opened = False
+
+
+class FakeRKNNLite:
+    instances = []
+
+    def __init__(self):
+        self.inference_calls = 0
+        self.released = False
+        type(self).instances.append(self)
+
+    @classmethod
+    def reset(cls):
+        cls.instances.clear()
+
+    def load_rknn(self, _path):
+        return 0
+
+    def init_runtime(self, core_mask=0):
+        self.core_mask = core_mask
+        return 0
+
+    def inference(self, inputs):
+        self.inference_calls += 1
+        return [np.zeros((1, 1, 6), dtype=np.float32)]
+
+    def release(self):
+        self.released = True
+
+
+def _install_fake_rknn(monkeypatch, fake_cls):
+    rknnlite_module = ModuleType("rknnlite")
+    api_module = ModuleType("rknnlite.api")
+    api_module.RKNNLite = fake_cls
+    rknnlite_module.api = api_module
+    monkeypatch.setitem(sys.modules, "rknnlite", rknnlite_module)
+    monkeypatch.setitem(sys.modules, "rknnlite.api", api_module)
 
 
 class TestDecodePredictions:
@@ -389,3 +441,73 @@ class TestArgumentParser:
         assert args.undistort_enable is None
         assert args.gamma_enable is None
         assert args.denoise_enable is None
+
+
+class TestMainRobustness:
+    def test_camera_mode_skips_single_frame_decode_error(self, tmp_path, monkeypatch):
+        import apps.yolov8_rknn_infer as infer_app
+
+        FakeRKNNLite.reset()
+        _install_fake_rknn(monkeypatch, FakeRKNNLite)
+
+        model_path = tmp_path / "demo.rknn"
+        model_path.write_bytes(b"fake")
+        frame = np.zeros((32, 32, 3), dtype=np.uint8)
+        mock_logger = MagicMock()
+        decode_calls = {"count": 0}
+
+        def fake_decode(*_args, **_kwargs):
+            decode_calls["count"] += 1
+            if decode_calls["count"] == 1:
+                raise ValueError("bad decode")
+            return (
+                np.empty((0, 4), dtype=np.float32),
+                np.empty((0,), dtype=np.float32),
+                np.empty((0,), dtype=np.int32),
+            )
+
+        preprocess_config = SimpleNamespace(
+            profile="balanced",
+            roi_enable=False,
+            white_balance_enable=False,
+            gamma_enable=False,
+            denoise_enable=False,
+        )
+
+        with patch.object(sys, "argv", ["yolov8_rknn_infer.py", "--model", str(model_path)]):
+            with patch.object(infer_app, "setup_logger", return_value=mock_logger):
+                with patch.object(infer_app.cv2, "VideoCapture", return_value=FakeCapture(frame)):
+                    with patch.object(
+                        infer_app, "build_preprocess_config", return_value=preprocess_config
+                    ):
+                        with patch.object(infer_app, "load_decode_meta", return_value={}):
+                            with patch.object(
+                                infer_app,
+                                "run_preprocess",
+                                return_value=(
+                                    frame.copy(),
+                                    {"ratio_pad": (1.0, (0.0, 0.0))},
+                                    frame.copy(),
+                                ),
+                            ):
+                                with patch.object(
+                                    infer_app, "decode_predictions", side_effect=fake_decode
+                                ):
+                                    with patch.object(
+                                        infer_app,
+                                        "map_boxes_back",
+                                        side_effect=lambda boxes, _meta: boxes,
+                                    ):
+                                        with patch.object(
+                                            infer_app, "draw_boxes", side_effect=lambda img, *_args, **_kwargs: img
+                                        ):
+                                            with patch.object(infer_app, "safe_imshow", return_value=True):
+                                                with patch.object(infer_app, "safe_waitKey", return_value=27):
+                                                    infer_app.main()
+
+        assert decode_calls["count"] >= 2
+        assert FakeRKNNLite.instances[-1].inference_calls >= 2
+        assert any(
+            call.args and str(call.args[0]).startswith("Inference error (skipping frame)")
+            for call in mock_logger.warning.call_args_list
+        )
