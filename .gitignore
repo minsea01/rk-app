@@ -131,6 +131,7 @@ check*.onnx
 .claude/
 CLAUDE.md
 AGENTS.md
+MEMORY.md
 mcp.config.json
 examples/rk_agent.py
 examples/simple_agent.py
