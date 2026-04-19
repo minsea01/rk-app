@@ -40,6 +40,7 @@ option(ENABLE_RKNN_DMA_FD "Enable RKNN DMA-BUF fd input (requires supported RKNN
 option(ENABLE_RKNN_IO_MEM "Enable RKNN IO memory for DMA-BUF zero-copy (RKNN >= 1.5.0)" OFF)
 set(RKNN_HOME "/opt/rknpu2" CACHE PATH "RKNN SDK root")
 set(MPP_HOME "/usr/include/rockchip" CACHE PATH "MPP SDK headers")
+set(RKAPP_BUILD_WITH_ONNX OFF CACHE BOOL "Whether this build includes ONNXRuntime engine support" FORCE)
 
 if (CMAKE_BUILD_TYPE STREQUAL "Debug" AND CMAKE_SYSTEM_PROCESSOR MATCHES "(x86_64|AMD64|i.86)")
   if (ENABLE_SANITIZERS)
@@ -288,35 +289,64 @@ if(RKAPP_ENABLE_CPP_TESTS)
 endif()
 
 # ONNX inference engine (optional)
+set(RKAPP_ONNX_INCLUDE_DIR "")
+set(RKAPP_ONNX_LIBRARY "")
+set(RKAPP_ONNX_EXTRA_LIBS "")
+set(RKAPP_ONNX_PRIVATE_DEFS "")
 if (ENABLE_ONNX)
+    if(DEFINED ENV{ORT_HOME} AND NOT "$ENV{ORT_HOME}" STREQUAL "")
+      message(STATUS "Using ORT from $ENV{ORT_HOME}")
+      if(NOT EXISTS "$ENV{ORT_HOME}/include/onnxruntime_cxx_api.h")
+        message(FATAL_ERROR "ORT_HOME is set but header not found: $ENV{ORT_HOME}/include/onnxruntime_cxx_api.h")
+      endif()
+      set(RKAPP_ONNX_INCLUDE_DIR "$ENV{ORT_HOME}/include")
+      # Link by absolute path to avoid relying on link_directories.
+      find_library(RKAPP_ONNX_LIBRARY onnxruntime HINTS "$ENV{ORT_HOME}/lib" REQUIRED)
+      # Provider CUDA is optional; link if present, otherwise rely on runtime loading.
+      find_library(RKAPP_ONNX_CUDA_PROVIDER onnxruntime_providers_cuda HINTS "$ENV{ORT_HOME}/lib")
+      if(RKAPP_ONNX_CUDA_PROVIDER)
+        list(APPEND RKAPP_ONNX_EXTRA_LIBS "${RKAPP_ONNX_CUDA_PROVIDER}")
+        list(APPEND RKAPP_ONNX_PRIVATE_DEFS ORT_WITH_CUDA=1)
+      endif()
+      set(RKAPP_BUILD_WITH_ONNX ON CACHE BOOL "Whether this build includes ONNXRuntime engine support" FORCE)
+    else()
+      set(RKAPP_ONNX_BUNDLED_ROOT "${CMAKE_SOURCE_DIR}/third_party/onnxruntime")
+      set(RKAPP_ONNX_BUNDLED_INCLUDE "${RKAPP_ONNX_BUNDLED_ROOT}/include/onnxruntime_cxx_api.h")
+      set(RKAPP_ONNX_BUNDLED_LIBRARY "${RKAPP_ONNX_BUNDLED_ROOT}/lib/libonnxruntime.so")
+      if(EXISTS "${RKAPP_ONNX_BUNDLED_INCLUDE}" AND EXISTS "${RKAPP_ONNX_BUNDLED_LIBRARY}")
+        message(STATUS "Using bundled third_party ONNXRuntime (CPU)")
+        set(RKAPP_ONNX_INCLUDE_DIR "${RKAPP_ONNX_BUNDLED_ROOT}/include")
+        set(RKAPP_ONNX_LIBRARY "${RKAPP_ONNX_BUNDLED_LIBRARY}")
+        set(RKAPP_BUILD_WITH_ONNX ON CACHE BOOL "Whether this build includes ONNXRuntime engine support" FORCE)
+      else()
+        message(WARNING
+          "ENABLE_ONNX=ON but ONNX Runtime was not found. "
+          "Set ORT_HOME or populate third_party/onnxruntime to enable ONNX support. "
+          "Continuing with ONNX support disabled for this build.")
+      endif()
+    endif()
+endif()
+
+if (RKAPP_BUILD_WITH_ONNX)
     set(RKAPP_ONNX_SOURCES
       src/infer/onnx/OnnxEngine.cpp
       src/infer/onnx/internal/OnnxEngineInternal.cpp
     )
     add_library(rkapp_infer_onnx ${RKAPP_ONNX_SOURCES})
     target_include_directories(rkapp_infer_onnx PUBLIC include)
-    target_link_libraries(rkapp_infer_onnx PUBLIC ${OpenCV_LIBS} rkapp_core rkapp_decode_utils rkapp_model_meta)
-
-    # Prefer external ORT if ORT_HOME is set; fallback to third_party
-    if(DEFINED ENV{ORT_HOME})
-      message(STATUS "Using ORT from $ENV{ORT_HOME}")
-      if(NOT EXISTS "$ENV{ORT_HOME}/include/onnxruntime_cxx_api.h")
-        message(FATAL_ERROR "ORT_HOME is set but header not found: $ENV{ORT_HOME}/include/onnxruntime_cxx_api.h")
-      endif()
-      target_include_directories(rkapp_infer_onnx PRIVATE $ENV{ORT_HOME}/include)
-      # Link by absolute path to avoid relying on link_directories
-      find_library(ORT_LIB onnxruntime HINTS $ENV{ORT_HOME}/lib REQUIRED)
-      target_link_libraries(rkapp_infer_onnx PUBLIC ${ORT_LIB})
-      # Provider CUDA is optional; link if present, otherwise rely on runtime loading
-      find_library(ORT_CUDA_PROVIDER onnxruntime_providers_cuda HINTS $ENV{ORT_HOME}/lib)
-      if(ORT_CUDA_PROVIDER)
-        target_link_libraries(rkapp_infer_onnx PUBLIC ${ORT_CUDA_PROVIDER})
-      endif()
-      target_compile_definitions(rkapp_infer_onnx PRIVATE ORT_WITH_CUDA=1)
-    else()
-      message(STATUS "Using bundled third_party ONNXRuntime (CPU)")
-      target_include_directories(rkapp_infer_onnx PRIVATE third_party/onnxruntime/include)
-      target_link_libraries(rkapp_infer_onnx PRIVATE ${CMAKE_SOURCE_DIR}/third_party/onnxruntime/lib/libonnxruntime.so)
+    target_include_directories(rkapp_infer_onnx PRIVATE ${RKAPP_ONNX_INCLUDE_DIR})
+    target_link_libraries(
+      rkapp_infer_onnx
+      PUBLIC
+        ${OpenCV_LIBS}
+        rkapp_core
+        rkapp_decode_utils
+        rkapp_model_meta
+        ${RKAPP_ONNX_LIBRARY}
+        ${RKAPP_ONNX_EXTRA_LIBS}
+    )
+    if(RKAPP_ONNX_PRIVATE_DEFS)
+      target_compile_definitions(rkapp_infer_onnx PRIVATE ${RKAPP_ONNX_PRIVATE_DEFS})
     endif()
     target_compile_definitions(rkapp_infer_onnx PUBLIC RKAPP_WITH_ONNX=1)
 endif()
@@ -382,7 +412,7 @@ if (ENABLE_RKNN)
     target_compile_definitions(rkapp_pipeline PUBLIC RKAPP_WITH_RKNN=1)
 endif()
 
-if (ENABLE_ONNX)
+if (RKAPP_BUILD_WITH_ONNX)
     target_link_libraries(rkapp_pipeline PUBLIC rkapp_infer_onnx)
     target_compile_definitions(rkapp_pipeline PUBLIC RKAPP_WITH_ONNX=1)
 endif()

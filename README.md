@@ -85,8 +85,8 @@ logging:
 - `include/`：公共头文件（遵循 `include/rkapp` 的布局与命名）
 - `examples/`：示例 CLI（`detect_cli.cpp`）
 - `apps/`：板端 Python Runner（`yolov8_rknn_infer.py` 等）
-- `tools/`：训练、导出、评估与聚合脚本（如 `convert_onnx_to_rknn.py`、`model_evaluation.py`）
-- `scripts/`：运行/部署/压测等封装脚本（如 `run_bench.sh`）
+- `tools/`：训练、导出、数据处理与通用分析工具（如 `convert_onnx_to_rknn.py`、`model_evaluation.py`）
+- `scripts/`：运行、部署、评测、分析与报告脚本（如 `run_bench.sh`、`evaluation/batch_inference.py`、`reports/charts/gen_chart.py`）
 - `artifacts/`：模型与基准产出（`artifacts/models/*`、`bench_summary.*`）
 - `datasets/`：数据集与校准集（不纳入版本控制的体量数据）
 - `configs/`：共享实验预设与工具链锁定

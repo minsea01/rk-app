@@ -121,10 +121,10 @@ artifacts/task_completion_checklist.md
 artifacts/unmerged_branches_report.md
 
 # Temporary root-level scripts and debug files
-batch_inference.py
-gen_chart.py
-gen_code_charts.py
-gen_more_charts.py
+/batch_inference.py
+/gen_chart.py
+/gen_code_charts.py
+/gen_more_charts.py
 check*.onnx
 
 # Claude Code / AI tool configs (local only)

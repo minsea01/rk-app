@@ -2,6 +2,13 @@
 
 This document contains detailed project structure information that was extracted from CLAUDE.md for performance optimization.
 
+## Runtime Notes
+
+- `config/*.yaml` and `configs/*.yaml` now treat `runtime.warmup`, `runtime.async`, and
+  `logging.level` as the single source of truth for `detect_cli`.
+- `engine.use_zero_copy` defaults to `false`. Only enable it when the source provides
+  source-owned DMA-BUF input and the end-to-end path is explicitly validated as direct DMA.
+
 ## Complete Directory Structure
 
 ```
@@ -53,7 +60,7 @@ rk-app/
 │       ├── test_decode_predictions.py  # YOLO decoder tests
 │       ├── test_yolo_post.py      # Post-processing tests
 │       └── test_aggregate.py      # 7 tests
-├── tools/                         # Core conversion/export tools (24 tools)
+├── tools/                         # Conversion/export/data-processing helpers
 │   ├── export_yolov8_to_onnx.py   # PyTorch → ONNX export
 │   ├── convert_onnx_to_rknn.py    # ONNX → RKNN conversion
 │   ├── export_rknn.py             # Alternative RKNN export tool
@@ -76,7 +83,7 @@ rk-app/
 │   ├── balance_industrial_dataset.py  # Dataset balancing
 │   ├── train_yolov8.py            # YOLOv8 training script
 │   └── run_val_with_json.py       # Validation with JSON output
-├── scripts/                       # Automation scripts (49 shell scripts)
+├── scripts/                       # Automation scripts and Python utilities
 │   ├── run_bench.sh               # MCP benchmark pipeline
 │   ├── run_rknn_sim.py            # PC simulator inference
 │   ├── compare_onnx_rknn.py       # Accuracy comparison
@@ -93,6 +100,11 @@ rk-app/
 │   ├── benchmark/                 # Performance benchmarks
 │   ├── demo/                      # Demo scripts
 │   ├── reports/                   # Report generators
+│   │   ├── generate_achievement_report.py
+│   │   └── charts/                # Report chart assets
+│   │       ├── gen_chart.py
+│   │       ├── gen_code_charts.py
+│   │       └── gen_more_charts.py
 │   ├── train/                     # Training scripts (4 scripts)
 │   │   ├── START_TRAINING.sh      # Quick start training wrapper
 │   │   ├── train_citypersons.sh   # CityPersons fine-tuning
@@ -101,9 +113,10 @@ rk-app/
 │   │   ├── prepare_citypersons.py # CityPersons to YOLO format
 │   │   ├── download_citypersons.sh
 │   │   └── prepare_coco_person.sh # COCO person subset
-│   └── evaluation/                # mAP evaluation tools
-│       ├── pedestrian_map_evaluator.py  # Comprehensive pedestrian mAP
-│       └── official_yolo_map.py         # Standard YOLO mAP evaluation
+│   └── evaluation/                # mAP evaluation and batch visualization
+│       ├── batch_inference.py            # Offline batch inference snapshots
+│       ├── pedestrian_map_evaluator.py   # Comprehensive pedestrian mAP
+│       └── official_yolo_map.py          # Standard YOLO mAP evaluation
 ├── artifacts/                     # Build outputs and reports
 │   ├── models/                    # .onnx and .rknn outputs
 │   ├── *_report.md                # Generated reports
