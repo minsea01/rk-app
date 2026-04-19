@@ -10,11 +10,11 @@ TEST(DetectionPipelineFactoryTest, CreateSourceHandlesGigeType) {
   config.source.type = rkapp::capture::SourceType::GIGE;
 
   auto source = rkapp::pipeline::createSource(config);
-  ASSERT_NE(source, nullptr);
 #if RKAPP_WITH_GIGE
+  ASSERT_NE(source, nullptr);
   EXPECT_EQ(source->getType(), rkapp::capture::SourceType::GIGE);
 #else
-  EXPECT_EQ(source->getType(), rkapp::capture::SourceType::VIDEO);
+  EXPECT_EQ(source, nullptr);
 #endif
 }
 
@@ -23,11 +23,11 @@ TEST(DetectionPipelineFactoryTest, CreateSourceHandlesCsiType) {
   config.source.type = rkapp::capture::SourceType::CSI;
 
   auto source = rkapp::pipeline::createSource(config);
-  ASSERT_NE(source, nullptr);
 #if RKAPP_WITH_CSI
+  ASSERT_NE(source, nullptr);
   EXPECT_EQ(source->getType(), rkapp::capture::SourceType::CSI);
 #else
-  EXPECT_EQ(source->getType(), rkapp::capture::SourceType::VIDEO);
+  EXPECT_EQ(source, nullptr);
 #endif
 }
 

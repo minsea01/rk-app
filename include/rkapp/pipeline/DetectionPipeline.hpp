@@ -59,6 +59,15 @@ struct PipelineConfig {
         bool enable_profiling = false;
     };
 
+    struct RuntimeSpec {
+        int warmup_iterations = 5;
+        bool async_mode = false;
+    };
+
+    struct LoggingSpec {
+        std::string level = "INFO";
+    };
+
     struct FailurePolicy {
         int frame_error_limit = 8;
         int source_recovery_grace_ms = 15000;
@@ -71,6 +80,8 @@ struct PipelineConfig {
     ModelSpec model;
     PreprocessSpec preprocess;
     OutputSpec output;
+    RuntimeSpec runtime;
+    LoggingSpec logging;
     FailurePolicy failure;
 };
 
@@ -161,6 +172,14 @@ public:
      * @return 结果；无更多数据时返回 nullopt
      */
     std::optional<PipelineResult> next();
+
+    /**
+     * @brief 处理携带像素格式/stride/存储元数据的输入帧
+     *
+     * @param frame 输入帧（可为 BGR/RGB/NV12/Bayer 等原始格式）
+     * @return 单帧结果
+     */
+    PipelineResult process(const capture::CaptureFrame& frame);
 
     /**
      * @brief 处理单张图像（旁路调用）

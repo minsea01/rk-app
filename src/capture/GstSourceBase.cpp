@@ -1,4 +1,5 @@
 #include "rkapp/capture/GstSourceBase.hpp"
+#include "rkapp/capture/FrameOps.hpp"
 
 #include <algorithm>
 #include <memory>
@@ -21,13 +22,14 @@
 namespace rkapp::capture {
 
 // GStreamer 通用采集基类实现：处理拉帧、格式转换、健康检查和重连。
-#if defined(RKAPP_WITH_GIGE) || defined(RKAPP_WITH_CSI)
 namespace {
 
+#if defined(RKAPP_WITH_GIGE) || defined(RKAPP_WITH_CSI)
+
 using detail::PixelFormatKind;
-using detail::bayerToBgrCode;
 using detail::classifyPixelFormat;
-using detail::isBayerFormat;
+using detail::isYuv420SpFormat;
+using detail::toCapturePixelFormat;
 
 struct GstSampleHolder {
   GstSample* sample = nullptr;
@@ -69,8 +71,16 @@ struct GstSampleGuard {
 constexpr std::chrono::milliseconds kInitialReconnectBackoff(500);
 constexpr std::chrono::milliseconds kMaxReconnectBackoff(5000);
 
-}  // namespace
+size_t yuv420SpRowStride(const GstMapInfo& map, int height) {
+  const size_t total_rows = static_cast<size_t>(height) + static_cast<size_t>(height) / 2;
+  if (height <= 0 || total_rows == 0) {
+    return 0;
+  }
+  return static_cast<size_t>(map.size) / total_rows;
+}
+
 #endif
+}  // namespace
 
 GstSourceBase::GstSourceBase(const char* source_name)
     : source_name_(source_name ? source_name : "GstSource") {}
@@ -126,13 +136,21 @@ bool GstSourceBase::read(cv::Mat& frame) {
   if (!readFrame(capture)) {
     return false;
   }
-  capture.mat.copyTo(frame);
-  return true;
+  try {
+    const BgrFrameView bgr_view = convertToBgr(capture, preprocess::AccelBackend::OPENCV);
+    if (bgr_view.empty()) {
+      return false;
+    }
+    frame = detachFrameIfAliased(bgr_view.image, capture, bgr_view.aliases_source);
+    return !frame.empty();
+  } catch (const cv::Exception& e) {
+    LOGW(source_name_, ": failed to convert capture frame to BGR: ", e.what());
+    return false;
+  }
 }
 
 bool GstSourceBase::readFrame(CaptureFrame& frame) {
-  frame.owner.reset();
-  frame.mat.release();
+  frame.reset();
 
 #if defined(RKAPP_WITH_GIGE) || defined(RKAPP_WITH_CSI)
   std::unique_lock<std::mutex> lock(mtx_);
@@ -240,6 +258,7 @@ bool GstSourceBase::readFrame(CaptureFrame& frame) {
 
   int src_channels = 3;
   int src_type = CV_8UC3;
+  int src_rows = height;
   switch (pixel_kind) {
     case PixelFormatKind::GRAY:
     case PixelFormatKind::BAYER_RG:
@@ -248,6 +267,12 @@ bool GstSourceBase::readFrame(CaptureFrame& frame) {
     case PixelFormatKind::BAYER_GB:
       src_channels = 1;
       src_type = CV_8UC1;
+      break;
+    case PixelFormatKind::NV12:
+    case PixelFormatKind::NV21:
+      src_channels = 1;
+      src_type = CV_8UC1;
+      src_rows = height + height / 2;
       break;
     case PixelFormatKind::BGRA:
     case PixelFormatKind::RGBA:
@@ -262,8 +287,9 @@ bool GstSourceBase::readFrame(CaptureFrame& frame) {
       break;
   }
 
-  const size_t row_stride =
-      static_cast<size_t>(sample_guard.map.size) / static_cast<size_t>(height);
+  const size_t row_stride = isYuv420SpFormat(pixel_kind)
+      ? yuv420SpRowStride(sample_guard.map, height)
+      : static_cast<size_t>(sample_guard.map.size) / static_cast<size_t>(height);
   const size_t expected_stride = static_cast<size_t>(width) * static_cast<size_t>(src_channels);
   if (row_stride < expected_stride) {
     LOGW(source_name_, ": buffer stride smaller than expected");
@@ -272,48 +298,17 @@ bool GstSourceBase::readFrame(CaptureFrame& frame) {
     return false;
   }
 
-  cv::Mat mapped(height, width, src_type, static_cast<void*>(sample_guard.map.data), row_stride);
-  if (pixel_kind == PixelFormatKind::BGR) {
-    // BGR 直接零拷贝共享 sample 内存。
-    auto holder = std::make_shared<GstSampleHolder>();
-    holder->sample = sample_guard.sample;
-    holder->buffer = sample_guard.buffer;
-    holder->map = sample_guard.map;
-    holder->mapped = sample_guard.mapped;
-    sample_guard.sample = nullptr;
-    sample_guard.buffer = nullptr;
-    sample_guard.mapped = false;
-    frame.mat = mapped;
-    frame.owner = holder;
-  } else {
-    // 其他格式转换到 BGR，结果由 frame.mat 独占。
-    try {
-      if (pixel_kind == PixelFormatKind::GRAY) {
-        cv::cvtColor(mapped, frame.mat, cv::COLOR_GRAY2BGR);
-      } else if (pixel_kind == PixelFormatKind::RGB) {
-        cv::cvtColor(mapped, frame.mat, cv::COLOR_RGB2BGR);
-      } else if (pixel_kind == PixelFormatKind::BGRA) {
-        cv::cvtColor(mapped, frame.mat, cv::COLOR_BGRA2BGR);
-      } else if (pixel_kind == PixelFormatKind::RGBA) {
-        cv::cvtColor(mapped, frame.mat, cv::COLOR_RGBA2BGR);
-      } else if (isBayerFormat(pixel_kind)) {
-        const int bayer_code = bayerToBgrCode(pixel_kind);
-        if (bayer_code < 0) {
-          LOGW(source_name_, ": unsupported Bayer format: ", sample_format);
-          lock.lock();
-          handleReadFailureLocked();
-          return false;
-        }
-        cv::cvtColor(mapped, frame.mat, bayer_code);
-      }
-    } catch (const cv::Exception& e) {
-      LOGW(source_name_, ": color conversion failed for format ", sample_format, ": ", e.what());
-      lock.lock();
-      handleReadFailureLocked();
-      return false;
-    }
-    frame.owner.reset();
-  }
+  cv::Mat mapped(src_rows, width, src_type, static_cast<void*>(sample_guard.map.data), row_stride);
+  auto holder = std::make_shared<GstSampleHolder>();
+  holder->sample = sample_guard.sample;
+  holder->buffer = sample_guard.buffer;
+  holder->map = sample_guard.map;
+  holder->mapped = sample_guard.mapped;
+  sample_guard.sample = nullptr;
+  sample_guard.buffer = nullptr;
+  sample_guard.mapped = false;
+  frame.setMatFrame(mapped, toCapturePixelFormat(pixel_kind), StorageKind::SHARED_MAPPED, holder,
+                    cv::Size(width, height));
 
   lock.lock();
   consecutive_failures_ = 0;

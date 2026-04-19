@@ -32,7 +32,8 @@ TEST(PipelineConfigNormalize, ResolvesStructuredModelSpecAndSidecar) {
   config.source.uri = "assets";
   config.source.type = rkapp::capture::SourceType::FOLDER;
   config.source.use_mpp_decode = false;
-  config.model.model_path = (repoRoot() / "artifacts/models/best_int8.rknn").string();
+  config.model.model_path =
+      (repoRoot() / "artifacts/models/best_person_aug_int8.rknn").string();
   config.model.input_size = 640;
   config.model.conf_threshold = 0.42f;
   config.model.iou_threshold = 0.33f;
@@ -57,7 +58,7 @@ TEST(PipelineConfigNormalize, ResolvesStructuredModelSpecAndSidecar) {
   EXPECT_EQ(normalized.source.type, rkapp::capture::SourceType::FOLDER);
   EXPECT_FALSE(normalized.source.use_mpp_decode);
   EXPECT_EQ(normalized.model.model_path,
-            (repoRoot() / "artifacts/models/best_int8.rknn").string());
+            (repoRoot() / "artifacts/models/best_person_aug_int8.rknn").string());
   EXPECT_EQ(normalized.model.input_size, 640);
   EXPECT_FLOAT_EQ(normalized.model.conf_threshold, 0.42f);
   EXPECT_FLOAT_EQ(normalized.model.iou_threshold, 0.33f);
@@ -76,7 +77,8 @@ TEST(PipelineConfigNormalize, ResolvesStructuredModelSpecAndSidecar) {
   EXPECT_EQ(normalized.model.decode_meta.num_classes, 1);
   EXPECT_EQ(normalized.model.decode_meta.has_objectness, 0);
   EXPECT_EQ(normalized.model.decode_meta.head, "raw");
-  EXPECT_NE(normalized.model.decode_meta_path.find("best_int8.rknn.json"), std::string::npos);
+  EXPECT_NE(normalized.model.decode_meta_path.find("best_person_aug_int8.rknn.json"),
+            std::string::npos);
 }
 
 TEST(PipelineConfigLoader, LoadsCanonicalStructuredSchema) {
@@ -113,6 +115,11 @@ output:
     host: "127.0.0.1"
     port: 9010
     queue_size: 8
+runtime:
+  warmup: 7
+  async: true
+logging:
+  level: "DEBUG"
 failure:
   frame_error_limit: 4
   source_recovery_grace_ms: 2500
@@ -141,6 +148,9 @@ failure:
   EXPECT_EQ(loaded.config.output.host, "127.0.0.1");
   EXPECT_EQ(loaded.config.output.port, 9010);
   EXPECT_EQ(loaded.config.output.queue_size, 8);
+  EXPECT_EQ(loaded.config.runtime.warmup_iterations, 7);
+  EXPECT_TRUE(loaded.config.runtime.async_mode);
+  EXPECT_EQ(loaded.config.logging.level, "DEBUG");
   EXPECT_EQ(loaded.config.failure.frame_error_limit, 4);
   EXPECT_EQ(loaded.config.failure.source_recovery_grace_ms, 2500);
   EXPECT_EQ(loaded.config.failure.max_reconnect_attempts, 6);
@@ -150,6 +160,40 @@ failure:
   EXPECT_EQ(loaded.config.model.decode_meta.reg_max, 16);
   EXPECT_EQ(loaded.config.model.decode_meta.num_classes, 3);
   EXPECT_NE(loaded.config.model.decode_meta_path.find("demo.onnx.json"), std::string::npos);
+
+  fs::remove_all(dir);
+}
+
+TEST(PipelineConfigLoader, KeepsCsiUriStructuredStringUnresolved) {
+  const fs::path dir = makeTempDir("rkapp_cfg_loader_csi_");
+  const fs::path model = dir / "demo.rknn";
+  std::ofstream(model).put('\n');
+  std::ofstream(model.string() + ".json")
+      << R"({"head":"raw","num_classes":1,"has_objectness":0,"output_index":0})";
+
+  const fs::path config_path = dir / "detect.yaml";
+  std::ofstream(config_path) << R"(
+source:
+  type: csi
+  uri: "device=/dev/video0,width=1920,height=1080,framerate=30,format=NV12"
+engine:
+  type: rknn
+  model: "demo.rknn"
+  input_size: [640, 640]
+runtime:
+  warmup: 10
+  async: true
+)";
+
+  const auto loaded = rkapp::pipeline::loadPipelineConfigFile(config_path.string());
+
+  EXPECT_TRUE(loaded.warnings.empty());
+  EXPECT_EQ(loaded.config.source.type, rkapp::capture::SourceType::CSI);
+  EXPECT_EQ(loaded.config.source.uri,
+            "device=/dev/video0,width=1920,height=1080,framerate=30,format=NV12");
+  EXPECT_EQ(loaded.config.runtime.warmup_iterations, 10);
+  EXPECT_TRUE(loaded.config.runtime.async_mode);
+  EXPECT_EQ(loaded.config.model.model_path, model.string());
 
   fs::remove_all(dir);
 }
@@ -206,14 +250,14 @@ TEST(PipelineConfigLoader, ModelLocalSidecarOverridesMissingMetadata) {
   fs::remove_all(dir);
 }
 
-TEST(PipelineConfigLoader, BestInt8UsesModelLocalSidecar) {
+TEST(PipelineConfigLoader, BestPersonAugInt8UsesModelLocalSidecar) {
   const auto loaded = rkapp::infer::loadModelMetaFromPath(
-      (repoRoot() / "artifacts/models/best_int8.rknn").string());
+      (repoRoot() / "artifacts/models/best_person_aug_int8.rknn").string());
   EXPECT_EQ(loaded.meta.head, "raw");
   EXPECT_EQ(loaded.meta.num_classes, 1);
   EXPECT_EQ(loaded.meta.has_objectness, 0);
   EXPECT_EQ(loaded.meta.output_index, 0);
-  EXPECT_NE(loaded.source_path.find("best_int8.rknn.json"), std::string::npos);
+  EXPECT_NE(loaded.source_path.find("best_person_aug_int8.rknn.json"), std::string::npos);
 }
 
 TEST(PipelineFactory, CreateEngineRespectsExplicitBackend) {

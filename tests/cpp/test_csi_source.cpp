@@ -11,7 +11,7 @@ TEST(CsiSourceTest, ParseDefaultUri) {
   EXPECT_EQ(cfg.height, 480);
   EXPECT_EQ(cfg.framerate, 30);
   EXPECT_EQ(cfg.format, "NV12");
-  EXPECT_TRUE(cfg.use_videoconvert);
+  EXPECT_FALSE(cfg.use_videoconvert);
   EXPECT_EQ(cfg.pull_timeout.count(), 200);
   EXPECT_EQ(cfg.max_consecutive_failures, 5);
 }
@@ -25,7 +25,7 @@ TEST(CsiSourceTest, ParseFullUri) {
   EXPECT_EQ(cfg.height, 1080);
   EXPECT_EQ(cfg.framerate, 60);
   EXPECT_EQ(cfg.format, "NV12");
-  EXPECT_TRUE(cfg.use_videoconvert);
+  EXPECT_FALSE(cfg.use_videoconvert);
   EXPECT_EQ(cfg.pull_timeout.count(), 350);
   EXPECT_EQ(cfg.max_consecutive_failures, 9);
 }
@@ -35,10 +35,10 @@ TEST(CsiSourceTest, ParseDevicePath) {
   EXPECT_EQ(cfg.device, "/dev/video11");
 }
 
-TEST(CsiSourceTest, ParseFormatNv12UsesVideoConvert) {
+TEST(CsiSourceTest, ParseFormatNv12SkipsVideoConvert) {
   const auto cfg = CsiSource::parseUri("format=NV12");
   EXPECT_EQ(cfg.format, "NV12");
-  EXPECT_TRUE(cfg.use_videoconvert);
+  EXPECT_FALSE(cfg.use_videoconvert);
 }
 
 TEST(CsiSourceTest, ParseFormatBgrSkipsVideoConvert) {
@@ -61,6 +61,7 @@ TEST(CsiSourceTest, BuildPipelineContainsV4l2src) {
   const auto pipeline = CsiSource::buildPipelineDescription(cfg);
   EXPECT_NE(pipeline.find("v4l2src device=/dev/video0"), std::string::npos);
   EXPECT_NE(pipeline.find("appsink name=sink"), std::string::npos);
+  EXPECT_EQ(pipeline.find("videoconvert"), std::string::npos);
 }
 
 TEST(CsiSourceTest, BuildPipelineContainsResolutionAndFps) {

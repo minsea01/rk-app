@@ -90,6 +90,7 @@ bool CsiSource::open(const std::string& uri) {
   config.pull_timeout = uri_config.pull_timeout;
   config.max_consecutive_failures = uri_config.max_consecutive_failures;
   config.fps = static_cast<double>(uri_config.framerate);
+  config.unknown_format_fallback = uri_config.format;
   config.reconnect_immediately_on_failure = false;
 
   return openWithConfig(config);

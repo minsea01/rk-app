@@ -104,14 +104,14 @@ def test_load_decode_meta_merges_adjacent_sidecars(tmp_path):
     assert meta["has_objectness"] == 0
 
 
-def test_best_int8_fixture_is_known_person_raw_model():
+def test_best_person_aug_int8_fixture_is_known_person_raw_model():
     repo_root = Path(__file__).resolve().parents[2]
-    model_path = repo_root / "artifacts" / "models" / "best_int8.rknn"
+    model_path = repo_root / "artifacts" / "models" / "best_person_aug_int8.rknn"
     digest = hashlib.sha256(model_path.read_bytes()).hexdigest()
 
     # This pins the tracked deployment fixture to the validated person model binary.
     # If the binary changes, the adjacent sidecar must be re-validated.
-    assert digest == "ba6082678f3c0f6dd4930782d594f516c4acbe9caf65f8e457162d07b488e571"
+    assert digest == "afb0421fb79d7c83c2572598ba66066e1b363a0be58ddd065aa10c0495107283"
 
     meta = load_decode_meta(model_path)
     assert meta["head"] == "raw"

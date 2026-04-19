@@ -63,6 +63,34 @@ capture::SourceType parseSourceType(const std::string& value) {
   return capture::SourceType::VIDEO;
 }
 
+bool shouldResolveSourceUriAsPath(capture::SourceType type, const std::string& raw_uri) {
+  if (raw_uri.empty()) {
+    return false;
+  }
+  const std::string trimmed = trimCopy(raw_uri);
+  if (trimmed.empty()) {
+    return false;
+  }
+  if (trimmed.find("://") != std::string::npos) {
+    return false;
+  }
+  if (trimmed.find('=') != std::string::npos && trimmed.find(',') != std::string::npos) {
+    return false;
+  }
+
+  switch (type) {
+    case capture::SourceType::CSI:
+    case capture::SourceType::GIGE:
+    case capture::SourceType::RTSP:
+    case capture::SourceType::MPP:
+      return false;
+    case capture::SourceType::FOLDER:
+    case capture::SourceType::VIDEO:
+    default:
+      return true;
+  }
+}
+
 PipelineConfig::ModelBackend parseBackend(const std::string& value) {
   const std::string lowered = rkapp::common::toLowerCopy(value);
   if (lowered == "onnx") {
@@ -293,8 +321,10 @@ PipelineConfigLoadResult loadPipelineConfigFile(const std::string& config_path) 
       result.config.source.type = parseSourceType(source["type"].as<std::string>("video"));
     }
     if (source["uri"]) {
-      result.config.source.uri =
-          resolveConfigPath(base_dir, source["uri"].as<std::string>("")).string();
+      const std::string raw_uri = source["uri"].as<std::string>("");
+      result.config.source.uri = shouldResolveSourceUriAsPath(result.config.source.type, raw_uri)
+          ? resolveConfigPath(base_dir, raw_uri).string()
+          : raw_uri;
     }
     if (source["use_mpp_decode"]) {
       result.config.source.use_mpp_decode =
@@ -388,6 +418,26 @@ PipelineConfigLoadResult loadPipelineConfigFile(const std::string& config_path) 
         result.config.output.queue_size =
             tcp["queue_size"].as<int>(result.config.output.queue_size);
       }
+    }
+  }
+
+  if (yaml["runtime"] && yaml["runtime"].IsMap()) {
+    const auto& runtime = yaml["runtime"];
+    if (runtime["warmup"]) {
+      result.config.runtime.warmup_iterations =
+          runtime["warmup"].as<int>(result.config.runtime.warmup_iterations);
+    }
+    if (runtime["async"]) {
+      result.config.runtime.async_mode =
+          runtime["async"].as<bool>(result.config.runtime.async_mode);
+    }
+  }
+
+  if (yaml["logging"] && yaml["logging"].IsMap()) {
+    const auto& logging = yaml["logging"];
+    if (logging["level"]) {
+      result.config.logging.level =
+          logging["level"].as<std::string>(result.config.logging.level);
     }
   }
 

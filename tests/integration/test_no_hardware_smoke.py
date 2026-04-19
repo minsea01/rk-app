@@ -31,6 +31,10 @@ def _build_has_onnx(build_dir: Path) -> bool:
     if not cache_path.exists():
         return False
     cache_text = cache_path.read_text(encoding="utf-8", errors="ignore")
+    if "RKAPP_BUILD_WITH_ONNX:BOOL=ON" in cache_text:
+        return True
+    if "RKAPP_BUILD_WITH_ONNX:BOOL=OFF" in cache_text:
+        return False
     return "ENABLE_ONNX:BOOL=ON" in cache_text
 
 

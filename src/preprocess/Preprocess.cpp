@@ -380,6 +380,80 @@ cv::Mat Preprocess::convertColor(const cv::Mat& src, int code, AccelBackend back
 #endif
 }
 
+cv::Mat Preprocess::convertYuv420spToBgr(const cv::Mat& src, cv::Size image_size,
+                                         bool nv21, AccelBackend backend) {
+    if (src.empty() || image_size.width <= 0 || image_size.height <= 0) {
+        return {};
+    }
+
+    const int width = image_size.width;
+    const int height = image_size.height;
+    if ((width % 2) != 0 || (height % 2) != 0) {
+        LOGW("Preprocess::convertYuv420spToBgr: NV12/NV21 requires even width/height");
+        return {};
+    }
+    const int expected_rows = height + height / 2;
+    if (src.type() != CV_8UC1 || src.cols < width || src.rows < expected_rows) {
+        LOGW("Preprocess::convertYuv420spToBgr: Invalid NV12/NV21 buffer shape");
+        return {};
+    }
+
+#if RKNN_USE_RGA
+    if (backend != AccelBackend::OPENCV && isRgaAvailable()) {
+        cv::Mat dst(height, width, CV_8UC3);
+        rga_buffer_t src_buf = {};
+        src_buf.width = width;
+        src_buf.height = height;
+        src_buf.wstride = static_cast<int>(src.step);
+        src_buf.hstride = height;
+        src_buf.format = nv21 ? RK_FORMAT_YCrCb_420_SP : RK_FORMAT_YCbCr_420_SP;
+        src_buf.vir_addr = const_cast<uint8_t*>(src.ptr<uint8_t>(0));
+
+        rga_buffer_t dst_buf = wrapbuffer_virtualaddr(
+            dst.data, width, height, RK_FORMAT_BGR_888);
+
+        const int src_format = nv21 ? RK_FORMAT_YCrCb_420_SP : RK_FORMAT_YCbCr_420_SP;
+        IM_STATUS rga_ret = imcvtcolor(src_buf, dst_buf, src_format, RK_FORMAT_BGR_888,
+                                       IM_YUV_TO_RGB_BT601_LIMIT);
+        if (rga_ret == IM_STATUS_SUCCESS) {
+            return dst;
+        }
+        LOGW("Preprocess::convertYuv420spToBgr: RGA cvtcolor failed (", imStrError(rga_ret),
+             "), falling back to CPU");
+        if (backend == AccelBackend::RGA) {
+            return {};
+        }
+    }
+#else
+    (void)backend;
+#endif
+
+    cv::Mat tight;
+    if (src.step == static_cast<size_t>(width) && src.rows == expected_rows && src.isContinuous()) {
+        tight = src(cv::Rect(0, 0, width, expected_rows));
+    } else {
+        tight = cv::Mat(expected_rows, width, CV_8UC1);
+        const uint8_t* src_ptr = src.ptr<uint8_t>(0);
+        uint8_t* dst_ptr = tight.ptr<uint8_t>(0);
+        for (int y = 0; y < height; ++y) {
+            std::memcpy(dst_ptr + static_cast<size_t>(y) * tight.step,
+                        src_ptr + static_cast<size_t>(y) * src.step,
+                        static_cast<size_t>(width));
+        }
+        const uint8_t* src_uv = src_ptr + static_cast<size_t>(height) * src.step;
+        uint8_t* dst_uv = dst_ptr + static_cast<size_t>(height) * tight.step;
+        for (int y = 0; y < height / 2; ++y) {
+            std::memcpy(dst_uv + static_cast<size_t>(y) * tight.step,
+                        src_uv + static_cast<size_t>(y) * src.step,
+                        static_cast<size_t>(width));
+        }
+    }
+
+    cv::Mat dst;
+    cv::cvtColor(tight, dst, nv21 ? cv::COLOR_YUV2BGR_NV21 : cv::COLOR_YUV2BGR_NV12);
+    return dst;
+}
+
 bool Preprocess::loadCalibration(const std::string& calibration_path,
                                  CameraCalibration& calibration) {
     calibration = {};

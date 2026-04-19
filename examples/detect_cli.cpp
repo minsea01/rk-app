@@ -10,7 +10,6 @@
 #include <thread>
 
 #include <opencv2/opencv.hpp>
-#include <yaml-cpp/yaml.h>
 
 #include "rkapp/common/StringUtils.hpp"
 #include "rkapp/common/log.hpp"
@@ -22,13 +21,14 @@ namespace {
 struct CliOptions {
   std::string config_path = "config/detect.yaml";
   std::string source_override;
+  std::string model_override;
   std::string save_vis_dir;
   std::string json_output_file;
   std::string log_level_override;
   std::string undistort_calib_override;
   std::string preprocess_profile_override;
-  int warmup_iterations = 5;
-  bool async_mode = false;
+  std::optional<int> warmup_iterations_override;
+  bool async_mode_override = false;
 };
 
 void printUsage(const char* program_name) {
@@ -36,10 +36,11 @@ void printUsage(const char* program_name) {
             << "Options:\n"
             << "  --cfg <path>         Configuration file (default: config/detect.yaml)\n"
             << "  --source <uri>       Source URI (overrides config)\n"
+            << "  --model <path>       Model path (overrides config)\n"
             << "  --save_vis <dir>     Save visualized results to directory\n"
             << "  --json <file>        Save JSON results to file\n"
-            << "  --warmup <N>         Warmup iterations before timing (default: 5)\n"
-            << "  --async              Enable async pipeline callback mode\n"
+            << "  --warmup <N>         Override runtime warmup iterations\n"
+            << "  --async              Enable async pipeline mode\n"
             << "  --undistort-calib <path>  Override calibration file and enable undistort\n"
             << "  --pp-profile <name>  Preprocess profile: speed|balanced|quality\n"
             << "  --log-level <lvl>    Set log level (TRACE/DEBUG/INFO/WARN/ERROR)\n"
@@ -118,38 +119,6 @@ void drawDetections(cv::Mat& image, const std::vector<rkapp::infer::Detection>& 
   }
 }
 
-struct RuntimeOptions {
-  int warmup_iterations = 5;
-  bool async_mode = false;
-  std::string log_level = "INFO";
-};
-
-RuntimeOptions loadRuntimeOptions(const std::string& config_path) {
-  RuntimeOptions options;
-  if (!std::filesystem::exists(config_path)) {
-    return options;
-  }
-
-  try {
-    const YAML::Node yaml = YAML::LoadFile(config_path);
-    if (yaml["runtime"] && yaml["runtime"].IsMap()) {
-      const auto& runtime = yaml["runtime"];
-      if (runtime["warmup"]) {
-        options.warmup_iterations = runtime["warmup"].as<int>(options.warmup_iterations);
-      }
-      if (runtime["async"]) {
-        options.async_mode = runtime["async"].as<bool>(options.async_mode);
-      }
-    }
-    if (yaml["logging"] && yaml["logging"]["level"]) {
-      options.log_level = yaml["logging"]["level"].as<std::string>(options.log_level);
-    }
-  } catch (const std::exception& e) {
-    LOGW("Failed to parse runtime options from ", config_path, ": ", e.what());
-  }
-  return options;
-}
-
 std::optional<CliOptions> parseCliOptions(int argc, char* argv[]) {
   CliOptions options;
   for (int i = 1; i < argc; ++i) {
@@ -158,19 +127,21 @@ std::optional<CliOptions> parseCliOptions(int argc, char* argv[]) {
       options.config_path = argv[++i];
     } else if (arg == "--source" && i + 1 < argc) {
       options.source_override = argv[++i];
+    } else if (arg == "--model" && i + 1 < argc) {
+      options.model_override = argv[++i];
     } else if (arg == "--save_vis" && i + 1 < argc) {
       options.save_vis_dir = argv[++i];
     } else if (arg == "--json" && i + 1 < argc) {
       options.json_output_file = argv[++i];
     } else if (arg == "--warmup" && i + 1 < argc) {
       try {
-        options.warmup_iterations = std::stoi(argv[++i]);
+        options.warmup_iterations_override = std::stoi(argv[++i]);
       } catch (const std::exception&) {
         std::fprintf(stderr, "Invalid value for --warmup: %s\n", argv[i]);
         return std::nullopt;
       }
     } else if (arg == "--async") {
-      options.async_mode = true;
+      options.async_mode_override = true;
     } else if (arg == "--log-level" && i + 1 < argc) {
       options.log_level_override = argv[++i];
     } else if (arg == "--undistort-calib" && i + 1 < argc) {
@@ -213,12 +184,21 @@ void applyCliOverrides(rkapp::pipeline::PipelineConfig& config, const CliOptions
   if (!options.source_override.empty()) {
     config.source.uri = options.source_override;
   }
+  if (!options.model_override.empty()) {
+    config.model.model_path = options.model_override;
+  }
   if (!options.undistort_calib_override.empty()) {
     config.preprocess.enable_undistort = true;
     config.preprocess.calibration_file = options.undistort_calib_override;
   }
   if (!options.preprocess_profile_override.empty()) {
     config.preprocess.profile = options.preprocess_profile_override;
+  }
+  if (options.warmup_iterations_override.has_value()) {
+    config.runtime.warmup_iterations = *options.warmup_iterations_override;
+  }
+  if (options.async_mode_override) {
+    config.runtime.async_mode = true;
   }
 }
 
@@ -283,20 +263,6 @@ void logPerFrame(const rkapp::pipeline::PipelineResult& result) {
        " ms)");
 }
 
-void runWarmup(rkapp::pipeline::DetectionPipeline& pipeline, int warmup_iterations,
-               int input_size) {
-  if (warmup_iterations <= 0 || input_size <= 0) {
-    return;
-  }
-
-  LOGI("Warmup x", warmup_iterations, "...");
-  cv::Mat dummy(input_size, input_size, CV_8UC3, cv::Scalar(128, 128, 128));
-  for (int i = 0; i < warmup_iterations; ++i) {
-    (void)pipeline.process(dummy);
-  }
-  pipeline.resetStatistics();
-}
-
 void logSummary(const rkapp::pipeline::DetectionPipeline& pipeline) {
   const auto stats = pipeline.getStatistics();
   LOGI("=== Pipeline Summary ===");
@@ -325,19 +291,11 @@ int main(int argc, char* argv[]) {
   }
 
   CliOptions options = *cli_options;
-  const auto runtime_options = loadRuntimeOptions(options.config_path);
-  if (options.warmup_iterations == 5) {
-    options.warmup_iterations = runtime_options.warmup_iterations;
-  }
-  if (!options.async_mode) {
-    options.async_mode = runtime_options.async_mode;
-  }
-
   auto config = loadConfig(options.config_path);
   applyCliOverrides(config, options);
 
   const std::string effective_log_level = options.log_level_override.empty()
-      ? runtime_options.log_level
+      ? config.logging.level
       : options.log_level_override;
   rklog::g_level.store(parseLogLevel(effective_log_level), std::memory_order_relaxed);
 
@@ -352,15 +310,14 @@ int main(int argc, char* argv[]) {
   LOGI("Thresholds: conf=", config.model.conf_threshold, ", iou=", config.model.iou_threshold);
   LOGI("Undistort: ", (config.preprocess.enable_undistort ? "enabled" : "disabled"));
   LOGI("Preprocess profile: ", config.preprocess.profile);
-  LOGI("Async mode: ", (options.async_mode ? "enabled" : "disabled"));
+  LOGI("Warmup: ", config.runtime.warmup_iterations);
+  LOGI("Async mode: ", (config.runtime.async_mode ? "enabled" : "disabled"));
 
   rkapp::pipeline::DetectionPipeline pipeline;
   if (!pipeline.init(config)) {
     LOGE("Failed to initialize DetectionPipeline");
     return 1;
   }
-
-  runWarmup(pipeline, options.warmup_iterations, config.model.input_size);
   if (rkapp::common::toLowerCopy(config.output.type) != "tcp") {
     return 1;
   }
@@ -377,7 +334,7 @@ int main(int argc, char* argv[]) {
     handled_frames.fetch_add(1, std::memory_order_relaxed);
   };
 
-  if (!options.async_mode) {
+  if (!config.runtime.async_mode) {
     while (auto result = pipeline.next()) {
       handle_result(*result);
     }

@@ -6,6 +6,8 @@
 
 #include <opencv2/opencv.hpp>
 
+#include "rkapp/capture/ISource.hpp"
+
 namespace rkapp::capture::detail {
 
 // GStreamer/相机常见像素格式分类。
@@ -15,6 +17,8 @@ enum class PixelFormatKind {
   BGRA,
   RGBA,
   GRAY,
+  NV12,
+  NV21,
   BAYER_RG,
   BAYER_BG,
   BAYER_GR,
@@ -60,6 +64,12 @@ inline PixelFormatKind classifyPixelFormat(const std::string& format) {
   if (token == "GRAY8" || token == "MONO8" || token == "Y8") {
     return PixelFormatKind::GRAY;
   }
+  if (token == "NV12" || token == "YUV420SP" || token == "YCBCR420SP") {
+    return PixelFormatKind::NV12;
+  }
+  if (token == "NV21" || token == "YCRCB420SP") {
+    return PixelFormatKind::NV21;
+  }
   if (token == "BGR" || token == "BGR8" || token == "BGR888") {
     return PixelFormatKind::BGR;
   }
@@ -99,6 +109,10 @@ inline bool isBayerFormat(PixelFormatKind kind) {
          kind == PixelFormatKind::BAYER_GR || kind == PixelFormatKind::BAYER_GB;
 }
 
+inline bool isYuv420SpFormat(PixelFormatKind kind) {
+  return kind == PixelFormatKind::NV12 || kind == PixelFormatKind::NV21;
+}
+
 // Bayer 格式转换到 OpenCV BGR 目标的颜色转换码。
 inline int bayerToBgrCode(PixelFormatKind kind) {
   switch (kind) {
@@ -120,6 +134,10 @@ inline std::string canonicalCapsFormat(const std::string& format) {
   switch (classifyPixelFormat(format)) {
     case PixelFormatKind::GRAY:
       return "GRAY8";
+    case PixelFormatKind::NV12:
+      return "NV12";
+    case PixelFormatKind::NV21:
+      return "NV21";
     case PixelFormatKind::BGR:
       return "BGR";
     case PixelFormatKind::RGB:
@@ -145,10 +163,41 @@ inline std::string canonicalCapsFormat(const std::string& format) {
 // 某些格式需要 videoconvert 才能稳定输出 BGR。
 inline bool shouldUseVideoConvert(const std::string& format) {
   const PixelFormatKind kind = classifyPixelFormat(format);
-  if (kind == PixelFormatKind::BGR || kind == PixelFormatKind::GRAY || isBayerFormat(kind)) {
+  if (kind == PixelFormatKind::BGR || kind == PixelFormatKind::GRAY ||
+      isBayerFormat(kind) || isYuv420SpFormat(kind)) {
     return false;
   }
   return true;
+}
+
+inline rkapp::capture::PixelFormat toCapturePixelFormat(PixelFormatKind kind) {
+  switch (kind) {
+    case PixelFormatKind::BGR:
+      return rkapp::capture::PixelFormat::BGR888;
+    case PixelFormatKind::RGB:
+      return rkapp::capture::PixelFormat::RGB888;
+    case PixelFormatKind::BGRA:
+      return rkapp::capture::PixelFormat::BGRA8888;
+    case PixelFormatKind::RGBA:
+      return rkapp::capture::PixelFormat::RGBA8888;
+    case PixelFormatKind::GRAY:
+      return rkapp::capture::PixelFormat::GRAY8;
+    case PixelFormatKind::NV12:
+      return rkapp::capture::PixelFormat::NV12;
+    case PixelFormatKind::NV21:
+      return rkapp::capture::PixelFormat::NV21;
+    case PixelFormatKind::BAYER_RG:
+      return rkapp::capture::PixelFormat::BAYER_RG8;
+    case PixelFormatKind::BAYER_BG:
+      return rkapp::capture::PixelFormat::BAYER_BG8;
+    case PixelFormatKind::BAYER_GR:
+      return rkapp::capture::PixelFormat::BAYER_GR8;
+    case PixelFormatKind::BAYER_GB:
+      return rkapp::capture::PixelFormat::BAYER_GB8;
+    case PixelFormatKind::UNKNOWN:
+    default:
+      return rkapp::capture::PixelFormat::UNKNOWN;
+  }
 }
 
 // Bayer 走 video/x-bayer，其余走 video/x-raw。

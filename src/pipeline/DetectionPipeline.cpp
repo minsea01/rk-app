@@ -4,6 +4,7 @@
 #include "rkapp/capture/MppSource.hpp"
 #include "rkapp/capture/GigeSource.hpp"
 #include "rkapp/capture/CsiSource.hpp"
+#include "rkapp/capture/FrameOps.hpp"
 #include "rkapp/infer/RknnEngine.hpp"
 #include "rkapp/infer/OnnxEngine.hpp"
 #include "rkapp/post/Postprocess.hpp"
@@ -292,32 +293,24 @@ bool DetectionPipeline::init(const PipelineConfig& config) {
     impl_->buffer_pool.reset();
     impl_->stats.zero_copy_enabled = false;
 
-    // 在可用时初始化 DMA-BUF 池，开启零拷贝链路。
+    // 仅 source 提供兼容 DMA 输入时才视为“零拷贝”。
     if (impl_->config.model.use_zero_copy && impl_->rknn_engine && common::DmaBuf::isSupported()) {
-        impl_->buffer_pool = std::make_unique<common::DmaBufPool>(
-            impl_->config.model.buffer_pool_size,
-            impl_->config.model.input_size,
-            impl_->config.model.input_size,
-            common::DmaBuf::PixelFormat::RGB888);
-        if (impl_->buffer_pool->available() > 0) {
-            impl_->stats.zero_copy_enabled = true;
-            LOGI("DetectionPipeline: DMA-BUF zero-copy enabled with ",
-                 impl_->buffer_pool->available(), " buffers");
-        } else {
-            LOGW("DetectionPipeline: DMA-BUF pool empty; zero-copy disabled");
-            impl_->buffer_pool.reset();
-            impl_->stats.zero_copy_enabled = false;
-        }
+        LOGW("DetectionPipeline: Direct zero-copy is reserved for source-provided DMA frames; "
+             "cv::Mat-to-DMA staging is not treated as zero-copy and remains disabled");
     }
 
     // 预热模型，降低首帧延迟。
-    impl_->engine->warmup();
+    const int warmup_iterations = std::max(0, impl_->config.runtime.warmup_iterations);
+    for (int i = 0; i < warmup_iterations; ++i) {
+        impl_->engine->warmup();
+    }
 
     // 初始化统计项。
     impl_->stats.rga_enabled = impl_->config.preprocess.use_rga_preprocess;
     impl_->stats.mpp_enabled = isMppDecodeEnabledInStats(impl_->config);
     impl_->start_time = Clock::now();
     impl_->last_fps_update = impl_->start_time;
+    impl_->current_fps.store(0.0, std::memory_order_relaxed);
 
     impl_->initialized = true;
     LOGI("DetectionPipeline: Initialized successfully");
@@ -329,6 +322,8 @@ bool DetectionPipeline::init(const PipelineConfig& config) {
     LOGI("  - RGA preprocess: ", (impl_->stats.rga_enabled ? "enabled" : "disabled"));
     LOGI("  - MPP decode: ", (impl_->stats.mpp_enabled ? "enabled" : "disabled"));
     LOGI("  - Zero-copy: ", (impl_->stats.zero_copy_enabled ? "enabled" : "disabled"));
+    LOGI("  - Runtime warmup: ", impl_->config.runtime.warmup_iterations);
+    LOGI("  - Runtime async: ", (impl_->config.runtime.async_mode ? "enabled" : "disabled"));
     LOGI("  - Undistort: ", (impl_->calibration_loaded ? "enabled" : "disabled"));
     LOGI("  - Preprocess profile: ", impl_->config.preprocess.profile);
     LOGI("  - ROI: ", (impl_->config.preprocess.roi_enable ? "enabled" : "disabled"));
@@ -386,7 +381,7 @@ std::optional<PipelineResult> DetectionPipeline::nextInternal(bool respect_runni
                 continue;
             }
 
-            auto result = process(frame.mat);
+            auto result = process(frame);
             if (result.timing.total_us <= 0 && result.frame.empty() && result.detections.empty()) {
                 impl_->recordDroppedFrame();
                 impl_->consecutive_frame_errors++;
@@ -457,10 +452,16 @@ std::optional<PipelineResult> DetectionPipeline::nextInternal(bool respect_runni
 }
 
 PipelineResult DetectionPipeline::process(const cv::Mat& image) {
+    capture::CaptureFrame frame;
+    frame.setMatFrame(image, capture::PixelFormat::BGR888);
+    return process(frame);
+}
+
+PipelineResult DetectionPipeline::process(const capture::CaptureFrame& frame) {
     PipelineResult result;
     auto total_start = Clock::now();
 
-    if (!impl_->initialized || image.empty()) {
+    if (!impl_->initialized || frame.mat.empty()) {
         return result;
     }
 
@@ -470,19 +471,20 @@ PipelineResult DetectionPipeline::process(const cv::Mat& image) {
 
     auto preprocess_start = Clock::now();
 
-    cv::Mat bgr_input = preprocess::Preprocess::ensureBgr8( image, backend);
-    if (bgr_input.empty()) {
+    capture::BgrFrameView bgr_view = capture::convertToBgr(frame, backend);
+    if (bgr_view.empty()) {
         LOGW("DetectionPipeline: Failed to normalize frame to BGR8");
         return result;
     }
 
-    cv::Mat working = bgr_input;
+    cv::Mat working = bgr_view.image;
+    bool working_aliases_source = bgr_view.aliases_source;
     if (impl_->calibration_loaded) {
-        if (impl_->undistort_size != bgr_input.size()) {
+        if (impl_->undistort_size != bgr_view.image.size()) {
             if (preprocess::Preprocess::buildUndistortMaps(
-                    impl_->calibration, bgr_input.size(), impl_->undistort_map1,
+                    impl_->calibration, bgr_view.image.size(), impl_->undistort_map1,
                     impl_->undistort_map2)) {
-                impl_->undistort_size = bgr_input.size();
+                impl_->undistort_size = bgr_view.image.size();
             } else {
                 LOGW("DetectionPipeline: Failed to build undistort maps; bypassing undistort");
                 impl_->undistort_map1.release();
@@ -493,14 +495,16 @@ PipelineResult DetectionPipeline::process(const cv::Mat& image) {
         }
         if (!impl_->undistort_map1.empty() && !impl_->undistort_map2.empty()) {
             cv::Mat undistorted = preprocess::Preprocess::undistort(
-                bgr_input, impl_->undistort_map1, impl_->undistort_map2);
+                bgr_view.image, impl_->undistort_map1, impl_->undistort_map2);
             if (!undistorted.empty()) {
                 working = std::move(undistorted);
+                working_aliases_source = false;
             }
         }
     }
 
     cv::Mat coord_frame = working;
+    bool coord_frame_aliases_source = working_aliases_source;
     const cv::Size coord_space_size = working.size();
     cv::Rect roi_rect(0, 0, working.cols, working.rows);
     bool roi_applied = false;
@@ -527,6 +531,7 @@ PipelineResult DetectionPipeline::process(const cv::Mat& image) {
                 cv::Mat cropped = preprocess::Preprocess::cropRoi(working, roi_rect);
                 if (!cropped.empty()) {
                     working = std::move(cropped);
+                    working_aliases_source = false;
                     roi_applied = true;
                 } else {
                     LOGW("DetectionPipeline: ROI crop failed, using full frame");
@@ -549,6 +554,7 @@ PipelineResult DetectionPipeline::process(const cv::Mat& image) {
             impl_->config.preprocess.denoise_sigma_space);
         if (!denoised.empty()) {
             working = std::move(denoised);
+            working_aliases_source = false;
         }
     }
 
@@ -557,6 +563,7 @@ PipelineResult DetectionPipeline::process(const cv::Mat& image) {
             working, impl_->config.preprocess.white_balance_clip_percent);
         if (!balanced.empty()) {
             working = std::move(balanced);
+            working_aliases_source = false;
         }
     }
 
@@ -567,11 +574,14 @@ PipelineResult DetectionPipeline::process(const cv::Mat& image) {
                 preprocess::Preprocess::applyGammaLut(working, gamma_value);
             if (!gamma_corrected.empty()) {
                 working = std::move(gamma_corrected);
+                working_aliases_source = false;
             }
         } else if (gamma_value <= 0.0f) {
             LOGW("DetectionPipeline: Invalid gamma value ", gamma_value, ", skipping gamma correction");
         }
     }
+    coord_frame = working;
+    coord_frame_aliases_source = working_aliases_source;
 
 #if RKAPP_WITH_RKNN
     if (impl_->rknn_engine) {
@@ -591,31 +601,8 @@ PipelineResult DetectionPipeline::process(const cv::Mat& image) {
 
         // 推理。
         auto inference_start = Clock::now();
-
-        // 主检测推理路径：优先 DMA-BUF 零拷贝，否则回退普通路径。
-        auto runDetectionInfer = [&]() -> std::vector<infer::Detection> {
-            if (impl_->buffer_pool && impl_->stats.zero_copy_enabled) {
-                common::DmaBuf* dma_buf = impl_->buffer_pool->acquire();
-                if (dma_buf) {
-                    cv::Mat rgb = preprocess::Preprocess::convertColor(
-                        preprocessed, cv::COLOR_BGR2RGB, backend);
-                    std::vector<infer::Detection> dets;
-                    if (dma_buf->copyFrom(rgb)) {
-                        dets = impl_->rknn_engine->inferDmaBuf(
-                            *dma_buf, working.size(), letterbox_info);
-                    } else {
-                        dets = impl_->rknn_engine->inferPreprocessed(
-                            preprocessed, working.size(), letterbox_info);
-                    }
-                    impl_->buffer_pool->release(dma_buf);
-                    return dets;
-                }
-            }
-            return impl_->rknn_engine->inferPreprocessed(
-                preprocessed, working.size(), letterbox_info);
-        };
-
-        result.detections = runDetectionInfer();
+        result.detections = impl_->rknn_engine->inferPreprocessed(
+            preprocessed, working.size(), letterbox_info);
 
         if (roi_applied) {
             applyRoiOffsetAndClip(result.detections, roi_rect, coord_space_size);
@@ -637,7 +624,8 @@ PipelineResult DetectionPipeline::process(const cv::Mat& image) {
             filter_cfg.max_aspect_ratio = impl_->config.model.max_aspect_ratio;
             result.detections = post::Postprocess::nms(result.detections, filter_cfg);
         }
-        result.frame = coord_frame;
+        result.frame = capture::detachFrameIfAliased(coord_frame, frame,
+                                                     coord_frame_aliases_source);
 
         if (impl_->config.output.enable_profiling) {
             result.timing.inference_us = microsecondsSince(inference_start);
@@ -674,7 +662,8 @@ PipelineResult DetectionPipeline::process(const cv::Mat& image) {
         filter_cfg.max_aspect_ratio = impl_->config.model.max_aspect_ratio;
         result.detections = post::Postprocess::nms(result.detections, filter_cfg);
     }
-    result.frame = coord_frame;
+    result.frame = capture::detachFrameIfAliased(coord_frame, frame,
+                                                 coord_frame_aliases_source);
     if (impl_->config.output.enable_profiling) {
         result.timing.inference_us = microsecondsSince(inference_start);
         result.timing.postprocess_us = microsecondsSince(postprocess_start);
@@ -766,12 +755,13 @@ void DetectionPipeline::resetStatistics() {
     impl_->stats = Statistics{};
     impl_->stats.rga_enabled = impl_->config.preprocess.use_rga_preprocess;
     impl_->stats.mpp_enabled = isMppDecodeEnabledInStats(impl_->config);
-    impl_->stats.zero_copy_enabled = (impl_->buffer_pool != nullptr);
+    impl_->stats.zero_copy_enabled = false;
     impl_->total_latency_us = 0;
     impl_->consecutive_frame_errors = 0;
     impl_->start_time = Clock::now();
     impl_->last_fps_update = impl_->start_time;
     impl_->frames_since_update = 0;
+    impl_->current_fps.store(0.0, std::memory_order_relaxed);
 }
 
 // ============================================================================
@@ -801,24 +791,24 @@ capture::SourcePtr createSource(const PipelineConfig::SourceSpec& source) {
 #if RKAPP_WITH_GIGE
             return std::make_unique<capture::GigeSource>();
 #else
-            LOGW("DetectionPipeline: GIGE not available, falling back to VideoSource");
-            return std::make_unique<capture::VideoSource>();
+            LOGE("DetectionPipeline: GIGE source requested but build does not enable GIGE");
+            return nullptr;
 #endif
 
         case capture::SourceType::CSI:
 #if RKAPP_WITH_CSI
             return std::make_unique<capture::CsiSource>();
 #else
-            LOGW("DetectionPipeline: CSI not available, falling back to VideoSource");
-            return std::make_unique<capture::VideoSource>();
+            LOGE("DetectionPipeline: CSI source requested but build does not enable CSI");
+            return nullptr;
 #endif
 
         case capture::SourceType::MPP:
 #if RKAPP_WITH_MPP
             return std::make_unique<capture::MppSource>();
 #else
-            LOGW("DetectionPipeline: MPP not available, falling back to VideoSource");
-            return std::make_unique<capture::VideoSource>();
+            LOGE("DetectionPipeline: MPP source requested but build does not enable MPP");
+            return nullptr;
 #endif
 
         default:

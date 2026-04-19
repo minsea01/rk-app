@@ -552,12 +552,11 @@ bool MppSource::read(cv::Mat& frame) {
 }
 
 ReadStatus MppSource::readFrameEx(CaptureFrame& frame) {
-    frame.owner.reset();
-    frame.mat.release();
+    frame.reset();
 
     cv::Mat mat;
     if (read(mat)) {
-        frame.mat = std::move(mat);
+        frame.setMatFrame(std::move(mat), PixelFormat::BGR888);
         return ReadStatus::FrameReady;
     }
 

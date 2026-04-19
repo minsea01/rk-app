@@ -25,7 +25,7 @@ struct ModelSpec {
   float min_aspect_ratio = 0.0f;
   float max_aspect_ratio = 0.0f;
   bool use_npu_multicore = true;
-  bool use_zero_copy = true;
+  bool use_zero_copy = false;
   int buffer_pool_size = 4;
   std::vector<std::string> class_names;
   std::string decode_meta_path;

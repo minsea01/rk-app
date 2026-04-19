@@ -58,6 +58,9 @@ public:
      */
     static cv::Mat convertColor(const cv::Mat& src, int code = cv::COLOR_BGR2RGB,
                                 AccelBackend backend = AccelBackend::AUTO);
+    static cv::Mat convertYuv420spToBgr(const cv::Mat& src, cv::Size image_size,
+                                        bool nv21 = false,
+                                        AccelBackend backend = AccelBackend::AUTO);
 
     // ========== 相机标定/去畸变 ==========
 
