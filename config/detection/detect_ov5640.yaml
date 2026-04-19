@@ -19,8 +19,9 @@ source:
 
 engine:
   type: rknn                  # 板端走 RKNN NPU
-  model: "artifacts/models/best_int8.rknn"
+  model: "artifacts/models/best_person_aug_int8.rknn"
   input_size: [640, 640]      # 与训练/量化一致
+  use_zero_copy: false        # 仅在源头提供 DMA 且已打通直通时再开启
 
 preprocess:
   profile: speed              # 板端用 speed 档位 (优先走 RGA 硬件加速)

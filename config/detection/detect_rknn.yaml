@@ -4,8 +4,9 @@ source:
 
 engine:
   type: rknn                 # onnx|rknn（RK3588 上使用 rknn）
-  model: "models/best.rknn"  # 板子部署路径: $DEST/models/
+  model: "artifacts/models/best_person_aug_int8.rknn"
   input_size: [640, 640]
+  use_zero_copy: false
 
 postprocess:
   conf_threshold: 0.50

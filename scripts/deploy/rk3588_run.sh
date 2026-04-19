@@ -17,7 +17,7 @@ if [[ -x "$SCRIPT_DIR/../../bin/detect_cli" ]]; then
   OUT_BIN="$ROOT_DIR/bin/detect_cli"
   OUT_LIB="$ROOT_DIR/lib"
   CFG="$ROOT_DIR/config/detect_rknn.yaml"
-  MODEL_DEFAULT="$ROOT_DIR/models/best.rknn"
+  MODEL_DEFAULT="$ROOT_DIR/models/best_person_aug_int8.rknn"
   NAMES_DEFAULT="$ROOT_DIR/config/person_classes.txt"
 elif [[ -d "$SCRIPT_DIR/../../out/arm64/bin" ]]; then
   # Development mode: running from source tree
@@ -25,7 +25,7 @@ elif [[ -d "$SCRIPT_DIR/../../out/arm64/bin" ]]; then
   OUT_BIN="$ROOT_DIR/out/arm64/bin/detect_cli"
   OUT_LIB="$ROOT_DIR/out/arm64/lib"
   CFG="$ROOT_DIR/config/detection/detect_rknn.yaml"
-  MODEL_DEFAULT="$ROOT_DIR/artifacts/models/best.rknn"
+  MODEL_DEFAULT="$ROOT_DIR/artifacts/models/best_person_aug_int8.rknn"
   NAMES_DEFAULT="$ROOT_DIR/config/person_classes.txt"
 else
   # Fallback: assume we're in deployment root
@@ -33,13 +33,13 @@ else
   OUT_BIN="$ROOT_DIR/bin/detect_cli"
   OUT_LIB="$ROOT_DIR/lib"
   CFG="$ROOT_DIR/config/detect_rknn.yaml"
-  MODEL_DEFAULT="$ROOT_DIR/models/best.rknn"
+  MODEL_DEFAULT="$ROOT_DIR/models/best_person_aug_int8.rknn"
   NAMES_DEFAULT="$ROOT_DIR/config/person_classes.txt"
 fi
 
 usage() {
   echo "Usage: $0 [--cfg <yaml>] [--model <rknn>] [--runner cli|python] [-- core args...]"
-  echo "- Defaults: --cfg config/detection/detect_rknn.yaml, --model artifacts/models/best.rknn"
+  echo "- Defaults: --cfg config/detection/detect_rknn.yaml, --model artifacts/models/best_person_aug_int8.rknn"
 }
 
 RUNNER="cli"
@@ -78,7 +78,7 @@ run_cli() {
     return 1
   fi
   echo "[rk3588_run] Running detect_cli..."
-  exec "$OUT_BIN" --cfg "$CFG" "$@"
+  exec "$OUT_BIN" --cfg "$CFG" --model "$MODEL" "$@"
 }
 
 run_py() {

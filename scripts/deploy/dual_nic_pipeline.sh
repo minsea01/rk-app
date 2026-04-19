@@ -12,8 +12,8 @@ INPUT_PORT="8554"        # RTSP默认端口
 OUTPUT_INTERFACE="eth1"
 OUTPUT_HOST=""
 OUTPUT_PORT="8080"
-MODEL="$ROOT_DIR/artifacts/models/yolo11n_416.rknn"
-IMGSZ=416
+MODEL="$ROOT_DIR/artifacts/models/best_person_aug_int8.rknn"
+IMGSZ=640
 CONF=0.5
 FORMAT="json"            # json | udp
 
@@ -28,8 +28,8 @@ Options:
   --output-interface <eth>    Output network interface (default: eth1)
   --output-host <ip>          Target host for detection results (required)
   --output-port <port>        Target port (default: 8080)
-  --model <path>              RKNN model path (default: artifacts/models/yolo11n_416.rknn)
-  --imgsz <size>              Input image size (default: 416)
+  --model <path>              RKNN model path (default: artifacts/models/best_person_aug_int8.rknn)
+  --imgsz <size>              Input image size (default: 640)
   --conf <threshold>          Confidence threshold (default: 0.5)
   --format <json|udp>         Output format (default: json)
   -h, --help                  Show this help
