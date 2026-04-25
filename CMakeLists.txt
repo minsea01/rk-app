@@ -290,7 +290,6 @@ endif()
 
 # ONNX inference engine (optional)
 set(RKAPP_ONNX_INCLUDE_DIR "")
-set(RKAPP_ONNX_LIBRARY "")
 set(RKAPP_ONNX_EXTRA_LIBS "")
 set(RKAPP_ONNX_PRIVATE_DEFS "")
 if (ENABLE_ONNX)

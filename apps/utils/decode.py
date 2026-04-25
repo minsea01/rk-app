@@ -89,11 +89,7 @@ def decode_predictions(
     has_objness, num_classes = raw_layout
     score_is_probability = decode_meta["score_is_probability"] == 1
     coords_are_normalized = decode_meta["coords_are_normalized"] == 1
-    score_fn = (
-        (lambda arr: np.clip(arr, 0.0, 1.0))
-        if score_is_probability
-        else sigmoid
-    )
+    score_fn = (lambda arr: np.clip(arr, 0.0, 1.0)) if score_is_probability else sigmoid
 
     # raw path: [cx, cy, w, h, obj, cls...]
     p = pred_nc[0]

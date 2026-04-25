@@ -82,7 +82,9 @@ def normalize_raw_output(onnx_path: Path, out_path: Path, imgsz: int) -> Path:
             numpy_helper.from_array(np.array([0], dtype=np.int64), name=starts_boxes_name),
             numpy_helper.from_array(np.array([4], dtype=np.int64), name=ends_boxes_name),
             numpy_helper.from_array(np.array([4], dtype=np.int64), name=starts_scores_name),
-            numpy_helper.from_array(np.array([channel_count], dtype=np.int64), name=ends_scores_name),
+            numpy_helper.from_array(
+                np.array([channel_count], dtype=np.int64), name=ends_scores_name
+            ),
             numpy_helper.from_array(np.array([channel_axis], dtype=np.int64), name=axes_name),
             numpy_helper.from_array(np.array([1], dtype=np.int64), name=steps_name),
             numpy_helper.from_array(np.array(float(imgsz), dtype=np.float32), name=scale_name),

@@ -244,10 +244,10 @@ def _write_detect_cli_config(config_path: Path, model_path: Path, video_path: Pa
         (
             "source:\n"
             "  type: video\n"
-            f"  uri: \"{video_path}\"\n"
+            f'  uri: "{video_path}"\n'
             "engine:\n"
             "  type: onnx\n"
-            f"  model: \"{model_path}\"\n"
+            f'  model: "{model_path}"\n'
             "  input_size: [640, 640]\n"
             "postprocess:\n"
             "  conf_threshold: 0.25\n"
@@ -258,7 +258,7 @@ def _write_detect_cli_config(config_path: Path, model_path: Path, video_path: Pa
             "output:\n"
             "  type: tcp\n"
             "  tcp:\n"
-            "    host: \"127.0.0.1\"\n"
+            '    host: "127.0.0.1"\n'
             "    port: 9000\n"
             "    queue_size: 8\n"
             "    include_image: true\n"

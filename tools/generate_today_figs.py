@@ -11,7 +11,6 @@ import matplotlib.image as mpimg
 from matplotlib import font_manager
 from matplotlib.patches import FancyBboxPatch
 
-
 ROOT = Path(".")
 VIS_DIR = ROOT / "artifacts" / "visualizations"
 DET_DIR = VIS_DIR / "board_detect_results"
@@ -30,7 +29,11 @@ def _font(size: float | None = None, weight: str | None = None):
 
 
 def _style() -> None:
-    for font_path in [str(CJK_FONT_PATH), "/usr/share/fonts/truetype/arphic-gbsn00lp/gbsn00lp.ttf", "/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf"]:
+    for font_path in [
+        str(CJK_FONT_PATH),
+        "/usr/share/fonts/truetype/arphic-gbsn00lp/gbsn00lp.ttf",
+        "/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf",
+    ]:
         path = Path(font_path)
         if path.exists():
             font_manager.fontManager.addfont(str(path))
@@ -68,7 +71,7 @@ def _style() -> None:
 def _load_last_json(path: Path) -> dict:
     text = path.read_text(encoding="utf-8").strip().splitlines()
     if not text:
-      return {}
+        return {}
     return json.loads(text[-1])
 
 
@@ -84,13 +87,30 @@ def _detection_caption(path: Path) -> str:
 def generate_detection_comparison() -> Path:
     panels = [
         ("原始输入图像", ROOT / "assets" / "test.jpg", "原图"),
-        ("416 INT8 板端结果", DET_DIR / "416_norm_int8.jpg", _detection_caption(DET_DIR / "best_person_aug_416_norm_int8.json")),
-        ("416 FP 板端结果", DET_DIR / "416_fp.jpg", _detection_caption(DET_DIR / "best_person_aug_416_fp.json")),
-        ("640 INT8 旧模型结果", DET_DIR / "640_int8.jpg", _detection_caption(DET_DIR / "best_person_aug_int8.json")),
+        (
+            "416 INT8 板端结果",
+            DET_DIR / "416_norm_int8.jpg",
+            _detection_caption(DET_DIR / "best_person_aug_416_norm_int8.json"),
+        ),
+        (
+            "416 FP 板端结果",
+            DET_DIR / "416_fp.jpg",
+            _detection_caption(DET_DIR / "best_person_aug_416_fp.json"),
+        ),
+        (
+            "640 INT8 旧模型结果",
+            DET_DIR / "640_int8.jpg",
+            _detection_caption(DET_DIR / "best_person_aug_int8.json"),
+        ),
     ]
 
     fig, axes = plt.subplots(2, 2, figsize=(12.8, 8.4))
-    fig.suptitle("RK3588 板端模型检测结果对比", fontsize=18, fontweight="bold", fontproperties=_font(18, "bold"))
+    fig.suptitle(
+        "RK3588 板端模型检测结果对比",
+        fontsize=18,
+        fontweight="bold",
+        fontproperties=_font(18, "bold"),
+    )
 
     for ax, (title, img_path, caption) in zip(axes.flat, panels):
         img = mpimg.imread(img_path)
@@ -169,7 +189,14 @@ def generate_today_summary() -> Path:
     ax_bg = fig.add_axes([0, 0, 1, 1])
     ax_bg.axis("off")
 
-    fig.text(0.05, 0.955, "2026-04-20 当日实现与验证总览", fontsize=22, fontweight="bold", fontproperties=_font(22, "bold"))
+    fig.text(
+        0.05,
+        0.955,
+        "2026-04-20 当日实现与验证总览",
+        fontsize=22,
+        fontweight="bold",
+        fontproperties=_font(22, "bold"),
+    )
     fig.text(
         0.05,
         0.925,
@@ -198,7 +225,9 @@ def generate_today_summary() -> Path:
         "确认旧 640 INT8 量化产物当前仍不可用，可视化结果保留作对照证据。",
         "完成 detect_rknn_multicore 三引擎并行验证，3 核总吞吐达到 128.4 FPS。",
     ]
-    fig.text(0.05, 0.24, "今日完成项", fontsize=15, fontweight="bold", fontproperties=_font(15, "bold"))
+    fig.text(
+        0.05, 0.24, "今日完成项", fontsize=15, fontweight="bold", fontproperties=_font(15, "bold")
+    )
     y = 0.215
     for line in bullets:
         fig.text(0.055, y, "• " + line, fontsize=11, fontproperties=_font(11))

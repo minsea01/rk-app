@@ -1,4 +1,5 @@
 """Train YOLOv8n on the same person dataset as yolov8s_person_aug for apples-to-apples comparison."""
+
 from ultralytics.models.yolo.model import YOLO
 
 model = YOLO("yolov8n.pt")

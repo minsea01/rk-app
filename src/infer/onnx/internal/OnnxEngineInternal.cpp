@@ -868,8 +868,8 @@ std::vector<Detection> parseOutput(Ort::Value& output,
       const float cy = at(1, i);
       const float w = at(2, i);
       const float h = at(3, i);
-      const float model_w = static_cast<float>(imgsz);
-      const float model_h = static_cast<float>(imgsz);
+      const float model_w = static_cast<float>(input_size);
+      const float model_h = static_cast<float>(input_size);
       const float cx_scaled = coords_are_normalized ? cx * model_w : cx;
       const float cy_scaled = coords_are_normalized ? cy * model_h : cy;
       const float w_scaled = coords_are_normalized ? w * model_w : w;

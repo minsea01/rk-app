@@ -8,7 +8,6 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 
-
 OUT_DIR = Path("artifacts/visualizations")
 
 METRICS = {

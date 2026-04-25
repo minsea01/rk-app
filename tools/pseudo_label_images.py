@@ -26,7 +26,6 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Mapping, Optional, Sequence, Set
 
 import yaml
-from ultralytics import YOLO
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
@@ -108,7 +107,9 @@ def parse_class_ids(raw: Optional[str]) -> Optional[List[int]]:
     return parsed or None
 
 
-def resolve_names(model_names: Mapping[int, str] | Sequence[str], class_ids: Optional[List[int]]) -> Dict[int, str]:
+def resolve_names(
+    model_names: Mapping[int, str] | Sequence[str], class_ids: Optional[List[int]]
+) -> Dict[int, str]:
     if isinstance(model_names, Mapping):
         normalized = {int(k): str(v) for k, v in model_names.items()}
     else:
@@ -132,6 +133,17 @@ def resolve_device(requested: Optional[str]) -> str:
     except ImportError:
         return "cpu"
     return "0" if torch.cuda.is_available() else "cpu"
+
+
+def load_yolo_model(weights: Path):
+    try:
+        from ultralytics import YOLO
+    except ImportError as exc:
+        raise SystemExit(
+            "ultralytics is required for pseudo-label inference; install the train "
+            "extras or run `pip install ultralytics`"
+        ) from exc
+    return YOLO(str(weights))
 
 
 def ensure_parent(path: Path) -> None:
@@ -242,7 +254,7 @@ def main() -> int:
     device = resolve_device(args.device)
 
     logger.info("loading model: %s", args.weights)
-    model = YOLO(str(args.weights))
+    model = load_yolo_model(args.weights)
     dataset_names = resolve_names(model.names, class_ids)
 
     split_plan = build_split_plan(images, val_ratio=args.val_ratio, seed=args.seed)

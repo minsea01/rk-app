@@ -155,9 +155,9 @@ class TestDecodePredictions:
         pred = np.zeros((1, 10, 5), dtype=np.float32)
         pred[0, 0, 0] = 200.0  # cx
         pred[0, 0, 1] = 100.0  # cy
-        pred[0, 0, 2] = 50.0   # w
-        pred[0, 0, 3] = 60.0   # h
-        pred[0, 0, 4] = 0.85   # score already probability
+        pred[0, 0, 2] = 50.0  # w
+        pred[0, 0, 3] = 60.0  # h
+        pred[0, 0, 4] = 0.85  # score already probability
 
         boxes, confs, cls_ids = decode_predictions(
             pred,
@@ -165,7 +165,12 @@ class TestDecodePredictions:
             conf_thres=0.8,
             iou_thres=0.45,
             head="raw",
-            decode_meta={"head": "raw", "num_classes": 1, "has_objectness": 0, "score_is_probability": 1},
+            decode_meta={
+                "head": "raw",
+                "num_classes": 1,
+                "has_objectness": 0,
+                "score_is_probability": 1,
+            },
         )
 
         assert len(boxes) == 1

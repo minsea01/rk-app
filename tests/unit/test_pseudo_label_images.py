@@ -1,6 +1,11 @@
 from pathlib import Path
 
-from tools.pseudo_label_images import build_split_plan, infer_group_key, parse_class_ids, resolve_names
+from tools.pseudo_label_images import (
+    build_split_plan,
+    infer_group_key,
+    parse_class_ids,
+    resolve_names,
+)
 
 
 def test_infer_group_key_strips_numeric_suffix():

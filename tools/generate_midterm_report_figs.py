@@ -14,7 +14,6 @@ import numpy as np
 from matplotlib import font_manager
 from matplotlib.patches import FancyBboxPatch
 
-
 ROOT = Path(".")
 VIS_ROOT = ROOT / "artifacts" / "visualizations"
 OUT_DIR = VIS_ROOT / "midterm_report_20260421"
@@ -219,7 +218,11 @@ def _card(ax, x: float, y: float, w: float, h: float, title: str, value: str, co
 
 def fig_01_training_compare() -> Path:
     labels = ["mAP@0.5", "Recall", "F1"]
-    coco = [TRAINING_COMPARE["COCO only"]["mAP50"], TRAINING_COMPARE["COCO only"]["Recall"], TRAINING_COMPARE["COCO only"]["F1"]]
+    coco = [
+        TRAINING_COMPARE["COCO only"]["mAP50"],
+        TRAINING_COMPARE["COCO only"]["Recall"],
+        TRAINING_COMPARE["COCO only"]["F1"],
+    ]
     merged = [
         TRAINING_COMPARE["CrowdHuman+COCO"]["mAP50"],
         TRAINING_COMPARE["CrowdHuman+COCO"]["Recall"],
@@ -320,9 +323,13 @@ def fig_03_model_and_runtime() -> Path:
     axes[2].set_ylabel("FPS")
     axes[2].set_ylim(0, 40)
     _annotate_bars(axes[2], bars2, fmt="{:.1f}", dy=0.5)
-    axes[2].text(0, fps[0] + 2.0, "旧量化产物\n不可用", ha="center", color="#c1121f", fontproperties=_font(9))
+    axes[2].text(
+        0, fps[0] + 2.0, "旧量化产物\n不可用", ha="center", color="#c1121f", fontproperties=_font(9)
+    )
 
-    fig.suptitle("板端部署模型对比", fontsize=17, fontweight="bold", fontproperties=_font(17, "bold"))
+    fig.suptitle(
+        "板端部署模型对比", fontsize=17, fontweight="bold", fontproperties=_font(17, "bold")
+    )
     fig.tight_layout(rect=[0, 0, 1, 0.95])
     return _save(fig, "03_model_size_and_runtime_comparison.png")
 
@@ -332,8 +339,17 @@ def fig_04_multicore_and_status() -> Path:
     ax = fig.add_axes([0, 0, 1, 1])
     ax.axis("off")
 
-    fig.text(0.05, 0.94, "板端部署链路与三核并行成果", fontsize=20, fontweight="bold", fontproperties=_font(20, "bold"))
-    _card(ax, 0.05, 0.80, 0.28, 0.10, "三核并行总吞吐", f"{MULTICORE_THROUGHPUT:.1f} FPS", "#5a189a")
+    fig.text(
+        0.05,
+        0.94,
+        "板端部署链路与三核并行成果",
+        fontsize=20,
+        fontweight="bold",
+        fontproperties=_font(20, "bold"),
+    )
+    _card(
+        ax, 0.05, 0.80, 0.28, 0.10, "三核并行总吞吐", f"{MULTICORE_THROUGHPUT:.1f} FPS", "#5a189a"
+    )
     _card(ax, 0.36, 0.80, 0.28, 0.10, "单路有效模型", "416 INT8", "#2a9d8f")
     _card(ax, 0.67, 0.80, 0.28, 0.10, "结果回传链", "已验证", "#15616d")
 
@@ -363,7 +379,15 @@ def fig_04_multicore_and_status() -> Path:
         )
         ax.add_patch(patch)
         ax.text(x + 0.012, y + 0.062, title, color="white", fontsize=9, fontproperties=_font(9))
-        ax.text(x + 0.012, y + 0.026, value, color="white", fontsize=13, fontweight="bold", fontproperties=_font(13, "bold"))
+        ax.text(
+            x + 0.012,
+            y + 0.026,
+            value,
+            color="white",
+            fontsize=13,
+            fontweight="bold",
+            fontproperties=_font(13, "bold"),
+        )
 
     fig.text(
         0.08,
@@ -385,7 +409,9 @@ def fig_05_detection_result_compare() -> Path:
     captions = ["当前主线结果", "FP 基线", "板端实时主线", "旧量化产物对照"]
 
     fig, axes = plt.subplots(2, 2, figsize=(12.8, 8.2))
-    fig.suptitle("板端模型检测结果对照", fontsize=18, fontweight="bold", fontproperties=_font(18, "bold"))
+    fig.suptitle(
+        "板端模型检测结果对照", fontsize=18, fontweight="bold", fontproperties=_font(18, "bold")
+    )
     for ax, (title, path), caption in zip(axes.flat, panels, captions):
         ax.imshow(mpimg.imread(path))
         ax.axis("off")
@@ -433,7 +459,9 @@ def fig_06_video_summary() -> Path:
     axes[2].set_ylabel("FPS")
     _annotate_bars(axes[2], bars2, fmt="{:.1f}", dy=0.3)
 
-    fig.suptitle("三段真实视频验证结果", fontsize=18, fontweight="bold", fontproperties=_font(18, "bold"))
+    fig.suptitle(
+        "三段真实视频验证结果", fontsize=18, fontweight="bold", fontproperties=_font(18, "bold")
+    )
     fig.tight_layout(rect=[0, 0, 1, 0.94])
     return _save(fig, "06_video_runtime_summary.png")
 
@@ -445,7 +473,9 @@ def fig_07_video_case_montage() -> Path:
         ("中密度样例", VIS_ROOT / "video_check_7624589" / "sample_montage.png"),
     ]
     fig, axes = plt.subplots(3, 1, figsize=(13.2, 14.0))
-    fig.suptitle("真实视频检测样例拼图", fontsize=18, fontweight="bold", fontproperties=_font(18, "bold"))
+    fig.suptitle(
+        "真实视频检测样例拼图", fontsize=18, fontweight="bold", fontproperties=_font(18, "bold")
+    )
     for ax, (title, path) in zip(axes, paths):
         ax.imshow(mpimg.imread(path))
         ax.axis("off")
@@ -501,8 +531,14 @@ def fig_09_pexels_summary() -> Path:
     ax_bar.set_title("Pexels 随机 15 张图片检测结果", fontproperties=_font(15, "bold"))
     ax_bar.set_xlabel("检测人数")
     for bar, value in zip(bars, counts):
-        ax_bar.text(bar.get_width() + 0.15, bar.get_y() + bar.get_height() / 2.0,
-                    f"{value}", va="center", fontsize=9, fontproperties=_font(9))
+        ax_bar.text(
+            bar.get_width() + 0.15,
+            bar.get_y() + bar.get_height() / 2.0,
+            f"{value}",
+            va="center",
+            fontsize=9,
+            fontproperties=_font(9),
+        )
 
     pair_titles = [
         "正常样例：3 -> 3",
@@ -521,7 +557,12 @@ def fig_09_pexels_summary() -> Path:
         ax_l.set_title(title, fontsize=10, fontproperties=_font(10, "bold"))
         ax_r.set_title("检测结果", fontsize=10, fontproperties=_font(10))
 
-    fig.suptitle("泛化抽检：Pexels 图片与模型偏差", fontsize=18, fontweight="bold", fontproperties=_font(18, "bold"))
+    fig.suptitle(
+        "泛化抽检：Pexels 图片与模型偏差",
+        fontsize=18,
+        fontweight="bold",
+        fontproperties=_font(18, "bold"),
+    )
     fig.tight_layout(rect=[0.01, 0.01, 0.99, 0.95])
     return _save(fig, "09_pexels_random15_generalization.png")
 
@@ -553,8 +594,21 @@ def fig_10_pack_overview() -> Path:
     fig = plt.figure(figsize=(14.2, 10.2))
     ax = fig.add_axes([0, 0, 1, 1])
     ax.axis("off")
-    fig.text(0.05, 0.95, "中期报告图包目录", fontsize=22, fontweight="bold", fontproperties=_font(22, "bold"))
-    fig.text(0.05, 0.92, "以下 9 张图已按成果项整理，可直接插入报告正文。", fontsize=12, fontproperties=_font(12))
+    fig.text(
+        0.05,
+        0.95,
+        "中期报告图包目录",
+        fontsize=22,
+        fontweight="bold",
+        fontproperties=_font(22, "bold"),
+    )
+    fig.text(
+        0.05,
+        0.92,
+        "以下 9 张图已按成果项整理，可直接插入报告正文。",
+        fontsize=12,
+        fontproperties=_font(12),
+    )
 
     start_y = 0.84
     for idx, (filename, title) in enumerate(zip(figures, titles), start=1):
@@ -568,7 +622,14 @@ def fig_10_pack_overview() -> Path:
             facecolor="#f1f5f9",
         )
         ax.add_patch(patch)
-        fig.text(0.07, y, f"{idx:02d}. {title}", fontsize=13, fontweight="bold", fontproperties=_font(13, "bold"))
+        fig.text(
+            0.07,
+            y,
+            f"{idx:02d}. {title}",
+            fontsize=13,
+            fontweight="bold",
+            fontproperties=_font(13, "bold"),
+        )
         fig.text(0.32, y, filename, fontsize=11, color="#475569", fontproperties=_font(11))
 
     fig.text(0.05, 0.10, f"输出目录：{OUT_DIR}", fontsize=11, fontproperties=_font(11))
