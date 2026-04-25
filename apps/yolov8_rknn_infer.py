@@ -443,7 +443,10 @@ def main():
         if cap is not None:
             cap.release()
         rknn.release()
-        cv2.destroyAllWindows()
+        try:
+            cv2.destroyAllWindows()
+        except cv2.error:
+            pass
         if fps_hist:
             logger.info("Avg FPS: %.2f, P90: %.2f", np.mean(fps_hist), np.percentile(fps_hist, 90))
 

@@ -36,10 +36,19 @@ class TestGetProjectRoot:
         # Project name may vary depending on workspace configuration
         assert root.name in ("rk-app", "workspace"), f"Unexpected project root name: {root.name}"
 
-    def test_finds_project_root_from_claude_md(self):
+    def test_finds_project_root_from_claude_md(self, tmp_path, monkeypatch):
         """Test that CLAUDE.md marker is recognized."""
-        root = get_project_root()
-        assert (root / "CLAUDE.md").exists(), "Project should have CLAUDE.md"
+        import apps.utils.paths as paths_module
+
+        marker_root = tmp_path / "project"
+        module_dir = marker_root / "apps" / "utils"
+        module_dir.mkdir(parents=True)
+        (marker_root / "CLAUDE.md").write_text("", encoding="utf-8")
+
+        monkeypatch.setattr(paths_module, "_project_root", None)
+        monkeypatch.setattr(paths_module, "__file__", str(module_dir / "paths.py"))
+
+        assert get_project_root() == marker_root
 
     def test_returns_cached_result_on_subsequent_calls(self):
         """Test that project root is cached after first call."""

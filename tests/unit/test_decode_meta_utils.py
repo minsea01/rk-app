@@ -5,6 +5,8 @@ import hashlib
 import json
 from pathlib import Path
 
+import pytest
+
 from apps.utils.decode_meta import (
     load_decode_meta,
     normalize_decode_meta,
@@ -117,6 +119,9 @@ def test_load_decode_meta_merges_adjacent_sidecars(tmp_path):
 def test_best_person_aug_int8_fixture_is_known_person_raw_model():
     repo_root = Path(__file__).resolve().parents[2]
     model_path = repo_root / "artifacts" / "models" / "best_person_aug_int8.rknn"
+    if not model_path.exists():
+        pytest.skip("deployment model binary is not available in this checkout")
+
     digest = hashlib.sha256(model_path.read_bytes()).hexdigest()
 
     # This pins the tracked deployment fixture to the validated person model binary.
