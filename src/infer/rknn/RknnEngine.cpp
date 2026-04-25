@@ -1,6 +1,8 @@
 #include "rkapp/infer/RknnEngine.hpp"
 
+#include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstring>
 #include <filesystem>
 #include <iomanip>
@@ -42,7 +44,9 @@ bool RknnEngine::init(const ModelSpec& model_spec) {
          model_meta_source.empty() ? "" : " from " + model_meta_source,
          " (head=", model_meta.head.empty() ? "auto" : model_meta.head,
          ", reg_max=", model_meta.reg_max, ", num_classes=", model_meta.num_classes,
-         ", has_objectness=", model_meta.has_objectness, ")");
+         ", has_objectness=", model_meta.has_objectness,
+         ", score_is_probability=", model_meta.score_is_probability,
+         ", coords_are_normalized=", model_meta.coords_are_normalized, ")");
   } else {
     LOGW("RknnEngine: No decode metadata supplied for ", model_spec.model_path,
          "; initialization will rely on runtime tensor inspection only");
@@ -171,7 +175,7 @@ bool RknnEngine::init(const ModelSpec& model_spec) {
     return false;
   }
 
-  // 当前实现约束：输入需为 uint8 且布局是 NHWC/NCHW。
+  // 当前实现约束：输入需为 UINT8 或 affine INT8，布局是 NHWC/NCHW。
   new_impl->input_fmt = new_impl->in_attr.fmt;
   new_impl->input_type = new_impl->in_attr.type;
   if (new_impl->input_fmt != RKNN_TENSOR_NHWC && new_impl->input_fmt != RKNN_TENSOR_NCHW) {
@@ -179,8 +183,17 @@ bool RknnEngine::init(const ModelSpec& model_spec) {
     cleanup();
     return false;
   }
-  if (new_impl->input_type != RKNN_TENSOR_UINT8) {
+  if (new_impl->input_type != RKNN_TENSOR_UINT8 && new_impl->input_type != RKNN_TENSOR_INT8 &&
+      new_impl->input_type != RKNN_TENSOR_FLOAT16 &&
+      new_impl->input_type != RKNN_TENSOR_FLOAT32) {
     LOGE("RknnEngine: Unsupported input type (type=", new_impl->input_type, ")");
+    cleanup();
+    return false;
+  }
+  if (new_impl->input_type == RKNN_TENSOR_INT8 &&
+      new_impl->in_attr.qnt_type != RKNN_TENSOR_QNT_AFFINE_ASYMMETRIC) {
+    LOGE("RknnEngine: Unsupported INT8 quantization type (qnt_type=", new_impl->in_attr.qnt_type,
+         ")");
     cleanup();
     return false;
   }
@@ -269,12 +282,21 @@ bool RknnEngine::init(const ModelSpec& model_spec) {
   }
 
   new_impl->out_attr = best_attr;
+  LOGI("RknnEngine: Output tensor type=", static_cast<int>(new_impl->out_attr.type),
+       ", fmt=", static_cast<int>(new_impl->out_attr.fmt),
+       ", qnt_type=", static_cast<int>(new_impl->out_attr.qnt_type),
+       ", scale=", new_impl->out_attr.scale, ", zp=", new_impl->out_attr.zp,
+       ", w_stride=", new_impl->out_attr.w_stride,
+       ", size=", new_impl->out_attr.size,
+       ", size_with_stride=", new_impl->out_attr.size_with_stride);
 
   // 计算输出总元素数，后续用于预分配缓存。
   new_impl->out_elems = 1;
   for (uint32_t i = 0; i < new_impl->out_attr.n_dims; i++) {
     new_impl->out_elems *= new_impl->out_attr.dims[i];
   }
+  new_impl->out_buffer_elems = new_impl->out_elems;
+  new_impl->out_w_stride = 0;
 
   // 解码逻辑严格依赖 metadata，字段缺失直接报错，避免“静默错结果”。
   if (model_meta.head != "raw" && model_meta.head != "dfl") {
@@ -319,10 +341,14 @@ bool RknnEngine::init(const ModelSpec& model_spec) {
   if (d1 == expected_c && d2 != expected_c) {
     new_impl->out_c = expected_c;
     new_impl->out_n = static_cast<int>(d2);
+    new_impl->out_w_stride =
+        new_impl->out_attr.w_stride > 0 ? static_cast<int>(new_impl->out_attr.w_stride)
+                                        : new_impl->out_n;
     LOGI("RknnEngine: Detected channels_first layout [1, ", d1, ", ", d2, "]");
   } else if (d2 == expected_c && d1 != expected_c) {
     new_impl->out_c = expected_c;
     new_impl->out_n = static_cast<int>(d1);
+    new_impl->out_w_stride = new_impl->out_n;
     LOGI("RknnEngine: Detected channels_last layout [1, ", d1, ", ", d2,
          "], will transpose");
   } else {
@@ -330,6 +356,16 @@ bool RknnEngine::init(const ModelSpec& model_spec) {
          expected_c, ")");
     cleanup();
     return false;
+  }
+
+  if (new_impl->out_attr.size_with_stride > 0) {
+    const size_t elem_size = (new_impl->out_attr.type == RKNN_TENSOR_FLOAT16)
+                                 ? sizeof(uint16_t)
+                                 : ((new_impl->out_attr.type == RKNN_TENSOR_FLOAT32)
+                                        ? sizeof(float)
+                                        : sizeof(uint8_t));
+    new_impl->out_buffer_elems =
+        static_cast<int>((new_impl->out_attr.size_with_stride + elem_size - 1) / elem_size);
   }
 
   inferred_num_classes = (model_meta.num_classes > 0) ? model_meta.num_classes : -1;
@@ -356,7 +392,9 @@ bool RknnEngine::init(const ModelSpec& model_spec) {
     new_impl->dfl_layout = std::move(layout);
   }
 
-  LOGI("RknnEngine: Output elements per inference: ", new_impl->out_elems);
+  LOGI("RknnEngine: Output elements per inference: ", new_impl->out_elems,
+       " (buffer_elems=", new_impl->out_buffer_elems,
+       ", w_stride=", new_impl->out_w_stride, ")");
 #else
   LOGW("RknnEngine: RKNN platform not enabled at build time");
 #endif
@@ -418,10 +456,16 @@ std::vector<Detection> RknnEngine::inferPreprocessed(
   const int out_n_snapshot = impl->out_n;
   const int out_c_snapshot = impl->out_c;
   const int out_elems_snapshot = impl->out_elems;
+  const int out_buffer_elems_snapshot = impl->out_buffer_elems;
+  const int out_w_stride_snapshot = impl->out_w_stride;
   const int out_n_dims_snapshot = static_cast<int>(impl->out_attr.n_dims);
   const int out_dim1_snapshot = static_cast<int>(impl->out_attr.dims[1]);
   const int out_dim2_snapshot = static_cast<int>(impl->out_attr.dims[2]);
   const uint32_t out_index_snapshot = impl->out_attr.index;
+  const int out_type_snapshot = static_cast<int>(impl->out_attr.type);
+  const int out_fmt_snapshot = static_cast<int>(impl->out_attr.fmt);
+  const float out_scale_snapshot = impl->out_attr.scale;
+  const int32_t out_zp_snapshot = impl->out_attr.zp;
 
   // RKNN 训练/转换常用 RGB 输入；上游传入 BGR，这里统一转换一次。
   cv::Mat rgb =
@@ -432,8 +476,42 @@ std::vector<Detection> RknnEngine::inferPreprocessed(
 
   rknn_input in{};
   in.index = 0;
-  in.type = impl->input_type;
   in.fmt = impl->input_fmt;
+  auto prepareInputBuffer = [&](const uint8_t* src_bytes, size_t byte_count) -> bool {
+    if (impl->input_type == RKNN_TENSOR_UINT8) {
+      in.type = RKNN_TENSOR_UINT8;
+      in.size = static_cast<uint32_t>(byte_count);
+      in.buf = const_cast<uint8_t*>(src_bytes);
+      return true;
+    }
+
+    if (impl->input_type == RKNN_TENSOR_INT8) {
+      static std::once_flag int8_input_log_once;
+      std::call_once(int8_input_log_once, [&]() {
+        LOGI("RknnEngine: Feeding UINT8 input to INT8 model input (runtime quantization, scale=",
+             impl->in_attr.scale, ", zp=", impl->in_attr.zp, ")");
+      });
+      in.type = RKNN_TENSOR_UINT8;
+      in.size = static_cast<uint32_t>(byte_count);
+      in.buf = const_cast<uint8_t*>(src_bytes);
+      return true;
+    }
+
+    if (impl->input_type == RKNN_TENSOR_FLOAT16 || impl->input_type == RKNN_TENSOR_FLOAT32) {
+      static std::once_flag float_input_log_once;
+      std::call_once(float_input_log_once, [&]() {
+        LOGI("RknnEngine: Feeding UINT8 RGB input to FLOAT model input (runtime conversion)");
+      });
+      in.type = RKNN_TENSOR_UINT8;
+      in.size = static_cast<uint32_t>(byte_count);
+      in.buf = const_cast<uint8_t*>(src_bytes);
+      return true;
+    }
+
+    LOGE("RknnEngine: Unsupported runtime input type ", impl->input_type);
+    return false;
+  };
+
   if (impl->input_fmt == RKNN_TENSOR_NCHW) {
     // RKNN NCHW 输入时，需要把 HWC 内存重排成 CHW 连续内存。
     const int h = rgb.rows;
@@ -450,12 +528,14 @@ std::vector<Detection> RknnEngine::inferPreprocessed(
     };
     const int from_to[] = {0, 0, 1, 1, 2, 2};
     cv::mixChannels(&rgb, 1, planes.data(), static_cast<int>(planes.size()), from_to, 3);
-    in.size = static_cast<uint32_t>(needed);
-    in.buf = input_local.data();
+    if (!prepareInputBuffer(input_local.data(), needed)) {
+      return {};
+    }
   } else {
     // NHWC 路径可直接复用 OpenCV 连续内存。
-    in.size = static_cast<uint32_t>(rgb.total() * rgb.elemSize());
-    in.buf = (void*)rgb.data;
+    if (!prepareInputBuffer(rgb.data, rgb.total() * rgb.elemSize())) {
+      return {};
+    }
   }
 
   // infer_mutex 串行化同一 RKNN context 的调用，避免并发访问 SDK 产生未定义行为。
@@ -477,21 +557,53 @@ std::vector<Detection> RknnEngine::inferPreprocessed(
     return {};
   }
 
-  // thread_local 缓冲区：减少频繁堆分配，提高稳定帧率。
-  const size_t logits_elems = static_cast<size_t>(impl->out_elems);
+  const bool quantized_raw_format_supported =
+      out_fmt_snapshot == RKNN_TENSOR_NCHW || out_fmt_snapshot == RKNN_TENSOR_NHWC;
+  const bool use_quantized_raw_output =
+      model_meta_snapshot.head == "raw" && out_scale_snapshot > 0.0f &&
+      (out_type_snapshot == RKNN_TENSOR_INT8 || out_type_snapshot == RKNN_TENSOR_UINT8) &&
+      quantized_raw_format_supported;
+  if (!use_quantized_raw_output && model_meta_snapshot.head == "raw" && out_scale_snapshot > 0.0f &&
+      (out_type_snapshot == RKNN_TENSOR_INT8 || out_type_snapshot == RKNN_TENSOR_UINT8) &&
+      !quantized_raw_format_supported) {
+    static std::once_flag quantized_raw_fallback_log_once;
+    std::call_once(quantized_raw_fallback_log_once, [&]() {
+      LOGW("RknnEngine: Quantized RAW fast path disabled for unsupported output fmt=",
+           out_fmt_snapshot, ", falling back to float outputs");
+    });
+  }
+  const size_t logits_elems = static_cast<size_t>(
+      use_quantized_raw_output ? out_buffer_elems_snapshot : out_elems_snapshot);
   thread_local std::vector<float> logits_local;
-  logits_local.resize(logits_elems);
-
+  thread_local std::vector<int8_t> logits_int8_local;
+  thread_local std::vector<uint8_t> logits_uint8_local;
   rknn_output out{};
-  out.want_float = 1;
-  out.is_prealloc = 1;
-  out.buf = logits_local.data();
-  out.size = logits_local.size() * sizeof(float);
+  out.want_float = use_quantized_raw_output ? 0 : 1;
   out.index = out_index_snapshot;
+  out.is_prealloc = 0;
+  out.buf = nullptr;
+  out.size = 0;
   ret = rknn_outputs_get(impl->ctx, 1, &out, nullptr);
   if (ret != RKNN_SUCC) {
     LOGE("RknnEngine: rknn_outputs_get failed: ", ret);
     return {};
+  }
+
+  if (use_quantized_raw_output && out_type_snapshot == RKNN_TENSOR_INT8) {
+    const size_t copy_bytes =
+        std::min(static_cast<size_t>(out.size), logits_elems * sizeof(int8_t));
+    logits_int8_local.assign(logits_elems, 0);
+    std::memcpy(logits_int8_local.data(), out.buf, copy_bytes);
+  } else if (use_quantized_raw_output && out_type_snapshot == RKNN_TENSOR_UINT8) {
+    const size_t copy_bytes =
+        std::min(static_cast<size_t>(out.size), logits_elems * sizeof(uint8_t));
+    logits_uint8_local.assign(logits_elems, 0);
+    std::memcpy(logits_uint8_local.data(), out.buf, copy_bytes);
+  } else {
+    const size_t float_elems = static_cast<size_t>(out.size) / sizeof(float);
+    const size_t copy_elems = std::min(float_elems, static_cast<size_t>(out_elems_snapshot));
+    logits_local.assign(static_cast<size_t>(out_elems_snapshot), 0.0f);
+    std::memcpy(logits_local.data(), out.buf, copy_elems * sizeof(float));
   }
 
   // outputs_release 后锁就可释放，后处理（decode+NMS）不需要持有 RKNN 互斥锁。
@@ -500,10 +612,26 @@ std::vector<Detection> RknnEngine::inferPreprocessed(
   lock.unlock();
 
   // 统一的解码+NMS入口：根据 model_meta 自动选择 raw/dfl 解析逻辑。
-  auto nms_result = rknn_internal::decodeOutputAndNms(
-      logits_local.data(), out_n_snapshot, out_c_snapshot, out_elems_snapshot, out_n_dims_snapshot,
-      out_dim1_snapshot, out_dim2_snapshot, num_classes, model_meta_snapshot,
-      decode_params_snapshot, original_size, letterbox_info, &impl->dfl_layout, "RknnEngine");
+  std::vector<Detection> nms_result;
+  if (use_quantized_raw_output && out_type_snapshot == RKNN_TENSOR_INT8) {
+    nms_result = rknn_internal::decodeOutputAndNmsQuantizedRaw(
+        logits_int8_local.data(), out_scale_snapshot, out_zp_snapshot, out_n_snapshot,
+        out_w_stride_snapshot, out_c_snapshot, out_buffer_elems_snapshot, num_classes,
+        model_meta_snapshot,
+        decode_params_snapshot, original_size, letterbox_info, "RknnEngine");
+  } else if (use_quantized_raw_output && out_type_snapshot == RKNN_TENSOR_UINT8) {
+    nms_result = rknn_internal::decodeOutputAndNmsQuantizedRaw(
+        logits_uint8_local.data(), out_scale_snapshot, out_zp_snapshot, out_n_snapshot,
+        out_w_stride_snapshot, out_c_snapshot, out_buffer_elems_snapshot, num_classes,
+        model_meta_snapshot,
+        decode_params_snapshot, original_size, letterbox_info, "RknnEngine");
+  } else {
+    nms_result = rknn_internal::decodeOutputAndNms(
+        logits_local.data(), out_n_snapshot, out_c_snapshot, out_elems_snapshot,
+        out_n_dims_snapshot, out_dim1_snapshot, out_dim2_snapshot, num_classes,
+        model_meta_snapshot, decode_params_snapshot, original_size, letterbox_info,
+        &impl->dfl_layout, "RknnEngine");
+  }
 
   {
     std::lock_guard<std::mutex> state_lock(state_mutex_);

@@ -9,7 +9,7 @@ OUT_DIR=artifacts
 LOG_DIR=$OUT_DIR/logs
 REP_DIR=$OUT_DIR/reports
 MODEL_DIR=$OUT_DIR/models
-FORMAL_MODEL=${FORMAL_MODEL:-best_person_aug_int8.rknn}
+FORMAL_MODEL=${FORMAL_MODEL:-best_person_aug_416_norm_int8.rknn}
 
 mkdir -p "$LOG_DIR/net" "$LOG_DIR/cam" "$LOG_DIR/fps" "$LOG_DIR/map" "$REP_DIR" "$MODEL_DIR"
 
@@ -42,7 +42,7 @@ SUMMARY="$REP_DIR/summary.md"
   echo
   echo "## Acceptance Baseline"
   echo "- Formal model: $FORMAL_MODEL"
-  echo "- Fixed runtime size: 640x640"
+  echo "- Fixed runtime size: 416x416"
   echo "- CSI chain evidence: logs/cam"
   echo "- GigE / dual-NIC throughput evidence: logs/net"
   echo "- FPS / latency evidence: logs/fps"

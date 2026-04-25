@@ -77,6 +77,7 @@ TEST(PipelineConfigNormalize, ResolvesStructuredModelSpecAndSidecar) {
   EXPECT_EQ(normalized.model.decode_meta.num_classes, 1);
   EXPECT_EQ(normalized.model.decode_meta.has_objectness, 0);
   EXPECT_EQ(normalized.model.decode_meta.head, "raw");
+  EXPECT_EQ(normalized.model.decode_meta.score_is_probability, 1);
   EXPECT_NE(normalized.model.decode_meta_path.find("best_person_aug_int8.rknn.json"),
             std::string::npos);
 }
@@ -108,6 +109,14 @@ classes:
   names: [person, bicycle, car]
 preprocess:
   profile: balanced
+tracking:
+  enable: true
+  match_iou: 0.35
+  ema_alpha: 0.7
+  confirm_hits: 3
+  max_misses: 5
+  keep_missing_tracks: false
+  missing_conf_decay: 0.12
 output:
   type: tcp
   enable_profiling: true
@@ -115,6 +124,12 @@ output:
     host: "127.0.0.1"
     port: 9010
     queue_size: 8
+    bind_ip: "192.168.20.10"
+    iface: "eth1"
+    include_image: true
+    image_quality: 72
+    image_interval: 3
+    draw_detections: false
 runtime:
   warmup: 7
   async: true
@@ -144,10 +159,23 @@ failure:
   EXPECT_FLOAT_EQ(loaded.config.model.max_aspect_ratio, 2.5f);
   EXPECT_EQ(loaded.config.model.class_names.size(), 3u);
   EXPECT_EQ(loaded.config.preprocess.profile, "balanced");
+  EXPECT_TRUE(loaded.config.tracking.enable);
+  EXPECT_FLOAT_EQ(loaded.config.tracking.match_iou, 0.35f);
+  EXPECT_FLOAT_EQ(loaded.config.tracking.ema_alpha, 0.7f);
+  EXPECT_EQ(loaded.config.tracking.confirm_hits, 3);
+  EXPECT_EQ(loaded.config.tracking.max_misses, 5);
+  EXPECT_FALSE(loaded.config.tracking.keep_missing_tracks);
+  EXPECT_FLOAT_EQ(loaded.config.tracking.missing_conf_decay, 0.12f);
   EXPECT_TRUE(loaded.config.output.enable_profiling);
   EXPECT_EQ(loaded.config.output.host, "127.0.0.1");
   EXPECT_EQ(loaded.config.output.port, 9010);
   EXPECT_EQ(loaded.config.output.queue_size, 8);
+  EXPECT_EQ(loaded.config.output.bind_ip, "192.168.20.10");
+  EXPECT_EQ(loaded.config.output.bind_interface, "eth1");
+  EXPECT_TRUE(loaded.config.output.include_image);
+  EXPECT_EQ(loaded.config.output.image_quality, 72);
+  EXPECT_EQ(loaded.config.output.image_interval, 3);
+  EXPECT_FALSE(loaded.config.output.draw_detections);
   EXPECT_EQ(loaded.config.runtime.warmup_iterations, 7);
   EXPECT_TRUE(loaded.config.runtime.async_mode);
   EXPECT_EQ(loaded.config.logging.level, "DEBUG");
@@ -194,6 +222,51 @@ runtime:
   EXPECT_EQ(loaded.config.runtime.warmup_iterations, 10);
   EXPECT_TRUE(loaded.config.runtime.async_mode);
   EXPECT_EQ(loaded.config.model.model_path, model.string());
+
+  fs::remove_all(dir);
+}
+
+TEST(PipelineConfigLoader, ResolvesRepoRootRelativePathsFromNestedConfigDir) {
+  const fs::path dir = makeTempDir("rkapp_cfg_loader_repo_root_");
+  std::ofstream(dir / "CMakeLists.txt") << "cmake_minimum_required(VERSION 3.16)\n";
+  std::ofstream(dir / "CMakePresets.json") << "{}\n";
+
+  const fs::path model_dir = dir / "artifacts/models";
+  const fs::path assets_dir = dir / "assets";
+  const fs::path classes_dir = dir / "config";
+  const fs::path cfg_dir = dir / "config/detection";
+  fs::create_directories(model_dir);
+  fs::create_directories(assets_dir);
+  fs::create_directories(classes_dir);
+  fs::create_directories(cfg_dir);
+
+  const fs::path model = model_dir / "demo.rknn";
+  std::ofstream(model).put('\n');
+  std::ofstream(model.string() + ".json")
+      << R"({"head":"raw","num_classes":1,"has_objectness":0,"output_index":0})";
+  std::ofstream(assets_dir / "sample.jpg").put('\n');
+  std::ofstream(classes_dir / "person_classes.txt") << "person\n";
+
+  const fs::path config_path = cfg_dir / "detect.yaml";
+  std::ofstream(config_path) << R"(
+source:
+  type: folder
+  uri: "assets"
+engine:
+  type: rknn
+  model: "artifacts/models/demo.rknn"
+  input_size: [640, 640]
+classes: "config/person_classes.txt"
+)";
+
+  const auto loaded = rkapp::pipeline::loadPipelineConfigFile(config_path.string());
+
+  EXPECT_TRUE(loaded.warnings.empty());
+  EXPECT_EQ(loaded.config.source.uri, (dir / "assets").string());
+  EXPECT_EQ(loaded.config.model.model_path, model.string());
+  ASSERT_EQ(loaded.config.model.class_names.size(), 1u);
+  EXPECT_EQ(loaded.config.model.class_names.front(), "person");
+  EXPECT_EQ(loaded.config.model.decode_meta.head, "raw");
 
   fs::remove_all(dir);
 }
@@ -256,6 +329,7 @@ TEST(PipelineConfigLoader, BestPersonAugInt8UsesModelLocalSidecar) {
   EXPECT_EQ(loaded.meta.head, "raw");
   EXPECT_EQ(loaded.meta.num_classes, 1);
   EXPECT_EQ(loaded.meta.has_objectness, 0);
+  EXPECT_EQ(loaded.meta.score_is_probability, 1);
   EXPECT_EQ(loaded.meta.output_index, 0);
   EXPECT_NE(loaded.source_path.find("best_person_aug_int8.rknn.json"), std::string::npos);
 }
@@ -267,6 +341,7 @@ TEST(PipelineFactory, CreateEngineRespectsExplicitBackend) {
   model.decode_meta.head = "raw";
   model.decode_meta.num_classes = 1;
   model.decode_meta.has_objectness = 0;
+  model.decode_meta.score_is_probability = 1;
 
   auto engine = rkapp::pipeline::createEngine(model);
 #if RKAPP_WITH_ONNX

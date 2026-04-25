@@ -4,6 +4,7 @@
 #include <array>
 #include <cmath>
 #include <fstream>
+#include <mutex>
 #include <regex>
 #include <sstream>
 
@@ -23,8 +24,9 @@ std::vector<std::string> modelSidecarCandidates(const std::string& model_path) {
 
 bool modelMetaHasAny(const ModelMeta& meta) {
   return meta.reg_max > 0 || !meta.strides.empty() || !meta.head.empty() || meta.output_index >= 0 ||
-         meta.num_classes > 0 || meta.has_objectness >= 0 || meta.task != "detect" ||
-         meta.num_keypoints > 0;
+         meta.num_classes > 0 || meta.has_objectness >= 0 || meta.score_is_probability >= 0 ||
+         meta.coords_are_normalized >= 0 ||
+         meta.task != "detect" || meta.num_keypoints > 0;
 }
 
 void mergeModelMetaMissingFields(ModelMeta& dst, const ModelMeta& src) {
@@ -45,6 +47,12 @@ void mergeModelMetaMissingFields(ModelMeta& dst, const ModelMeta& src) {
   }
   if (dst.has_objectness < 0 && src.has_objectness >= 0) {
     dst.has_objectness = src.has_objectness;
+  }
+  if (dst.score_is_probability < 0 && src.score_is_probability >= 0) {
+    dst.score_is_probability = src.score_is_probability;
+  }
+  if (dst.coords_are_normalized < 0 && src.coords_are_normalized >= 0) {
+    dst.coords_are_normalized = src.coords_are_normalized;
   }
   if (dst.task == "detect" && src.task != "detect") {
     dst.task = src.task;
@@ -141,6 +149,13 @@ std::vector<Detection> decodeAndPostprocess(const float* logits,
   auto sigmoid = [](float x) {
     return (x >= 0) ? (1.0f / (1.0f + std::exp(-x))) : (std::exp(x) / (1.0f + std::exp(x)));
   };
+  const bool score_is_probability = (model_meta.score_is_probability == 1);
+  const bool coords_are_normalized = (model_meta.coords_are_normalized == 1);
+  auto activate_score = [&](float x) {
+    return score_is_probability ? std::clamp(x, 0.0f, 1.0f) : sigmoid(x);
+  };
+  const float model_w = std::max(1.0f, letterbox_info.new_width + 2.0f * letterbox_info.dx);
+  const float model_h = std::max(1.0f, letterbox_info.new_height + 2.0f * letterbox_info.dy);
 
   const bool head_raw = (model_meta.head == "raw");
   const bool head_dfl = (model_meta.head == "dfl");
@@ -207,26 +222,48 @@ std::vector<Detection> decodeAndPostprocess(const float* logits,
     }
 
     LOGI(log_tag, ": RAW decode with ", (has_objectness ? "objectness" : "no objectness"),
-         ", cls_ch=", cls_ch);
+         ", cls_ch=", cls_ch, ", score_mode=",
+         score_is_probability ? "identity" : "sigmoid", ", coord_mode=",
+         coords_are_normalized ? "normalized" : "pixels");
 
+    float max_seen_conf = 0.0f;
+    float max_seen_cx = 0.0f;
+    float max_seen_cy = 0.0f;
+    float max_seen_w = 0.0f;
+    float max_seen_h = 0.0f;
+    int max_seen_idx = -1;
     for (int i = 0; i < N; i++) {
       float cx = logits[0 * N + i];
       float cy = logits[1 * N + i];
       float w = logits[2 * N + i];
       float h = logits[3 * N + i];
+      if (coords_are_normalized) {
+        cx *= model_w;
+        cy *= model_h;
+        w *= model_w;
+        h *= model_h;
+      }
 
-      float obj = has_objectness ? sigmoid(logits[4 * N + i]) : 1.0f;
+      float obj = has_objectness ? activate_score(logits[4 * N + i]) : 1.0f;
 
       float max_conf = 0.f;
       int best = 0;
       for (int c = 0; c < cls_ch; c++) {
-        float conf = sigmoid(logits[(cls_offset + c) * N + i]);
+        float conf = activate_score(logits[(cls_offset + c) * N + i]);
         if (conf > max_conf) {
           max_conf = conf;
           best = c;
         }
       }
       float conf = obj * max_conf;
+      if (conf > max_seen_conf) {
+        max_seen_conf = conf;
+        max_seen_cx = cx;
+        max_seen_cy = cy;
+        max_seen_w = w;
+        max_seen_h = h;
+        max_seen_idx = i;
+      }
       if (conf >= decode_params.conf_thres) {
         Detection d;
         float scale = letterbox_info.scale, dx = letterbox_info.dx, dy = letterbox_info.dy;
@@ -240,6 +277,11 @@ std::vector<Detection> decodeAndPostprocess(const float* logits,
         clamp_det(d);
         dets.push_back(d);
       }
+    }
+    if (dets.empty()) {
+      LOGI(log_tag, ": RAW top candidate before threshold/NMS idx=", max_seen_idx,
+           ", conf=", max_seen_conf, ", box=[", max_seen_cx, ",", max_seen_cy, ",",
+           max_seen_w, ",", max_seen_h, "]");
     }
   };
 
@@ -344,6 +386,169 @@ const float* maybeTransposeOutput(const float* logits_data,
   return logits_data;
 }
 
+template <typename QuantT>
+std::vector<Detection> decodeRawAndPostprocessQuantized(
+    const QuantT* logits,
+    float quant_scale,
+    int32_t zero_point,
+    int out_n,
+    int out_w_stride,
+    int out_c,
+    int buffer_elems,
+    int& num_classes,
+    const ModelMeta& model_meta,
+    const DecodeParams& decode_params,
+    const cv::Size& original_size,
+    const rkapp::preprocess::LetterboxInfo& letterbox_info,
+    const char* log_tag) {
+  if (model_meta.head != "raw") {
+    LOGE(log_tag, ": Quantized fast path only supports raw heads");
+    return {};
+  }
+  if (model_meta.num_classes <= 0) {
+    LOGE(log_tag, ": Missing or invalid num_classes in metadata");
+    return {};
+  }
+  if (model_meta.has_objectness < 0) {
+    LOGE(log_tag, ": RAW decode requires has_objectness metadata");
+    return {};
+  }
+  if (quant_scale <= 0.0f) {
+    LOGE(log_tag, ": Invalid quantized output scale ", quant_scale);
+    return {};
+  }
+
+  const int N = out_n;
+  const int C = out_c;
+  const int channel_stride = out_w_stride > 0 ? out_w_stride : out_n;
+  if (N <= 0 || C <= 0) {
+    LOGE(log_tag, ": Invalid quantized output shape (C=", C, ", N=", N, ")");
+    return {};
+  }
+
+  const bool has_objectness = (model_meta.has_objectness == 1);
+  const int cls_offset = has_objectness ? 5 : 4;
+  const int cls_ch = model_meta.num_classes;
+  if (num_classes < 0) num_classes = cls_ch;
+  const int expected_c = 4 + cls_ch + (has_objectness ? 1 : 0);
+  if (C != expected_c) {
+    LOGE(log_tag, ": Quantized RAW output channels mismatch (C=", C, ", expected=", expected_c,
+         ")");
+    return {};
+  }
+
+  const int max_idx = (cls_offset + cls_ch - 1) * channel_stride + (N - 1);
+  if (max_idx >= buffer_elems) {
+    LOGE(log_tag, ": Quantized RAW decode aborted - index out of bounds (max_idx=", max_idx,
+         ", buffer_elems=", buffer_elems, ", stride=", channel_stride, ")");
+    return {};
+  }
+
+  const float img_w = static_cast<float>(original_size.width);
+  const float img_h = static_cast<float>(original_size.height);
+  auto clamp_det = [&](Detection& d) {
+    d.x = std::max(0.0f, std::min(d.x, img_w));
+    d.y = std::max(0.0f, std::min(d.y, img_h));
+    d.w = std::max(0.0f, std::min(d.w, img_w - d.x));
+    d.h = std::max(0.0f, std::min(d.h, img_h - d.y));
+  };
+  auto sigmoid = [](float x) {
+    return (x >= 0) ? (1.0f / (1.0f + std::exp(-x))) : (std::exp(x) / (1.0f + std::exp(x)));
+  };
+  const bool score_is_probability = (model_meta.score_is_probability == 1);
+  const bool coords_are_normalized = (model_meta.coords_are_normalized == 1);
+  auto activate_score = [&](float x) {
+    return score_is_probability ? std::clamp(x, 0.0f, 1.0f) : sigmoid(x);
+  };
+  auto load = [&](int idx) -> float {
+    return (static_cast<float>(logits[idx]) - static_cast<float>(zero_point)) * quant_scale;
+  };
+  const float model_w = std::max(1.0f, letterbox_info.new_width + 2.0f * letterbox_info.dx);
+  const float model_h = std::max(1.0f, letterbox_info.new_height + 2.0f * letterbox_info.dy);
+
+  static std::once_flag quantized_raw_log_once;
+  std::call_once(quantized_raw_log_once, [&]() {
+    LOGI(log_tag, ": Quantized RAW decode fast path (cls_ch=", cls_ch, ", has_objectness=",
+         has_objectness ? "true" : "false", ", score_mode=",
+         score_is_probability ? "identity" : "sigmoid", ", coord_mode=",
+         coords_are_normalized ? "normalized" : "pixels", ", scale=", quant_scale,
+         ", zp=", zero_point, ", stride=", channel_stride, ")");
+  });
+
+  std::vector<Detection> dets;
+  float max_seen_conf = 0.0f;
+  float max_seen_cx = 0.0f;
+  float max_seen_cy = 0.0f;
+  float max_seen_w = 0.0f;
+  float max_seen_h = 0.0f;
+  int max_seen_idx = -1;
+  for (int i = 0; i < N; ++i) {
+    float cx = load(0 * channel_stride + i);
+    float cy = load(1 * channel_stride + i);
+    float w = load(2 * channel_stride + i);
+    float h = load(3 * channel_stride + i);
+    if (coords_are_normalized) {
+      cx *= model_w;
+      cy *= model_h;
+      w *= model_w;
+      h *= model_h;
+    }
+    const float obj =
+        has_objectness ? activate_score(load(4 * channel_stride + i)) : 1.0f;
+
+    float max_conf = 0.0f;
+    int best = 0;
+    for (int c = 0; c < cls_ch; ++c) {
+      const float conf = activate_score(load((cls_offset + c) * channel_stride + i));
+      if (conf > max_conf) {
+        max_conf = conf;
+        best = c;
+      }
+    }
+    const float conf = obj * max_conf;
+    if (conf > max_seen_conf) {
+      max_seen_conf = conf;
+      max_seen_cx = cx;
+      max_seen_cy = cy;
+      max_seen_w = w;
+      max_seen_h = h;
+      max_seen_idx = i;
+    }
+    if (conf < decode_params.conf_thres) {
+      continue;
+    }
+
+    Detection d;
+    const float scale = letterbox_info.scale;
+    const float dx = letterbox_info.dx;
+    const float dy = letterbox_info.dy;
+    d.x = (cx - w / 2.0f - dx) / scale;
+    d.y = (cy - h / 2.0f - dy) / scale;
+    d.w = w / scale;
+    d.h = h / scale;
+    d.confidence = conf;
+    d.class_id = best;
+    d.class_name = "class_" + std::to_string(best);
+    clamp_det(d);
+    dets.push_back(d);
+  }
+
+  if (dets.empty()) {
+    LOGI(log_tag, ": Quantized RAW top candidate before threshold/NMS idx=", max_seen_idx,
+         ", conf=", max_seen_conf, ", box=[", max_seen_cx, ",", max_seen_cy, ",",
+         max_seen_w, ",", max_seen_h, "]");
+  }
+
+  rkapp::post::NMSConfig nms_cfg;
+  nms_cfg.conf_thres = decode_params.conf_thres;
+  nms_cfg.iou_thres = decode_params.iou_thres;
+  if (decode_params.max_boxes > 0) {
+    nms_cfg.max_det = decode_params.max_boxes;
+    nms_cfg.topk = decode_params.max_boxes;
+  }
+  return rkapp::post::Postprocess::nms(dets, nms_cfg);
+}
+
 }  // namespace
 
 bool readFile(const std::string& path, std::vector<uint8_t>& out, std::string& err) {
@@ -390,6 +595,46 @@ std::vector<Detection> decodeOutputAndNms(
   return decodeAndPostprocess(logits, out_n, out_c, out_elems, num_classes, model_meta,
                               decode_params, original_size, letterbox_info, dfl_layout,
                               log_tag);
+}
+
+std::vector<Detection> decodeOutputAndNmsQuantizedRaw(
+    const int8_t* logits_data,
+    float quant_scale,
+    int32_t zero_point,
+    int out_n,
+    int out_w_stride,
+    int out_c,
+    int buffer_elems,
+    int& num_classes,
+    const ModelMeta& model_meta,
+    const DecodeParams& decode_params,
+    const cv::Size& original_size,
+    const rkapp::preprocess::LetterboxInfo& letterbox_info,
+    const char* log_tag) {
+  return decodeRawAndPostprocessQuantized(logits_data, quant_scale, zero_point, out_n,
+                                          out_w_stride, out_c, buffer_elems, num_classes,
+                                          model_meta, decode_params, original_size,
+                                          letterbox_info, log_tag);
+}
+
+std::vector<Detection> decodeOutputAndNmsQuantizedRaw(
+    const uint8_t* logits_data,
+    float quant_scale,
+    int32_t zero_point,
+    int out_n,
+    int out_w_stride,
+    int out_c,
+    int buffer_elems,
+    int& num_classes,
+    const ModelMeta& model_meta,
+    const DecodeParams& decode_params,
+    const cv::Size& original_size,
+    const rkapp::preprocess::LetterboxInfo& letterbox_info,
+    const char* log_tag) {
+  return decodeRawAndPostprocessQuantized(logits_data, quant_scale, zero_point, out_n,
+                                          out_w_stride, out_c, buffer_elems, num_classes,
+                                          model_meta, decode_params, original_size,
+                                          letterbox_info, log_tag);
 }
 
 }  // namespace rkapp::infer::rknn_internal

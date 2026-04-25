@@ -1,6 +1,8 @@
 #include <gtest/gtest.h>
 
 #include <chrono>
+#include <filesystem>
+#include <fstream>
 #include <thread>
 
 #include "rkapp/output/TcpOutput.hpp"
@@ -57,4 +59,36 @@ TEST(TcpOutputTest, BackoffGrowUntilMax) {
     EXPECT_EQ(output.reconnectBackoff().count(), 150);
 
     output.close();
+}
+
+TEST(TcpOutputTest, SerializesEmbeddedImagePayloadToJsonFile) {
+    namespace fs = std::filesystem;
+
+    const auto unique =
+        std::chrono::steady_clock::now().time_since_epoch().count();
+    const fs::path out_path =
+        fs::temp_directory_path() / ("rkapp_tcp_output_" + std::to_string(unique) + ".jsonl");
+
+    TcpOutput output;
+    ASSERT_TRUE(output.open("127.0.0.1:65533,file:" + out_path.string()));
+
+    FrameResult result = makeResult(7);
+    result.image_encoding = "jpeg";
+    result.image_contains_overlays = true;
+    result.image_bytes = {0x01, 0x02, 0x03};
+
+    EXPECT_TRUE(output.send(result));
+    output.close();
+
+    std::ifstream handle(out_path);
+    ASSERT_TRUE(handle.is_open());
+    std::string line;
+    std::getline(handle, line);
+    EXPECT_NE(line.find("\"frame_id\":7"), std::string::npos);
+    EXPECT_NE(line.find("\"image\""), std::string::npos);
+    EXPECT_NE(line.find("\"encoding\":\"jpeg\""), std::string::npos);
+    EXPECT_NE(line.find("\"contains_overlays\":true"), std::string::npos);
+    EXPECT_NE(line.find("\"data_base64\":\"AQID\""), std::string::npos);
+
+    fs::remove(out_path);
 }

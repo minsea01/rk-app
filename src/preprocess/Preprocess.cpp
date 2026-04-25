@@ -59,6 +59,20 @@ bool Preprocess::isRgaAvailable() {
     return initRga();
 }
 
+namespace {
+
+int alignUp(int value, int alignment) {
+    return ((value + alignment - 1) / alignment) * alignment;
+}
+
+int alignBgr888StridePixels(int width) {
+    // RGA requires BGR888 width stride to be 16-byte aligned. Since each pixel is
+    // 3 bytes, aligning the pixel stride to 16 satisfies that requirement.
+    return alignUp(width, 16);
+}
+
+}  // namespace
+
 /**
  * @brief RGA 加速 letterbox 实现
  *
@@ -114,25 +128,39 @@ cv::Mat Preprocess::letterboxRga(const cv::Mat& src, cv::Size target_size, Lette
     info.new_width = new_w;
     info.new_height = new_h;
 
+    const int src_wstride = alignBgr888StridePixels(src_w);
+    const int resize_wstride = alignBgr888StridePixels(new_w);
+    const int dst_wstride = alignBgr888StridePixels(dst_w);
+
     // 创建目标缓冲区（稍后填充补边区域）。
-    cv::Mat dst(dst_h, dst_w, CV_8UC3);
+    cv::Mat dst_storage(dst_h, dst_wstride, CV_8UC3);
+    cv::Mat dst = dst_storage(cv::Rect(0, 0, dst_w, dst_h));
 
     // 确保源数据连续，便于 RGA 访问。
     cv::Mat src_cont = src.isContinuous() ? src : src.clone();
+    cv::Mat src_rga = src_cont;
+    if (src_wstride != src_w) {
+        cv::Mat padded(src_h, src_wstride, CV_8UC3);
+        src_cont.copyTo(padded(cv::Rect(0, 0, src_w, src_h)));
+        src_rga = std::move(padded);
+    }
 
     // 包装源图为 RGA 缓冲描述。
     rga_buffer_t src_buf = wrapbuffer_virtualaddr(
-        (void*)src_cont.data,
+        (void*)src_rga.data,
         src_w, src_h,
-        RK_FORMAT_BGR_888
+        RK_FORMAT_BGR_888,
+        src_wstride, src_h
     );
 
     // 创建中间缩放结果缓冲。
-    cv::Mat resized(new_h, new_w, CV_8UC3);
+    cv::Mat resized_storage(new_h, resize_wstride, CV_8UC3);
+    cv::Mat resized = resized_storage(cv::Rect(0, 0, new_w, new_h));
     rga_buffer_t resize_buf = wrapbuffer_virtualaddr(
-        (void*)resized.data,
+        (void*)resized_storage.data,
         new_w, new_h,
-        RK_FORMAT_BGR_888
+        RK_FORMAT_BGR_888,
+        resize_wstride, new_h
     );
 
     // 步骤 1：RGA 缩放。
@@ -155,9 +183,10 @@ cv::Mat Preprocess::letterboxRga(const cv::Mat& src, cv::Size target_size, Lette
 
     // 包装目标图并指定偏移矩形。
     rga_buffer_t dst_buf = wrapbuffer_virtualaddr(
-        (void*)dst.data,
+        (void*)dst_storage.data,
         dst_w, dst_h,
-        RK_FORMAT_BGR_888
+        RK_FORMAT_BGR_888,
+        dst_wstride, dst_h
     );
 
     // 定义源/目标矩形。
@@ -209,10 +238,7 @@ cv::Mat Preprocess::convertColorRga(const cv::Mat& src, int code) {
 
     switch (code) {
         case cv::COLOR_BGR2RGB:
-            src_format = RK_FORMAT_BGR_888;
-            dst_format = RK_FORMAT_RGB_888;
-            break;
-        case cv::COLOR_RGB2BGR:
+            // OpenCV uses the same enum value for BGR<->RGB channel swap.
             src_format = RK_FORMAT_RGB_888;
             dst_format = RK_FORMAT_BGR_888;
             break;
@@ -364,7 +390,6 @@ cv::Mat Preprocess::convertColor(const cv::Mat& src, int code, AccelBackend back
                 // Only use RGA for supported conversions
                 switch (code) {
                     case cv::COLOR_BGR2RGB:
-                    case cv::COLOR_RGB2BGR:
                     case cv::COLOR_YUV2RGB_NV12:
                     case cv::COLOR_YUV2BGR_NV12:
                         return convertColorRga(src, code);

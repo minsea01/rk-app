@@ -1,3 +1,5 @@
+#include <filesystem>
+#include <chrono>
 #include <iostream>
 #include <thread>
 #include <vector>
@@ -33,18 +35,32 @@ struct Item {
 
 int main(int argc, char** argv) {
     if (argc < 3) {
-        std::cerr << "Usage: " << argv[0] << " <rknn_model> <video>" << std::endl;
-        std::cerr << "Example: " << argv[0] << " model.rknn video.mp4" << std::endl;
+        std::cerr << "Usage: " << argv[0]
+                  << " <rknn_model> <video> [--imgsz N] [--max-frames N]" << std::endl;
+        std::cerr << "Example: " << argv[0] << " model.rknn video.mp4 --imgsz 416" << std::endl;
         return 1;
     }
     const std::string model = argv[1];
     const std::string src = argv[2];
+    int input_size = 640;
+    int max_frames = -1;
+    for (int i = 3; i < argc; ++i) {
+        std::string arg = argv[i];
+        if (arg == "--imgsz" && i + 1 < argc) {
+            input_size = std::stoi(argv[++i]);
+        } else if (arg == "--max-frames" && i + 1 < argc) {
+            max_frames = std::stoi(argv[++i]);
+        } else {
+            std::cerr << "Unknown argument: " << arg << std::endl;
+            return 1;
+        }
+    }
     const auto model_meta = rkapp::infer::loadModelMetaFromPath(model);
 
     rkapp::infer::ModelSpec model_spec;
     model_spec.backend = rkapp::infer::ModelBackend::RKNN;
     model_spec.model_path = model;
-    model_spec.input_size = 640;
+    model_spec.input_size = input_size;
     model_spec.decode_meta = model_meta.meta;
     model_spec.decode_meta_path = model_meta.source_path;
 
@@ -65,6 +81,10 @@ int main(int argc, char** argv) {
     int frame_width = static_cast<int>(cap.get(cv::CAP_PROP_FRAME_WIDTH));
     int frame_height = static_cast<int>(cap.get(cv::CAP_PROP_FRAME_HEIGHT));
     std::cout << "Video: " << frame_width << "x" << frame_height << std::endl;
+    std::cout << "Input size: " << input_size << std::endl;
+    if (max_frames > 0) {
+        std::cout << "Max frames: " << max_frames << std::endl;
+    }
 
     // Create 3 RKNN engines, bind to 3 cores (Core0=2T, Core1=2T, Core2=2T)
     constexpr int K = 3;
@@ -102,10 +122,13 @@ int main(int argc, char** argv) {
 
     // Producer thread - writes directly into pool buffers (zero-copy)
     std::thread t_cap([&cap, &mtx, &cv_not_full, &cv_not_empty, &q, &next_id, &done,
-                       &frame_pool, QMAX] {
+                       &frame_pool, QMAX, max_frames] {
         cv::Mat temp_frame;  // Temporary for capture (reused each iteration)
 
         while (cap.read(temp_frame)) {
+            if (max_frames > 0 && next_id.load() >= max_frames) {
+                break;
+            }
             // Acquire a buffer from the pool (blocking wait if pool exhausted)
             cv::Mat* buf = frame_pool.acquire(100);  // 100ms timeout
             if (!buf) {
@@ -176,6 +199,7 @@ int main(int argc, char** argv) {
     };
 
     // Launch worker threads
+    const auto t_begin = std::chrono::steady_clock::now();
     std::vector<std::thread> workers;
     workers.reserve(K);
     for (int i = 0; i < K; i++) {
@@ -187,11 +211,18 @@ int main(int argc, char** argv) {
         th.join();
     }
     t_cap.join();
+    const auto t_end = std::chrono::steady_clock::now();
+    const double elapsed_s =
+        std::chrono::duration<double>(t_end - t_begin).count();
 
     // Print statistics
     auto stats = frame_pool.getStats();
     std::cout << "\n=== Performance Summary ===" << std::endl;
     std::cout << "Frames processed: " << processed.load() << std::endl;
+    std::cout << "Elapsed: " << elapsed_s << " s" << std::endl;
+    if (elapsed_s > 0.0) {
+        std::cout << "Throughput: " << (processed.load() / elapsed_s) << " FPS" << std::endl;
+    }
     std::cout << "FramePool stats:" << std::endl;
     std::cout << "  Acquires:  " << stats.acquires << std::endl;
     std::cout << "  Releases:  " << stats.releases << std::endl;

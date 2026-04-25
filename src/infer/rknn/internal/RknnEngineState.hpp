@@ -25,8 +25,10 @@ struct RknnEngine::Impl {
   rknn_tensor_type input_type = RKNN_TENSOR_UINT8;
   // 输出布局字段在 init 完成后视为只读。
   int out_elems = 0;
+  int out_buffer_elems = 0;
   int out_c = 0;
   int out_n = 0;
+  int out_w_stride = 0;
 
   // DFL 头对应的 anchor 布局缓存（按输出 N 构建）。
   AnchorLayout dfl_layout;

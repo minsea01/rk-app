@@ -4,6 +4,9 @@ set -euo pipefail
 # RK3588板上依赖安装脚本
 # 处理常见的pip安装问题（国内镜像、ARM64兼容性等）
 
+ROOT="$(cd -- "$(dirname "${BASH_SOURCE[0]}")"/../.. && pwd)"
+REQ_FILE="$ROOT/requirements_board.txt"
+
 echo "=========================================="
 echo "Installing RK3588 Runtime Dependencies"
 echo "=========================================="
@@ -40,44 +43,41 @@ echo ""
 echo "更新pip..."
 python3 -m pip install --upgrade pip
 
-# 安装基础依赖
 echo ""
-echo "安装基础依赖（numpy, opencv, pillow）..."
-pip3 install numpy==1.24.3 opencv-python-headless==4.9.0.80 pillow==11.0.0 pyyaml
+if [[ -f "$REQ_FILE" ]]; then
+    echo "安装 board Python 依赖: $REQ_FILE"
+    mapfile -t COMMON_REQUIREMENTS < <(grep -vi '^rknn-toolkit-lite2' "$REQ_FILE" | sed '/^#/d;/^$/d')
+    if ((${#COMMON_REQUIREMENTS[@]})); then
+        python3 -m pip install "${COMMON_REQUIREMENTS[@]}"
+    fi
+else
+    echo "requirements_board.txt 不存在，使用内置依赖列表"
+    python3 -m pip install numpy==1.24.3 opencv-python-headless==4.9.0.80 pillow==11.3.0 'PyYAML>=6.0,<7.0'
+fi
 
-# 检查numpy版本（必须<2.0，RKNN兼容性）
+if python3 -c "from rknnlite.api import RKNNLite" >/dev/null 2>&1; then
+    echo "✅ rknn-toolkit-lite2 已安装"
+else
+    echo ""
+    echo "安装 rknn-toolkit-lite2..."
+    if [[ -f "$REQ_FILE" ]]; then
+        RKNN_REQUIREMENT="$(grep -i '^rknn-toolkit-lite2' "$REQ_FILE" | head -n 1 || true)"
+    else
+        RKNN_REQUIREMENT="rknn-toolkit-lite2>=2.3.2"
+    fi
+    RKNN_REQUIREMENT="${RKNN_REQUIREMENT:-rknn-toolkit-lite2>=2.3.2}"
+
+    if python3 -m pip install "$RKNN_REQUIREMENT"; then
+        echo "✅ rknn-toolkit-lite2 安装成功"
+    else
+        echo "⚠️  自动安装 rknn-toolkit-lite2 失败"
+        echo "   请确认镜像源可访问，或手动安装与板端驱动匹配的 wheel。"
+        exit 1
+    fi
+fi
+
 NUMPY_VERSION=$(python3 -c "import numpy; print(numpy.__version__)")
 echo "  NumPy版本: $NUMPY_VERSION"
-
-# 安装rknn-toolkit-lite2
-echo ""
-echo "安装rknn-toolkit-lite2..."
-
-# 方法1: 尝试从PyPI安装（可能不存在）
-if pip3 install rknn-toolkit-lite2 2>/dev/null; then
-    echo "✅ 从PyPI安装成功"
-else
-    echo "⚠️  PyPI安装失败，尝试从Rockchip官方下载..."
-
-    # 方法2: 从GitHub下载预编译wheel
-    RKNN_VERSION="1.6.0"
-    PYTHON_VER=$(python3 -c "import sys; print(f'cp{sys.version_info.major}{sys.version_info.minor}')")
-    WHEEL_NAME="rknn_toolkit_lite2-${RKNN_VERSION}-${PYTHON_VER}-${PYTHON_VER}-linux_aarch64.whl"
-
-    echo "  检测Python版本: $PYTHON_VER"
-    echo "  需要的wheel文件: $WHEEL_NAME"
-    echo ""
-    echo "请手动下载并安装:"
-    echo "  1. 访问: https://github.com/rockchip-linux/rknn-toolkit2/releases"
-    echo "  2. 下载: $WHEEL_NAME"
-    echo "  3. 安装: pip3 install $WHEEL_NAME"
-    echo ""
-    echo "或者使用以下命令尝试自动下载（需要网络）："
-    echo "  wget https://github.com/rockchip-linux/rknn-toolkit2/releases/download/v${RKNN_VERSION}/${WHEEL_NAME}"
-    echo "  pip3 install ${WHEEL_NAME}"
-
-    exit 1
-fi
 
 # 验证安装
 echo ""
@@ -87,6 +87,8 @@ echo "=========================================="
 
 python3 << 'PYEOF'
 import sys
+from pathlib import Path
+
 print(f"Python: {sys.version}")
 
 import numpy as np
@@ -105,15 +107,23 @@ try:
     from rknnlite.api import RKNNLite
     print(f"RKNNLite: OK")
 
-    # 尝试初始化
-    rknn = RKNNLite()
-    ret = rknn.init_runtime()
-    if ret == 0:
-        print(f"NPU初始化: ✅ SUCCESS")
+    model_path = next(iter(sorted(Path.cwd().glob("artifacts/models/*.rknn"))), None)
+    if model_path is None:
+        print("NPU初始化: SKIPPED (no local .rknn model found)")
     else:
-        print(f"NPU初始化: ⚠️  FAILED (ret={ret})")
-        print("  可能原因: NPU驱动未加载，运行 'sudo modprobe rknpu'")
-    rknn.release()
+        rknn = RKNNLite()
+        try:
+            ret = rknn.load_rknn(str(model_path))
+            if ret != 0:
+                print(f"模型加载: ⚠️  FAILED (ret={ret})")
+            else:
+                ret = rknn.init_runtime(core_mask=RKNNLite.NPU_CORE_0_1_2)
+                if ret == 0:
+                    print(f"NPU初始化: ✅ SUCCESS ({model_path.name})")
+                else:
+                    print(f"NPU初始化: ⚠️  FAILED (ret={ret})")
+        finally:
+            rknn.release()
 except Exception as e:
     print(f"RKNNLite: ❌ FAILED - {e}")
 PYEOF

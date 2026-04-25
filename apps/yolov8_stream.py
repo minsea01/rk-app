@@ -7,6 +7,7 @@ using RKNN models on RK3588 hardware.
 
 import argparse
 import logging
+import sys
 import time
 from pathlib import Path
 from threading import Thread, Event
@@ -14,6 +15,9 @@ from queue import Queue, Full, Empty
 import json
 from typing import Union, List, Dict, Any, Optional, Tuple, Mapping
 from urllib import request, error
+
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import cv2
 import numpy as np

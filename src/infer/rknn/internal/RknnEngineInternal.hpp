@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -35,6 +36,37 @@ std::vector<Detection> decodeOutputAndNms(
     const cv::Size& original_size,
     const rkapp::preprocess::LetterboxInfo& letterbox_info,
     const AnchorLayout* dfl_layout,
+    const char* log_tag);
+
+// RAW 头的量化输出解码入口：直接按 scale/zp 反量化，避免 runtime 先整块转 float。
+std::vector<Detection> decodeOutputAndNmsQuantizedRaw(
+    const int8_t* logits_data,
+    float quant_scale,
+    int32_t zero_point,
+    int out_n,
+    int out_w_stride,
+    int out_c,
+    int buffer_elems,
+    int& num_classes,
+    const ModelMeta& model_meta,
+    const DecodeParams& decode_params,
+    const cv::Size& original_size,
+    const rkapp::preprocess::LetterboxInfo& letterbox_info,
+    const char* log_tag);
+
+std::vector<Detection> decodeOutputAndNmsQuantizedRaw(
+    const uint8_t* logits_data,
+    float quant_scale,
+    int32_t zero_point,
+    int out_n,
+    int out_w_stride,
+    int out_c,
+    int buffer_elems,
+    int& num_classes,
+    const ModelMeta& model_meta,
+    const DecodeParams& decode_params,
+    const cv::Size& original_size,
+    const rkapp::preprocess::LetterboxInfo& letterbox_info,
     const char* log_tag);
 
 }  // namespace rkapp::infer::rknn_internal

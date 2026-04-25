@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <string>
 #include <vector>
 #include <memory>
@@ -13,6 +14,9 @@ struct FrameResult {
     int width, height;
     std::vector<rkapp::infer::Detection> detections;
     std::string source_uri;
+    std::vector<uint8_t> image_bytes;
+    std::string image_encoding;
+    bool image_contains_overlays = false;
 };
 
 enum class OutputType {

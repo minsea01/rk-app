@@ -2,22 +2,26 @@
 """
 Results aggregation server for detection output.
 
-Receives detection results from RK3588 board and stores them.
+Receives detection results from RK3588 board and stores them. When the sender
+embeds JPEG image payloads in the JSON stream, the server also decodes and
+saves those frames alongside the detection metadata.
 Used in docker-compose.dual-nic.yml for results_server service.
 
 Usage:
-    python3 results_receiver.py
+    python3 results_receiver.py --host 192.168.137.1 --port 9000
 
 Environment variables:
     LISTEN_HOST: TCP server bind address (default: 0.0.0.0)
     LISTEN_PORT: TCP server port (default: 9000)
-    RESULTS_DIR: Directory to store results (default: /artifacts)
+    RESULTS_DIR: Directory to store results (default: artifacts/received_results)
 """
 
+import argparse
 import os
 import sys
 import json
 import time
+import base64
 import socket
 import logging
 import threading
@@ -103,19 +107,28 @@ class ResultsServer:
             # Set timeout for receiving data
             client_socket.settimeout(30)
 
-            # Receive data
-            buffer = b""
+            # Receive newline-delimited JSON incrementally to avoid buffering
+            # long-running image streams in memory.
+            buffer = bytearray()
             while True:
                 try:
                     chunk = client_socket.recv(4096)
                     if not chunk:
                         break
-                    buffer += chunk
+                    buffer.extend(chunk)
+                    while True:
+                        newline_pos = buffer.find(b"\n")
+                        if newline_pos < 0:
+                            break
+                        line = bytes(buffer[:newline_pos]).strip()
+                        del buffer[:newline_pos + 1]
+                        if line:
+                            self.process_results(line, client_address)
                 except socket.timeout:
                     break
 
             if buffer:
-                self.process_results(buffer, client_address)
+                self.process_results(bytes(buffer).strip(), client_address)
 
             # Send ACK
             client_socket.send(b"OK")
@@ -167,23 +180,66 @@ class ResultsServer:
             # Create result file with timestamp
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
             frame_id = result.get("frame_id", count_snapshot)
+            sanitized_result = dict(result)
+            image_filename = None
+            image_info = result.get("image")
+            if isinstance(image_info, dict):
+                image_filename = self._save_image_payload(
+                    image_info=image_info,
+                    timestamp=timestamp,
+                    frame_id=frame_id,
+                )
+                if image_filename is not None:
+                    image_meta = {k: v for k, v in image_info.items() if k != "data_base64"}
+                    image_meta["path"] = image_filename
+                    sanitized_result["image"] = image_meta
+
             filename = f"result_{timestamp}_frame{frame_id}.json"
             filepath = self.output_dir / filename
 
             # Save to file
             with open(filepath, "w") as f:
-                json.dump(result, f, indent=2)
+                json.dump(sanitized_result, f, indent=2)
 
             # Log summary
             detections = len(result.get("detections", []))
             latency = result.get("latency_ms", 0)
+            image_log = f", image={image_filename}" if image_filename else ""
             logger.info(
                 f"Result #{count_snapshot}: {detections} detections, "
-                f"latency={latency:.1f}ms → {filename}"
+                f"latency={latency:.1f}ms{image_log} → {filename}"
             )
 
         except (IOError, OSError, TypeError) as e:
             logger.error(f"Error saving result: {e}")
+
+    def _save_image_payload(self, image_info: dict, timestamp: str, frame_id: int):
+        """Persist base64-encoded image payload if present.
+
+        Args:
+            image_info: Image object from result JSON
+            timestamp: Timestamp token used for output naming
+            frame_id: Frame index
+
+        Returns:
+            Relative image filename when saved successfully, else None.
+        """
+        encoded = image_info.get("data_base64")
+        encoding = image_info.get("encoding", "jpeg")
+        if not encoded or encoding.lower() not in {"jpg", "jpeg"}:
+            return None
+
+        try:
+            image_bytes = base64.b64decode(encoded, validate=True)
+        except (ValueError, TypeError) as e:
+            logger.warning(f"Invalid base64 image payload for frame {frame_id}: {e}")
+            return None
+
+        image_filename = f"result_{timestamp}_frame{frame_id}.jpg"
+        image_path = self.output_dir / image_filename
+        with open(image_path, "wb") as f:
+            f.write(image_bytes)
+        return image_filename
 
     def stop(self):
         """Stop server gracefully."""
@@ -196,7 +252,22 @@ class ResultsServer:
         logger.info(f"Server stopped. Total results received: {self.result_count}")
 
 
-def health_check_server():
+def parse_args():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--host", default=os.getenv("LISTEN_HOST", "0.0.0.0"))
+    parser.add_argument("--port", type=int, default=int(os.getenv("LISTEN_PORT", "9000")))
+    parser.add_argument(
+        "--output-dir",
+        default=os.getenv("RESULTS_DIR", "artifacts/received_results"),
+        help="Directory to store JSON results and optional JPEG frames",
+    )
+    parser.add_argument("--health-host", default=os.getenv("HEALTH_HOST", "0.0.0.0"))
+    parser.add_argument("--health-port", type=int, default=int(os.getenv("HEALTH_PORT", "8080")))
+    parser.add_argument("--no-health", action="store_true", help="Disable HTTP health endpoint")
+    return parser.parse_args()
+
+
+def health_check_server(host: str, port: int):
     """Run simple HTTP health check server (for Docker healthcheck)."""
     try:
         import http.server
@@ -221,8 +292,8 @@ def health_check_server():
                 pass
 
         handler = HealthCheckHandler
-        httpd = socketserver.TCPServer(("0.0.0.0", 8080), handler)
-        logger.info("Health check HTTP server running on 0.0.0.0:8080")
+        httpd = socketserver.TCPServer((host, port), handler)
+        logger.info(f"Health check HTTP server running on {host}:{port}")
         httpd.serve_forever()
 
     except (OSError, socket.error) as e:
@@ -230,24 +301,25 @@ def health_check_server():
 
 
 def main():
-    # Get config from environment
-    listen_host = os.getenv('LISTEN_HOST', '0.0.0.0')
-    listen_port = int(os.getenv('LISTEN_PORT', '9000'))
-    results_dir = os.getenv('RESULTS_DIR', '/artifacts')
+    args = parse_args()
 
     logger.info("Results Server Configuration:")
-    logger.info(f"  Listen: {listen_host}:{listen_port}")
-    logger.info(f"  Results Dir: {results_dir}")
+    logger.info(f"  Listen: {args.host}:{args.port}")
+    logger.info(f"  Results Dir: {args.output_dir}")
 
-    # Start health check server in background
-    health_thread = threading.Thread(target=health_check_server, daemon=True)
-    health_thread.start()
+    if not args.no_health:
+        health_thread = threading.Thread(
+            target=health_check_server,
+            args=(args.health_host, args.health_port),
+            daemon=True,
+        )
+        health_thread.start()
 
     # Start main results server
     server = ResultsServer(
-        host=listen_host,
-        port=listen_port,
-        output_dir=results_dir
+        host=args.host,
+        port=args.port,
+        output_dir=args.output_dir
     )
     server.start()
 

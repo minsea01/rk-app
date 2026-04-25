@@ -195,8 +195,9 @@ bool ModelMeta::hasAny() const { return modelMetaHasAny(*this); }
 
 bool modelMetaHasAny(const ModelMeta& meta) {
   return meta.reg_max > 0 || !meta.strides.empty() || !meta.head.empty() || meta.output_index >= 0 ||
-         meta.num_classes > 0 || meta.has_objectness >= 0 || meta.task != "detect" ||
-         meta.num_keypoints > 0;
+         meta.num_classes > 0 || meta.has_objectness >= 0 || meta.score_is_probability >= 0 ||
+         meta.coords_are_normalized >= 0 ||
+         meta.task != "detect" || meta.num_keypoints > 0;
 }
 
 void mergeModelMetaMissingFields(ModelMeta& dst, const ModelMeta& src) {
@@ -217,6 +218,12 @@ void mergeModelMetaMissingFields(ModelMeta& dst, const ModelMeta& src) {
   }
   if (dst.has_objectness < 0 && src.has_objectness >= 0) {
     dst.has_objectness = src.has_objectness;
+  }
+  if (dst.score_is_probability < 0 && src.score_is_probability >= 0) {
+    dst.score_is_probability = src.score_is_probability;
+  }
+  if (dst.coords_are_normalized < 0 && src.coords_are_normalized >= 0) {
+    dst.coords_are_normalized = src.coords_are_normalized;
   }
   if (dst.task == "detect" && src.task != "detect") {
     dst.task = src.task;
@@ -255,6 +262,19 @@ ModelMeta parseModelMetaText(const std::string& content) {
   const int has_objectness = parseBoolField(sanitized, {"has_objectness", "objectness", "has_obj"});
   if (has_objectness >= 0) {
     meta.has_objectness = has_objectness;
+  }
+
+  const int score_is_probability =
+      parseBoolField(sanitized,
+                     {"score_is_probability", "scores_are_probabilities", "score_is_prob"});
+  if (score_is_probability >= 0) {
+    meta.score_is_probability = score_is_probability;
+  }
+
+  const int coords_are_normalized = parseBoolField(
+      sanitized, {"coords_are_normalized", "normalized_coords", "coords_normalized"});
+  if (coords_are_normalized >= 0) {
+    meta.coords_are_normalized = coords_are_normalized;
   }
 
   const std::string task = parseEnumStringField(sanitized, "task", {"detect", "pose", "segment"});

@@ -32,9 +32,9 @@ engine:
   # onnx=主机侧 ONNXRuntime，rknn=板端 NPU RKNN
   type: onnx                # onnx|rknn
   # 模型路径（与 type 对应：onnx 或 rknn 文件）
-  model: "artifacts/models/best.onnx"
+  model: "artifacts/models/best_person_aug_416_norm.onnx"
   # 网络输入尺寸（通常 416/640），需要与导出模型和推理期设置一致
-  input_size: [640, 640]
+  input_size: [416, 416]
 
 preprocess:
   # 预处理配置档位：speed（最快）/balanced（折中）/quality（质量优先）

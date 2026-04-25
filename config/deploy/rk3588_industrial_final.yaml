@@ -1,14 +1,15 @@
-# RK3588工业检测系统最终配置
-# 基于验证成功的GigE采集 + 转换成功的RKNN模型
+# RK3588 工业相机链路兼容配置
+# 当前仓库未部署 industrial_15cls_rk3588_w8a8.rknn；为避免演示误跑缺失模型，
+# 该配置默认使用已验证的 person 416 INT8 RKNN 模型。
 
 source:
   type: gige
-  uri: "camera-name=IndustrialCamera-01,width=2048,height=1536,framerate=24/1"  # 2K分辨率，24FPS
+  uri: "camera-name=MV-CA020-20GC,width=1920,height=1200,framerate=30/1,format=BGR,pull-timeout-ms=500,max-failures=10"
 
 engine:
   type: rknn  # 使用NPU加速的RKNN模型
-  model: "artifacts/models/industrial_15cls_rk3588_w8a8.rknn"  # 我们刚转换的11.3MB模型
-  input_size: [640, 640]
+  model: "artifacts/models/best_person_aug_416_norm_int8.rknn"
+  input_size: [416, 416]
 
 postprocess:
   conf_threshold: 0.5   # 工业检测较高阈值
@@ -23,14 +24,14 @@ camera_interface:
   mtu: 9000           # 巨型帧优化
 
 upload_interface:
-  device: eth1        # 结果上传专用网口  
-  ip: 192.168.2.10    # 与现有setup_network.sh一致
+  device: eth1        # 结果上传专用网口
+  ip: 192.168.137.56
   netmask: 255.255.255.0
 
 # 结果上传服务器配置
 servers:
-  - ip: 192.168.2.100   # 上位机IP
-    port: 8080
+  - ip: 192.168.137.1   # 上位机IP
+    port: 9000
     protocol: tcp
     backup: false
 
@@ -45,7 +46,7 @@ performance:
 
 # 预期性能指标
 expected_performance:
-  fps: "40-65"          # RKNN NPU加速后
-  latency: "15-25ms"    # 单帧推理延迟
-  throughput: "≥900Mbps"  # 双网口吞吐量
-  detection_classes: 15 # 工业零件类别数
+  fps: ">=30"
+  latency: "<=45ms"
+  throughput: ">=900Mbps"
+  detection_classes: 1

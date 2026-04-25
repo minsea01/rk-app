@@ -7,6 +7,7 @@
 #include "rkapp/capture/FrameOps.hpp"
 #include "rkapp/infer/RknnEngine.hpp"
 #include "rkapp/infer/OnnxEngine.hpp"
+#include "rkapp/pipeline/BoxTracker.hpp"
 #include "rkapp/post/Postprocess.hpp"
 #include "rkapp/common/StringUtils.hpp"
 #include "rkapp/common/log.hpp"
@@ -155,6 +156,7 @@ struct DetectionPipeline::Impl {
     cv::Size undistort_size{0, 0};
     PreprocessFeatureFlags preprocess_flags;
     int consecutive_frame_errors = 0;
+    BoxTracker tracker;
 
     void updateFps() {
         frames_since_update++;
@@ -192,7 +194,30 @@ struct DetectionPipeline::Impl {
         std::lock_guard<std::mutex> lock(stats_mutex);
         stats.reconnect_count++;
     }
+
+    void configureTracker() {
+        BoxTracker::Config tracker_config;
+        tracker_config.enable = config.tracking.enable;
+        tracker_config.match_iou = config.tracking.match_iou;
+        tracker_config.ema_alpha = config.tracking.ema_alpha;
+        tracker_config.confirm_hits = config.tracking.confirm_hits;
+        tracker_config.max_misses = config.tracking.max_misses;
+        tracker_config.keep_missing_tracks = config.tracking.keep_missing_tracks;
+        tracker_config.missing_conf_decay = config.tracking.missing_conf_decay;
+        tracker.configure(tracker_config);
+    }
+
+    void maybeStabilizeDetections(PipelineResult& result) {
+        if (!config.tracking.enable) {
+            return;
+        }
+        result.detections = tracker.update(result.detections);
+    }
 };
+
+namespace {
+
+} // namespace
 
 // ============================================================================
 // 对外 API
@@ -230,6 +255,7 @@ bool DetectionPipeline::init(const PipelineConfig& config) {
     impl_->undistort_map2.release();
     impl_->undistort_size = {0, 0};
     impl_->preprocess_flags = resolveFeatureFlags(impl_->config);
+    impl_->configureTracker();
     impl_->frame_counter.store(0, std::memory_order_relaxed);
 
     if (impl_->config.preprocess.enable_undistort) {
@@ -324,6 +350,7 @@ bool DetectionPipeline::init(const PipelineConfig& config) {
     LOGI("  - Zero-copy: ", (impl_->stats.zero_copy_enabled ? "enabled" : "disabled"));
     LOGI("  - Runtime warmup: ", impl_->config.runtime.warmup_iterations);
     LOGI("  - Runtime async: ", (impl_->config.runtime.async_mode ? "enabled" : "disabled"));
+    LOGI("  - Tracking: ", (impl_->config.tracking.enable ? "enabled" : "disabled"));
     LOGI("  - Undistort: ", (impl_->calibration_loaded ? "enabled" : "disabled"));
     LOGI("  - Preprocess profile: ", impl_->config.preprocess.profile);
     LOGI("  - ROI: ", (impl_->config.preprocess.roi_enable ? "enabled" : "disabled"));
@@ -624,6 +651,7 @@ PipelineResult DetectionPipeline::process(const capture::CaptureFrame& frame) {
             filter_cfg.max_aspect_ratio = impl_->config.model.max_aspect_ratio;
             result.detections = post::Postprocess::nms(result.detections, filter_cfg);
         }
+        impl_->maybeStabilizeDetections(result);
         result.frame = capture::detachFrameIfAliased(coord_frame, frame,
                                                      coord_frame_aliases_source);
 
@@ -662,6 +690,7 @@ PipelineResult DetectionPipeline::process(const capture::CaptureFrame& frame) {
         filter_cfg.max_aspect_ratio = impl_->config.model.max_aspect_ratio;
         result.detections = post::Postprocess::nms(result.detections, filter_cfg);
     }
+    impl_->maybeStabilizeDetections(result);
     result.frame = capture::detachFrameIfAliased(coord_frame, frame,
                                                  coord_frame_aliases_source);
     if (impl_->config.output.enable_profiling) {
@@ -758,6 +787,7 @@ void DetectionPipeline::resetStatistics() {
     impl_->stats.zero_copy_enabled = false;
     impl_->total_latency_us = 0;
     impl_->consecutive_frame_errors = 0;
+    impl_->tracker.reset();
     impl_->start_time = Clock::now();
     impl_->last_fps_update = impl_->start_time;
     impl_->frames_since_update = 0;

@@ -362,13 +362,21 @@ if (ENABLE_RKNN)
       message(FATAL_ERROR "RKNN SDK headers not found at ${RKNN_HOME}/include/rknn_api.h\n"
                           "Check RKNN_HOME path or SDK installation.")
     endif()
-    find_library(RKNN_API_LIB rknn_api PATHS "${RKNN_HOME}/lib" NO_DEFAULT_PATH)
+    set(RKNN_LIB_SEARCH_DIRS
+        "${RKNN_HOME}/lib"
+        "${RKNN_HOME}/lib64"
+        "${RKNN_HOME}/aarch64"
+    )
+    find_library(RKNN_API_LIB NAMES rknn_api rknnrt PATHS ${RKNN_LIB_SEARCH_DIRS} NO_DEFAULT_PATH)
     if (NOT RKNN_API_LIB)
-      message(FATAL_ERROR "rknn_api library not found in ${RKNN_HOME}/lib\n"
-                          "Check RKNN SDK installation or RKNN_HOME path.")
+      message(FATAL_ERROR
+        "RKNN library not found under ${RKNN_HOME}.\n"
+        "Tried names: librknn_api.so, librknnrt.so\n"
+        "Tried directories: ${RKNN_LIB_SEARCH_DIRS}\n"
+        "Check RKNN SDK installation or RKNN_HOME path.")
     endif()
     message(STATUS "Found RKNN SDK: ${RKNN_HOME}")
-    message(STATUS "  rknn_api: ${RKNN_API_LIB}")
+    message(STATUS "  RKNN lib: ${RKNN_API_LIB}")
 
     set(RKAPP_RKNN_SOURCES
       src/infer/rknn/RknnEngine.cpp
@@ -377,7 +385,14 @@ if (ENABLE_RKNN)
     )
     add_library(rkapp_infer_rknn ${RKAPP_RKNN_SOURCES})
     target_include_directories(rkapp_infer_rknn PUBLIC include)
-    target_link_libraries(rkapp_infer_rknn PUBLIC ${OpenCV_LIBS} rkapp_decode_utils rkapp_model_meta)
+    target_link_libraries(
+      rkapp_infer_rknn
+      PUBLIC
+        ${OpenCV_LIBS}
+        rkapp_core
+        rkapp_decode_utils
+        rkapp_model_meta
+    )
     # RKNN SDK
     target_include_directories(rkapp_infer_rknn PRIVATE ${RKNN_HOME}/include)
     target_link_libraries(rkapp_infer_rknn PRIVATE ${RKNN_API_LIB})
@@ -401,6 +416,7 @@ endif()
 
 # High-performance detection pipeline (integrates all hardware acceleration)
 add_library(rkapp_pipeline
+    src/pipeline/BoxTracker.cpp
     src/pipeline/DetectionPipeline.cpp
     src/pipeline/PipelineConfigLoader.cpp
 )

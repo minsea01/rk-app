@@ -1,22 +1,24 @@
 # ============================================================
-# GigE 双网口行人检测验收配置（640x640 固定口径）
+# GigE 双网口行人检测验收配置（416 INT8 主线）
 # ------------------------------------------------------------
 # 任务口径：
 #   eth0 连接工业相机 / GigE Vision
-#   eth1 上传检测结果
+#   eth1 上传检测结果 / SSH: 192.168.137.56/24
+#   PC 接收端: 192.168.137.1:9000
 #   模型、后处理参数与 CSI 演示链路保持一致
 # ============================================================
 
 source:
   type: gige
-  # 默认示例：按相机实际名称、分辨率和像素格式调整。
+  # Hikrobot MV-CA020-20GC: native 1920x1200.
+  # 如果 arv-tool 列出的相机名不同，请替换 camera-name。
   # 若相机输出 Bayer，可将 format 改成 BayerRG8/BayerBG8 等原始格式。
-  uri: "camera-name=IndustrialCamera-01,width=1920,height=1080,framerate=30/1,format=BGR"
+  uri: "camera-name=MV-CA020-20GC,width=1920,height=1200,framerate=30/1,format=BGR,pull-timeout-ms=500,max-failures=10"
 
 engine:
   type: rknn
-  model: "artifacts/models/best_person_aug_int8.rknn"
-  input_size: [640, 640]
+  model: "artifacts/models/best_person_aug_416_norm_int8.rknn"
+  input_size: [416, 416]
   use_npu_multicore: true
   use_zero_copy: false
 
@@ -36,9 +38,18 @@ preprocess:
     enable: false
 
 postprocess:
-  conf_threshold: 0.50
-  nms_threshold: 0.50
+  conf_threshold: 0.40
+  nms_threshold: 0.35
   max_detections: 300
+
+tracking:
+  enable: true
+  match_iou: 0.30
+  ema_alpha: 0.65
+  confirm_hits: 2
+  max_misses: 4
+  keep_missing_tracks: true
+  missing_conf_decay: 0.08
 
 runtime:
   warmup: 10
@@ -47,9 +58,15 @@ runtime:
 output:
   type: tcp
   tcp:
-    host: "192.168.2.100"
+    host: "192.168.137.1"
     port: 9000
     queue_size: 32
+    bind_ip: "192.168.137.56"
+    bind_interface: "eth1"
+    include_image: true
+    image_quality: 80
+    image_interval: 3
+    draw_detections: true
 
 logging:
   level: "INFO"

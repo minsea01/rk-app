@@ -150,6 +150,57 @@ class TestDecodePredictions:
             # Class IDs should default to 0
             assert np.all(cls_ids == 0)
 
+    def test_decode_predictions_raw_probability_scores(self):
+        """Test raw mode can consume probability-domain scores without sigmoid."""
+        pred = np.zeros((1, 10, 5), dtype=np.float32)
+        pred[0, 0, 0] = 200.0  # cx
+        pred[0, 0, 1] = 100.0  # cy
+        pred[0, 0, 2] = 50.0   # w
+        pred[0, 0, 3] = 60.0   # h
+        pred[0, 0, 4] = 0.85   # score already probability
+
+        boxes, confs, cls_ids = decode_predictions(
+            pred,
+            imgsz=416,
+            conf_thres=0.8,
+            iou_thres=0.45,
+            head="raw",
+            decode_meta={"head": "raw", "num_classes": 1, "has_objectness": 0, "score_is_probability": 1},
+        )
+
+        assert len(boxes) == 1
+        assert pytest.approx(float(confs[0]), abs=1e-6) == 0.85
+        assert int(cls_ids[0]) == 0
+
+    def test_decode_predictions_raw_normalized_coords(self):
+        """Test raw mode scales normalized coords when metadata says so."""
+        pred = np.zeros((1, 10, 5), dtype=np.float32)
+        pred[0, 0, 0] = 0.5
+        pred[0, 0, 1] = 0.5
+        pred[0, 0, 2] = 0.25
+        pred[0, 0, 3] = 0.5
+        pred[0, 0, 4] = 0.9
+
+        boxes, confs, cls_ids = decode_predictions(
+            pred,
+            imgsz=416,
+            conf_thres=0.5,
+            iou_thres=0.45,
+            head="raw",
+            decode_meta={
+                "head": "raw",
+                "num_classes": 1,
+                "has_objectness": 0,
+                "score_is_probability": 1,
+                "coords_are_normalized": 1,
+            },
+        )
+
+        assert len(boxes) == 1
+        assert pytest.approx(float(confs[0]), abs=1e-6) == 0.9
+        assert int(cls_ids[0]) == 0
+        assert np.allclose(boxes[0], np.array([156.0, 104.0, 260.0, 312.0], dtype=np.float32))
+
     def test_decode_predictions_very_low_channel_count(self):
         """Test decode_predictions with too few channels."""
         N = 100

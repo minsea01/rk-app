@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cctype>
@@ -8,6 +9,7 @@
 #include <optional>
 #include <string>
 #include <thread>
+#include <vector>
 
 #include <opencv2/opencv.hpp>
 
@@ -217,6 +219,12 @@ std::unique_ptr<rkapp::output::IOutput> createOutput(
   if (config.output.queue_size > 0) {
     output_config += ",queue:" + std::to_string(config.output.queue_size);
   }
+  if (!config.output.bind_ip.empty()) {
+    output_config += ",bind_ip:" + config.output.bind_ip;
+  }
+  if (!config.output.bind_interface.empty()) {
+    output_config += ",iface:" + config.output.bind_interface;
+  }
   if (!json_output_file.empty()) {
     output_config += ",file:" + json_output_file;
   }
@@ -239,8 +247,34 @@ void saveVisualization(const rkapp::pipeline::PipelineResult& result,
   cv::imwrite(vis_path.string(), vis_frame);
 }
 
+std::vector<uint8_t> encodeOutputImage(const rkapp::pipeline::PipelineResult& result,
+                                       const rkapp::pipeline::PipelineConfig::OutputSpec& output) {
+  if (!output.include_image || result.frame.empty()) {
+    return {};
+  }
+
+  const int interval = std::max(1, output.image_interval);
+  if (result.frame_id < 0 || (result.frame_id % interval) != 0) {
+    return {};
+  }
+
+  cv::Mat image = result.frame;
+  if (output.draw_detections && !result.detections.empty()) {
+    image = result.frame.clone();
+    drawDetections(image, result.detections);
+  }
+
+  const int quality = std::clamp(output.image_quality, 1, 100);
+  std::vector<uint8_t> encoded;
+  if (!cv::imencode(".jpg", image, encoded, {cv::IMWRITE_JPEG_QUALITY, quality})) {
+    LOGW("Failed to encode frame ", result.frame_id, " as JPEG for uplink");
+    return {};
+  }
+  return encoded;
+}
+
 void publishResult(const rkapp::pipeline::PipelineResult& result, rkapp::output::IOutput* output,
-                   const std::string& source_uri) {
+                   const rkapp::pipeline::PipelineConfig& config, const std::string& source_uri) {
   if (output == nullptr) {
     return;
   }
@@ -254,6 +288,11 @@ void publishResult(const rkapp::pipeline::PipelineResult& result, rkapp::output:
   frame_result.height = result.frame.rows;
   frame_result.detections = result.detections;
   frame_result.source_uri = source_uri;
+  frame_result.image_bytes = encodeOutputImage(result, config.output);
+  if (!frame_result.image_bytes.empty()) {
+    frame_result.image_encoding = "jpeg";
+    frame_result.image_contains_overlays = config.output.draw_detections;
+  }
   output->send(frame_result);
 }
 
@@ -310,6 +349,16 @@ int main(int argc, char* argv[]) {
   LOGI("Thresholds: conf=", config.model.conf_threshold, ", iou=", config.model.iou_threshold);
   LOGI("Undistort: ", (config.preprocess.enable_undistort ? "enabled" : "disabled"));
   LOGI("Preprocess profile: ", config.preprocess.profile);
+  LOGI("Output: ", config.output.type, " -> ", config.output.host, ":", config.output.port);
+  LOGI("Output bind_ip: ",
+       (config.output.bind_ip.empty() ? std::string("(system route)") : config.output.bind_ip));
+  LOGI("Output iface: ",
+       (config.output.bind_interface.empty() ? std::string("(system route)")
+                                             : config.output.bind_interface));
+  LOGI("Output image uplink: ", (config.output.include_image ? "enabled" : "disabled"),
+       " (quality=", config.output.image_quality,
+       ", interval=", config.output.image_interval,
+       ", overlays=", (config.output.draw_detections ? "on" : "off"), ")");
   LOGI("Warmup: ", config.runtime.warmup_iterations);
   LOGI("Async mode: ", (config.runtime.async_mode ? "enabled" : "disabled"));
 
@@ -330,7 +379,7 @@ int main(int argc, char* argv[]) {
     if (!options.save_vis_dir.empty()) {
       saveVisualization(result, vis_dir);
     }
-    publishResult(result, output.get(), config.source.uri);
+    publishResult(result, output.get(), config, config.source.uri);
     handled_frames.fetch_add(1, std::memory_order_relaxed);
   };
 

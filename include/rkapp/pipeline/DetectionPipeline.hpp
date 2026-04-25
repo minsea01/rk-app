@@ -5,6 +5,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <cstdint>
 #include <array>
 #include <vector>
 #include <opencv2/opencv.hpp>
@@ -56,12 +57,28 @@ struct PipelineConfig {
         std::string host = "127.0.0.1";
         int port = 9000;
         int queue_size = 0;
+        std::string bind_ip;
+        std::string bind_interface;
+        bool include_image = false;
+        int image_quality = 85;
+        int image_interval = 1;
+        bool draw_detections = true;
         bool enable_profiling = false;
     };
 
     struct RuntimeSpec {
         int warmup_iterations = 5;
         bool async_mode = false;
+    };
+
+    struct TrackingSpec {
+        bool enable = false;
+        float match_iou = 0.30f;
+        float ema_alpha = 0.65f;
+        int confirm_hits = 2;
+        int max_misses = 4;
+        bool keep_missing_tracks = true;
+        float missing_conf_decay = 0.08f;
     };
 
     struct LoggingSpec {
@@ -81,6 +98,7 @@ struct PipelineConfig {
     PreprocessSpec preprocess;
     OutputSpec output;
     RuntimeSpec runtime;
+    TrackingSpec tracking;
     LoggingSpec logging;
     FailurePolicy failure;
 };

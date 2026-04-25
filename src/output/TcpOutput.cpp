@@ -60,6 +60,45 @@ std::string escape_json(const std::string& value) {
         return escaped;
 }
 
+std::string base64_encode(const std::vector<uint8_t>& bytes) {
+        static constexpr char kAlphabet[] =
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        if (bytes.empty()) {
+            return {};
+        }
+
+        std::string out;
+        out.reserve(((bytes.size() + 2) / 3) * 4);
+        size_t i = 0;
+        while (i + 2 < bytes.size()) {
+            const uint32_t block = (static_cast<uint32_t>(bytes[i]) << 16) |
+                                   (static_cast<uint32_t>(bytes[i + 1]) << 8) |
+                                   static_cast<uint32_t>(bytes[i + 2]);
+            out.push_back(kAlphabet[(block >> 18) & 0x3F]);
+            out.push_back(kAlphabet[(block >> 12) & 0x3F]);
+            out.push_back(kAlphabet[(block >> 6) & 0x3F]);
+            out.push_back(kAlphabet[block & 0x3F]);
+            i += 3;
+        }
+
+        if (i < bytes.size()) {
+            uint32_t block = static_cast<uint32_t>(bytes[i]) << 16;
+            out.push_back(kAlphabet[(block >> 18) & 0x3F]);
+            if (i + 1 < bytes.size()) {
+                block |= static_cast<uint32_t>(bytes[i + 1]) << 8;
+                out.push_back(kAlphabet[(block >> 12) & 0x3F]);
+                out.push_back(kAlphabet[(block >> 6) & 0x3F]);
+                out.push_back('=');
+            } else {
+                out.push_back(kAlphabet[(block >> 12) & 0x3F]);
+                out.push_back('=');
+                out.push_back('=');
+            }
+        }
+
+        return out;
+}
+
 }  // namespace
 
 bool TcpOutput::open(const std::string& config) {
@@ -217,7 +256,21 @@ bool TcpOutput::send(const FrameResult& result) {
                  << "\"class_name\":\"" << escape_json(det.class_name) << "\"";
             json << '}';
         }
-        json << "]}\n";
+        json << ']';
+
+        if (!result.image_bytes.empty()) {
+            json << ",\"image\":{"
+                 << "\"encoding\":\"" << escape_json(result.image_encoding.empty()
+                                                        ? std::string("jpeg")
+                                                        : result.image_encoding)
+                 << "\","
+                 << "\"contains_overlays\":"
+                 << (result.image_contains_overlays ? "true" : "false") << ','
+                 << "\"data_base64\":\"" << base64_encode(result.image_bytes) << "\""
+                 << '}';
+        }
+
+        json << "}\n";
 
         const std::string payload = json.str();
 

@@ -51,6 +51,7 @@ int main(int argc, char** argv) {
     std::string model_path = "artifacts/models/yolo11n_416.rknn";
     std::string image_path = "assets/test.jpg";
     int iterations = 50;
+    int input_size = 0;
     float conf_thres = 0.5f;
 
     // 解析参数
@@ -70,7 +71,16 @@ int main(int argc, char** argv) {
             catch (const std::exception&) {
                 std::fprintf(stderr, "Invalid value for --conf: %s\n", argv[i]); return 1;
             }
+        } else if (arg == "--imgsz" && i + 1 < argc) {
+            try { input_size = std::stoi(argv[++i]); }
+            catch (const std::exception&) {
+                std::fprintf(stderr, "Invalid value for --imgsz: %s\n", argv[i]); return 1;
+            }
         }
+    }
+
+    if (input_size <= 0) {
+        input_size = (model_path.find("416") != std::string::npos) ? 416 : 640;
     }
 
     std::cout << "========================================\n";
@@ -79,6 +89,7 @@ int main(int argc, char** argv) {
     std::cout << "模型: " << model_path << "\n";
     std::cout << "图片: " << image_path << "\n";
     std::cout << "迭代: " << iterations << "\n";
+    std::cout << "输入尺寸: " << input_size << "\n";
     std::cout << "置信度: " << conf_thres << "\n";
     std::cout << "\n";
 
@@ -89,7 +100,7 @@ int main(int argc, char** argv) {
     rkapp::infer::ModelSpec model_spec;
     model_spec.backend = rkapp::infer::ModelBackend::RKNN;
     model_spec.model_path = model_path;
-    model_spec.input_size = 416;
+    model_spec.input_size = input_size;
     const auto model_meta = rkapp::infer::loadModelMetaFromPath(model_path);
     model_spec.decode_meta = model_meta.meta;
     model_spec.decode_meta_path = model_meta.source_path;
