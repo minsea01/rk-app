@@ -44,7 +44,7 @@ graph TB
 
 ```bash
 # 运行RGMII驱动配置脚本
-sudo ./scripts/rgmii_driver_config.sh
+sudo ./scripts/network/rgmii_driver_config.sh
 
 # 预期输出：
 # ✅ 检测到RGMII0接口 (eth0)
@@ -141,8 +141,8 @@ sudo ip route add 192.168.2.0/24 dev eth1
 ### GigE Vision相机配置
 
 ```python
-# 使用工业相机集成脚本
-python3 scripts/industrial_camera_integration.py
+# 准备海康 GigE 相机网络与抓图验证
+bash scripts/deploy/prepare_hikrobot_gige.sh --expect-camera --grab 30
 
 # 或手动配置
 import cv2
@@ -223,7 +223,7 @@ echo 64 | sudo tee /sys/class/net/eth1/weight
 
 ```bash
 # 运行完整的网络吞吐量验证
-sudo ./scripts/network_throughput_validator.sh
+sudo ./scripts/network/network_throughput_validator.sh
 
 # 测试流程：
 # 1. 环境检查
@@ -317,7 +317,7 @@ sudo ip link set eth0 up
 
 ```bash
 # 检查网络配置
-sudo ./scripts/rgmii_driver_config.sh
+sudo ./scripts/network/rgmii_driver_config.sh
 
 # 检查CPU中断分配
 grep eth /proc/interrupts
@@ -412,7 +412,7 @@ echo "f0" | sudo tee /sys/class/net/eth1/queues/rx-0/rps_cpus
 
 ```bash
 # 一键诊断脚本
-sudo ./scripts/rgmii_driver_config.sh --diagnose
+sudo ./scripts/network/rgmii_driver_config.sh --diagnose
 
 # 手动诊断命令
 sudo dmesg | grep -i -E "eth|rgmii|stmmac"

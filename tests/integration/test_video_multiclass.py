@@ -31,7 +31,7 @@ import numpy as np  # noqa: E402
 
 from apps.utils.yolo_post import letterbox, postprocess_yolov8  # noqa: E402
 
-MODEL_PATH = REPO_ROOT / "artifacts/models/yolo11n_416.rknn"
+MODEL_PATH = REPO_ROOT / "artifacts/models/yolo11n_coco80_416_int8.rknn"
 VIDEO_PATH = REPO_ROOT / "assets/street.mp4"
 
 

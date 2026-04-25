@@ -160,14 +160,14 @@
   ```
 - **输出文件**：
   - best.onnx (11MB, FP32)
-  - best.rknn (4.7MB, INT8)
+  - best_person_aug_416_norm_int8.rknn (4.7MB, INT8)
 
 #### 【第13页】部署与自动化
 - **一键部署脚本**：
   ```bash
   scripts/deploy/rk3588_run.sh \
     --runner python \
-    --model artifacts/models/best.rknn
+    --model artifacts/models/best_person_aug_416_norm_int8.rknn
   ```
 - **自动化脚本**：
   - 模型转换流水线
@@ -272,7 +272,7 @@
 
 #### 【第21页】不足与展望
 - **存在的不足**：
-  1. RK3588硬件实测待完成
+  1. RK3588基础实测已完成，双网口与真实相机验收继续补充
   2. mAP微调待执行（2-4小时）
   3. 双网卡驱动待验证
 - **改进方向**：

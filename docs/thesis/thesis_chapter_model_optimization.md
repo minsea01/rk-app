@@ -196,7 +196,7 @@ for image in test_images:
   • 转换为RKNN
   • 输出预编译模型
  ↓
-输出2：RKNN模型 (best.rknn) → 板上部署
+输出2：RKNN模型 (best_person_aug_416_norm_int8.rknn) → 板上部署
 ```
 
 ### 3.4.2 ONNX导出
@@ -316,7 +316,7 @@ def convert_to_rknn(
 # 使用示例
 convert_to_rknn(
     onnx_model_path='artifacts/models/best.onnx',
-    output_path='artifacts/models/best.rknn',
+    output_path='artifacts/models/best_person_aug_416_norm_int8.rknn',
     calib_txt='datasets/coco/calib_images/calib.txt',
     target='rk3588',
     do_quant=True
@@ -380,7 +380,7 @@ YOLO11n不同分辨率的输出：
 
 engine:
   type: rknn
-  model: "artifacts/models/yolo11n_416.rknn"
+  model: "artifacts/models/best_person_aug_416_norm_int8.rknn"
   imgsz: 416  # ← 推荐值：避免Transpose CPU回退
 
 nms:
@@ -526,7 +526,7 @@ def validate_conversion(onnx_model_path, rknn_model_path, test_images_dir):
 # 运行验证
 validate_conversion(
     'artifacts/models/best.onnx',
-    'artifacts/models/best.rknn',
+    'artifacts/models/best_person_aug_416_norm_int8.rknn',
     'assets/test_images'
 )
 ```
@@ -574,7 +574,7 @@ def compare_detections(onnx_output, rknn_output, iou_threshold=0.5):
 5. **参数调优**：conf=0.5 (600×NMS加速)
 6. **质量验证**：<5%数值误差，>90%检测匹配
 
-**最终模型**：`artifacts/models/best.rknn` (4.7MB, 预期30-50ms推理延迟)
+**最终模型**：`artifacts/models/best_person_aug_416_norm_int8.rknn` (4.7MB, 预期30-50ms推理延迟)
 
 下一章将介绍部署实现和在RK3588板上的具体部署步骤。
 

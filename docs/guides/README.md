@@ -7,7 +7,7 @@
 | 文件 | 说明 | 适用场景 |
 |------|------|----------|
 | [QUICK_START_GUIDE.md](QUICK_START_GUIDE.md) | 快速开始指南 | 首次使用 |
-| [QUICK_START_PHASE2.md](QUICK_START_PHASE2.md) | 快速开始 Phase 2 | 进阶使用 |
+| [BOARD_QUICKSTART.md](BOARD_QUICKSTART.md) | 板端快速部署 | RK3588运行 |
 
 ## 🔧 硬件集成
 
@@ -95,7 +95,7 @@ bash scripts/train/train_citypersons.sh
 | PC推理测试 | `yolo predict model=*.onnx` | QUICK_START_GUIDE |
 | 板端部署 | `scripts/deploy/rk3588_run.sh` | HARDWARE_INTEGRATION_MANUAL |
 | 模型训练 | `bash scripts/train/*.sh` | PERSON_TRAINING_GUIDE |
-| 性能测试 | `bash scripts/run_bench.sh` | QUICK_START_PHASE2 |
+| 性能测试 | `bash scripts/run_bench.sh` | BOARD_QUICKSTART |
 | 网络配置 | `scripts/network/*.sh` | HARDWARE_INTEGRATION_MANUAL |
 
 ## 📊 性能基准参考

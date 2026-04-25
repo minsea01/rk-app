@@ -37,7 +37,7 @@ services:
     # 启动命令
     command: >
       python3 apps/yolov8_rknn_infer.py
-      --model /app/artifacts/models/best.rknn
+      --model /app/artifacts/models/best_person_aug_416_norm_int8.rknn
       --source /app/assets/test.jpg
       --output /app/logs/result.json
 

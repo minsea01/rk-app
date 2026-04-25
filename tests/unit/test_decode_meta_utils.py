@@ -121,6 +121,8 @@ def test_best_person_aug_int8_fixture_is_known_person_raw_model():
     model_path = repo_root / "artifacts" / "models" / "best_person_aug_int8.rknn"
     if not model_path.exists():
         pytest.skip("deployment model binary is not available in this checkout")
+    if not Path(f"{model_path}.json").exists() and not Path(f"{model_path}.meta").exists():
+        pytest.skip("deployment model decode metadata sidecar is not available in this checkout")
 
     digest = hashlib.sha256(model_path.read_bytes()).hexdigest()
 

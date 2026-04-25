@@ -77,7 +77,7 @@ docker exec -it rk3588-detector bash
 ```bash
 # 在容器内执行
 python3 apps/yolov8_rknn_infer.py \
-  --model /app/artifacts/models/yolo11n_416.rknn \
+  --model /app/artifacts/models/best_person_aug_416_norm_int8.rknn \
   --source /app/assets/test.jpg \
   --save /app/logs/result.jpg
 ```
@@ -228,13 +228,13 @@ services:
 # 1. 在Docker容器中测试
 docker exec rk3588-detector \
   python3 scripts/profiling/board_benchmark.py \
-  --model /app/artifacts/models/yolo11n_416.rknn \
+  --model /app/artifacts/models/best_person_aug_416_norm_int8.rknn \
   --iterations 100 \
   --output /app/artifacts/docker_performance.json
 
 # 2. 在主机上测试（原生）
 python3 scripts/profiling/board_benchmark.py \
-  --model artifacts/models/yolo11n_416.rknn \
+  --model artifacts/models/best_person_aug_416_norm_int8.rknn \
   --iterations 100 \
   --output artifacts/native_performance.json
 
@@ -373,7 +373,7 @@ docker exec -it rk3588-detector bash
 # 【板子端】容器内推理
 docker exec rk3588-detector \
   python3 apps/yolov8_rknn_infer.py \
-  --model /app/artifacts/models/yolo11n_416.rknn \
+  --model /app/artifacts/models/best_person_aug_416_norm_int8.rknn \
   --source /app/assets/test.jpg
 
 # 【板子端】停止容器

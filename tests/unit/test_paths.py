@@ -76,11 +76,11 @@ class TestResolvePath:
 
     def test_resolves_relative_path_to_absolute(self):
         """Test that relative paths are resolved to absolute."""
-        path = resolve_path("artifacts/models/best.onnx")
+        path = resolve_path("artifacts/models/best_person_aug_416_norm.onnx")
         assert path.is_absolute()
         # Project name may vary depending on workspace configuration
         assert "rk-app" in str(path) or "workspace" in str(path)
-        assert str(path).endswith("artifacts/models/best.onnx")
+        assert str(path).endswith("artifacts/models/best_person_aug_416_norm.onnx")
 
     def test_returns_absolute_path_unchanged(self):
         """Test that absolute paths are returned as-is."""
@@ -171,7 +171,7 @@ class TestGetModelPath:
         assert isinstance(result, Path)
         assert result.is_absolute()
         # Should contain default ONNX model from PathConfig
-        assert "yolo11n_416.onnx" in str(result)
+        assert "best_person_aug_416_norm.onnx" in str(result)
 
     def test_looks_in_models_dir_for_filename_only(self):
         """Test that bare filenames are looked up in MODELS_DIR."""
@@ -239,11 +239,11 @@ class TestRelativeToProject:
     def test_converts_absolute_to_relative(self):
         """Test that absolute paths are converted to relative."""
         root = get_project_root()
-        abs_path = root / "artifacts" / "models" / "best.onnx"
+        abs_path = root / "artifacts" / "models" / "best_person_aug_416_norm.onnx"
         result = relative_to_project(abs_path)
 
         assert not result.is_absolute()
-        assert str(result) == "artifacts/models/best.onnx"
+        assert str(result) == "artifacts/models/best_person_aug_416_norm.onnx"
 
     def test_handles_paths_outside_project(self):
         """Test that paths outside project are returned as-is."""

@@ -144,11 +144,11 @@ python tools/export_yolov8_to_onnx.py \
 # Step 2: ONNX → RKNN (INT8量化)
 python tools/convert_onnx_to_rknn.py \
   --onnx best.onnx \
-  --out best.rknn \
+  --out best_person_aug_416_norm_int8.rknn \
   --calib datasets/coco/calib_images/calib.txt \
   --target rk3588 \
   --do-quant
-# 输出: best.rknn (4.7MB, INT8)
+# 输出: best_person_aug_416_norm_int8.rknn (4.7MB, INT8)
 
 # Step 3: PC模拟器验证
 python scripts/run_rknn_sim.py
@@ -212,7 +212,7 @@ def run_inference(model_path, image_path):
 # scripts/deploy/rk3588_run.sh
 scripts/deploy/rk3588_run.sh \
   --runner python \
-  --model artifacts/models/best.rknn \
+  --model artifacts/models/best_person_aug_416_norm_int8.rknn \
   --source video.mp4
 ```
 
@@ -316,7 +316,7 @@ scripts/deploy/rk3588_run.sh \
 **3. 完整的无板开发流程**
 - **问题**: 传统开发需硬件在手
 - **解决方案**: PC模拟器 + ONNX验证 + 精度对拍
-- **创新点**: 硬件到货前完成98%开发工作
+- **创新点**: 在板端实测前完成主体开发，并已完成基础板端验证
 - **效果**: 缩短开发周期，降低硬件依赖
 
 ### 6.2 工程特色
@@ -362,11 +362,11 @@ scripts/deploy/rk3588_run.sh \
 
 ### 7.1 存在的不足
 
-**1. 硬件验证待完成**
+**1. 板端验证已补充**
 - **现状**: RK3588板端实测数据缺失
 - **影响**: FPS和网络吞吐为理论估算
 - **原因**: 硬件采购延迟
-- **计划**: 硬件到货后立即补充实测数据
+- **计划**: 答辩前补充完整双网口与真实相机实测数据
 
 **2. mAP精度有提升空间**
 - **现状**: 基线mAP@0.5为61.57%
@@ -383,7 +383,7 @@ scripts/deploy/rk3588_run.sh \
 
 **短期优化（1-2周）：**
 1. 执行CityPersons微调，达到≥90% mAP
-2. 硬件到货后补充板端实测数据
+2. 继续补充双网口与真实相机实测数据
 3. 验证双网卡驱动和网络吞吐
 
 **中期优化（1-3月）：**
@@ -392,7 +392,7 @@ scripts/deploy/rk3588_run.sh \
 3. TensorRT加速对比实验
 
 **长期展望：**
-1. 支持多类别工业目标检测（15类）
+1. 支持COCO80多类别扩展检测
 2. 视频流实时推理与可视化
 3. 边缘AI集群部署方案
 
@@ -467,7 +467,7 @@ scripts/deploy/rk3588_run.sh \
 > 2. **RKNN PC模拟器**：验证转换正确性，精度损失<1%
 > 3. **理论推算**：基于官方benchmark（20-30ms NPU延迟），估算端到端25-35ms
 >
-> 硬件到货后，只需运行`rk3588_run.sh`即可立即部署验证，风险可控。
+> 板端部署时，只需运行`rk3588_run.sh`即可立即部署验证，风险可控。
 
 **Q4: 后处理为什么从3135ms降至5.2ms？**
 > A: 因为NMS（非极大值抑制）的计算复杂度是O(n²)。conf_threshold=0.25时，候选框过多（~8000个），NMS成为瓶颈。提升至0.5后，候选框降至~500个，计算量减少256倍（理论值），实测提速600倍。这是工业应用的常见优化手段。
@@ -493,7 +493,7 @@ scripts/deploy/rk3588_run.sh \
 > 1. **核心工作已完成**：模型转换、PC验证、代码实现、论文撰写
 > 2. **理论支撑充分**：官方benchmark数据、文献支持
 > 3. **可替代验证**：RKNN PC模拟器 + ONNX GPU实测
-> 4. **后续补充**：硬件到货后立即补充实测数据
+> 4. **后续补充**：答辩前补充完整双网口与真实相机实测数据
 >
 > 本质上，毕业设计考核的是**系统设计能力和工程实现能力**，这些我已充分展示。
 

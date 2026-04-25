@@ -47,7 +47,7 @@ fork again
 end fork
 
 |#F3E5F5|验证阶段|
-:RKNN模型\n<b>yolo11n.rknn</b>\n4.3MB;
+:RKNN模型\n<b>best_person_aug_416_norm_int8.rknn</b>\n4.3MB;
 
 :PC模拟器验证\n<i>run_rknn_sim.py</i>;
 

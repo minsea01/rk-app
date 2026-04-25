@@ -34,7 +34,7 @@
 |--------|------|----------|
 | Ubuntu 20.04系统 | ✅ | `docker/x86-rknn-build.Dockerfile` (FROM ubuntu:20.04) |
 | 交叉编译环境 | ✅ | `CMakeLists.txt` (支持 arm64 交叉编译) |
-| 网口驱动适配 | ✅ | `scripts/setup_network.sh` (RGMII配置) |
+| 网口驱动适配 | ✅ | `scripts/network/rgmii_driver_config.sh` (RGMII配置) |
 | 以太网相机集成 | ✅ | `src/capture/GigeSource.cpp` (GigE Vision支持) |
 | Python开发环境 | ✅ | `requirements.txt` + `docker/` 配置完整 |
 
@@ -79,7 +79,7 @@ RK3588 NPU推理 (6TOPS算力)
 
 **模型文件**:
 - ✅ `artifacts/models/yolo11n.onnx` (亦以 `best.onnx` 提供别名)
-- ✅ `artifacts/models/yolo11n_int8.rknn` (亦以 `best.rknn` 提供别名)
+- ✅ `artifacts/models/yolo11n_int8.rknn` (亦以 `best_person_aug_416_norm_int8.rknn` 提供别名)
 
 ---
 
@@ -94,16 +94,16 @@ RK3588 NPU推理 (6TOPS算力)
 |------|------|----------|--------|
 | 检测类别 | ≥10类 | **80类** | +700% 🏆 |
 | 检测精度 | 未明确 | **94.2% mAP50** | - |
-| 数据集 | 公开/自制 | 工业检测数据集 | ✅ |
+| 数据集 | 公开/自制 | COCO/COCO80与行人子集 | ✅ |
 
 **数据集配置**:
 ```bash
-config/industrial_classes.txt  # 80类工业缺陷
-config/classes.txt             # COCO 80类
+config/person_classes.txt      # 行人检测主演示
+config/coco80_names.txt        # COCO 80类扩展验证
 ```
 
 **实际类别（部分示例）**:
-- 工业缺陷: 裂纹、划痕、气泡、夹杂物等15+类
+- 行人检测: person
 - 通用物体: 人、车辆、动物等COCO 80类
 - **总计**: 远超任务书"10类"要求
 
@@ -135,7 +135,7 @@ config/classes.txt             # COCO 80类
 ├── RK3588官方规格: 双RGMII千兆以太网
 ├── 同类产品案例: Orange Pi 5实测950Mbps ✅
 ├── Linux驱动成熟: STMMAC主线支持 ✅
-└── 验证脚本: scripts/network_throughput_validator.sh ✅
+└── 验证脚本: scripts/network/network_throughput_validator.sh ✅
 ```
 
 ---
@@ -188,17 +188,13 @@ RK3588 NPU性能:
 
 ```
 docs/
-├── README.md                          # 项目总览
-├── QUICK_START_GUIDE.md               # 快速开始
+├── guides/QUICK_START_GUIDE.md        # 快速开始
+├── guides/BOARD_QUICKSTART.md         # 板端快速部署
 ├── RK3588_VALIDATION_CHECKLIST.md     # 验证清单
-├── DEPLOYMENT_READY.md                # 部署指南
 ├── UBUNTU22_COMPATIBILITY.md          # 系统兼容性
-├── reports/
-│   ├── PROJECT_STATUS_HONEST_REPORT.md   # 诚实状态报告
-│   ├── PROJECT_ACCEPTANCE_REPORT.md      # 验收报告
-│   └── COMPLIANCE_DATA_REPORT.md         # 合规数据
 └── deployment/
-    └── FINAL_DEPLOYMENT_GUIDE.md      # 最终部署指南
+    ├── BOARD_DEPLOYMENT_QUICKSTART.md # 快速部署指南
+    └── RK3588_DEPLOYMENT_CHECKLIST.md # 部署检查清单
 ```
 
 **建议**: 基于现有技术文档，可快速整理为毕业设计说明书。
@@ -258,7 +254,7 @@ docs/
 ### 6.1 硬件验证（优先级：高）
 
 - [ ] **RK3588实机吞吐量测试** (≥900Mbps)
-  - 测试脚本: `scripts/network_throughput_validator.sh`
+  - 测试脚本: `scripts/network/network_throughput_validator.sh`
   - 预计时间: 2小时
 
 - [ ] **NPU实际FPS测试** (≥30 FPS)
@@ -272,7 +268,7 @@ docs/
 ### 6.2 文档撰写（优先级：中）
 
 - [ ] **开题报告** (5000字+)
-  - 基于: `docs/README.md`
+  - 基于: `docs/thesis/thesis_opening_report.md`
   - 预计时间: 3天
 
 - [ ] **中期报告1** (3000字)
@@ -314,7 +310,7 @@ docs/
 |------|------|------|----------|
 | RK3588吞吐量<900Mbps | 20% | 高 | 已有同类产品达标案例+优化脚本 |
 | NPU性能不达标 | 10% | 中 | 可降低分辨率或优化模型 |
-| 硬件到货延迟 | 30% | 低 | 提前联系实验室/导师借用 |
+| 双网口/相机实测数据不足 | 20% | 中 | 使用板端验收脚本补充证据 |
 | 文档时间不足 | 40% | 中 | 复用现有技术文档加速 |
 
 ### 应对策略
@@ -398,8 +394,8 @@ docs/
 ✅ 检测类别: 80类（超出要求700%）
 ✅ 技术实现: 双网口驱动 + GigE相机 + NPU推理
 
-### 待完成项
-⚠️ RK3588实机性能验证（吞吐量+FPS）
+### 待补充项
+⚠️ RK3588双网口吞吐量与真实相机链路证据
 📝 毕业设计文档撰写（开题+中期×2+说明书）
 
 ### 综合评价

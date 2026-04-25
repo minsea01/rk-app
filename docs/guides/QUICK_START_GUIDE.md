@@ -63,8 +63,8 @@ tail -10 logs/demo_results.log
 ## 🔧 RK3588部署
 
 ```bash
-# 使用RK3588配置（硬件到货后）
-./build/detect_cli --cfg config/deploy/rk3588_industrial_final.yaml
+# 使用RK3588配置
+./build/detect_cli --cfg config/detection/detect_rknn.yaml
 
 # 完整验证清单
 cat docs/RK3588_VALIDATION_CHECKLIST.md
@@ -77,7 +77,7 @@ cat docs/RK3588_VALIDATION_CHECKLIST.md
 | **行人RKNN模型** | `artifacts/models/best_person_aug_416_norm_int8.rknn` | RK3588 NPU主演示 |
 | **多类别RKNN模型** | `artifacts/models/yolo11n_coco80_416_int8.rknn` | COCO80扩展验证 |
 | **检测配置** | `config/detection/detect.yaml` | 当前演示配置 |
-| **部署配置** | `config/deploy/rk3588_industrial_final.yaml` | RK3588最终配置 |
+| **部署配置** | `config/detection/detect_rknn.yaml` | RK3588 NPU配置 |
 | **演示日志** | `logs/demo_results.log` | 实际测试数据 |
 | **演示脚本** | `scripts/demo/start_live_web_demo.sh` | 实时画面/结果传输演示 |
 | **验证清单** | `docs/RK3588_VALIDATION_CHECKLIST.md` | 硬件验证指南 |

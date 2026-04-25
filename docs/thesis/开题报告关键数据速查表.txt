@@ -36,7 +36,7 @@
        ↓
   ONNX (best.onnx)      11MB  FP32   ← 中间格式
        ↓
-  RKNN (best.rknn)      4.7MB INT8   ← NPU部署格式
+  RKNN (best_person_aug_416_norm_int8.rknn)      4.7MB INT8   ← NPU部署格式
 
   压缩率:               57%          ← 11MB → 4.7MB
   精度损失:             <1%          ← 优秀
@@ -149,7 +149,7 @@
 
   Phase 2 (11月8日-12月31日)
     ⏳ 系统移植 + 双网卡驱动开发              95%
-    ⏳ 等待RK3588硬件到位                     待定
+    ⏳ 已接入RK3588板端                     待定
 
   Phase 3 (1月1日-4月21日)
     ⏳ 模型优化 + RKNN部署 + 性能测试         待硬件

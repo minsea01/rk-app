@@ -56,7 +56,7 @@ tar czf rk-app-minimal.tar.gz \
   scripts/deploy/ \
   scripts/profiling/ \
   config/ \
-  artifacts/models/best.rknn \
+  artifacts/models/best_person_aug_416_norm_int8.rknn \
   --exclude='__pycache__'
 
 # 传输
@@ -123,14 +123,14 @@ wget -O test.jpg https://ultralytics.com/images/zidane.jpg
 
 # 运行推理
 python3 apps/yolov8_rknn_infer.py \
-  --model artifacts/models/best.rknn \
+  --model artifacts/models/best_person_aug_416_norm_int8.rknn \
   --source test.jpg \
   --save result.jpg \
   --imgsz 640 \
   --conf 0.25
 
 # 预期输出:
-# [INFO] Loading RKNN: artifacts/models/best.rknn
+# [INFO] Loading RKNN: artifacts/models/best_person_aug_416_norm_int8.rknn
 # [INFO] Initializing runtime, core_mask=0x7
 # [INFO] Inference time: XX.XX ms
 # [INFO] Detections: X
@@ -148,12 +148,12 @@ ls -lh result.jpg
 
 # 查看FPS（如果有摄像头）
 python3 apps/yolov8_rknn_infer.py \
-  --model artifacts/models/best.rknn \
+  --model artifacts/models/best_person_aug_416_norm_int8.rknn \
   # 会自动使用/dev/video0
 
 # 或用测试脚本
 python3 scripts/profiling/performance_profiler.py \
-  --model artifacts/models/best.rknn \
+  --model artifacts/models/best_person_aug_416_norm_int8.rknn \
   --model-type rknn \
   --images-dir <your_test_images> \
   --limit 100
@@ -242,7 +242,7 @@ sudo sh -c 'echo 3 > /proc/sys/vm/drop_caches'
 
 # 减小batch size或图片尺寸
 python3 apps/yolov8_rknn_infer.py \
-  --model artifacts/models/best.rknn \
+  --model artifacts/models/best_person_aug_416_norm_int8.rknn \
   --source test.jpg \
   --imgsz 416  # 使用更小尺寸
 ```
@@ -258,7 +258,7 @@ python3 apps/yolov8_rknn_infer.py \
 cd /home/radxa/rk-app
 
 python3 scripts/profiling/performance_profiler.py \
-  --model artifacts/models/best.rknn \
+  --model artifacts/models/best_person_aug_416_norm_int8.rknn \
   --model-type rknn \
   --images-dir <test_images_directory> \
   --limit 100 \
@@ -299,7 +299,7 @@ sudo ip link set eth0 up
 - [ ] 推理成功运行（截图+日志）
 - [ ] FPS ≥ 30（性能报告）
 - [ ] 延迟 ≤ 45ms（性能报告）
-- [ ] 模型体积 ≤ 5MB（ls -lh best.rknn）
+- [ ] 模型体积 ≤ 5MB（ls -lh best_person_aug_416_norm_int8.rknn）
 - [ ] 检测类别 > 10（COCO 80类）
 
 ### 网络指标

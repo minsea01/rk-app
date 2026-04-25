@@ -9,9 +9,9 @@
 ### 1.1 已有资源清单
 
 ✅ **模型文件** (artifacts/models/):
-- `best.rknn` (4.7MB) - YOLO11n INT8量化模型
-- `yolo11n_416.rknn` (4.3MB) - 416×416优化版本（推荐，避免Transpose CPU回退）
-- `yolo11n_int8.rknn` (4.7MB)
+- `best_person_aug_416_norm_int8.rknn` (4.7MB) - YOLO11n INT8量化模型
+- `best_person_aug_416_norm_int8.rknn` (4.3MB) - 416×416行人检测主演示模型
+- `yolo11n_coco80_416_int8.rknn` (4.3MB) - COCO80扩展验证模型
 
 ✅ **部署脚本**:
 - `scripts/deploy/rk3588_run.sh` - 板上一键运行
@@ -206,14 +206,14 @@ wget -O assets/test.jpg https://ultralytics.com/images/zidane.jpg
 
 # 运行推理（使用Python）
 python3 apps/yolov8_rknn_infer.py \
-  --model artifacts/models/yolo11n_416.rknn \
+  --model artifacts/models/best_person_aug_416_norm_int8.rknn \
   --source assets/test.jpg \
   --save result.jpg \
   --imgsz 416 \
   --conf 0.5
 
 # 预期输出:
-# [INFO] Loading RKNN model: artifacts/models/yolo11n_416.rknn
+# [INFO] Loading RKNN model: artifacts/models/best_person_aug_416_norm_int8.rknn
 # [INFO] Initializing RKNNLite runtime
 # [INFO] NPU core mask: 0x7 (3 cores)
 # [INFO] Inference time: 25.3ms
@@ -226,7 +226,7 @@ python3 apps/yolov8_rknn_infer.py \
 ```bash
 # 自动选择CLI或Python运行器
 bash scripts/deploy/rk3588_run.sh \
-  --model artifacts/models/yolo11n_416.rknn \
+  --model artifacts/models/best_person_aug_416_norm_int8.rknn \
   --runner python \
   -- --source assets/test.jpg --save result.jpg
 ```
@@ -256,7 +256,7 @@ cd ~/rk-app
 
 # 使用性能分析脚本（需要先创建）
 python3 scripts/profiling/board_benchmark.py \
-  --model artifacts/models/yolo11n_416.rknn \
+  --model artifacts/models/best_person_aug_416_norm_int8.rknn \
   --iterations 100 \
   --imgsz 416
 
@@ -271,7 +271,7 @@ python3 scripts/profiling/board_benchmark.py \
 ```bash
 # 包括预处理+推理+后处理+网络传输
 python3 scripts/profiling/end_to_end_latency.py \
-  --model artifacts/models/yolo11n_416.rknn \
+  --model artifacts/models/best_person_aug_416_norm_int8.rknn \
   --source assets/test.jpg \
   --target-host 192.168.2.100 \
   --target-port 8080
@@ -326,7 +326,7 @@ ls /dev/video*
 
 # 实时推理
 python3 apps/yolov8_rknn_infer.py \
-  --model artifacts/models/yolo11n_416.rknn \
+  --model artifacts/models/best_person_aug_416_norm_int8.rknn \
   --source 0 \
   --imgsz 416 \
   --conf 0.5 \
@@ -343,7 +343,7 @@ bash scripts/deploy/dual_nic_pipeline.sh \
   --output-interface eth1 \
   --output-host 192.168.2.200 \
   --output-port 8080 \
-  --model artifacts/models/yolo11n_416.rknn
+  --model artifacts/models/best_person_aug_416_norm_int8.rknn
 ```
 
 ---
@@ -359,7 +359,7 @@ bash scripts/deploy/dual_nic_pipeline.sh \
 
 ### 10.2 性能指标
 
-- [ ] **模型体积**: ≤5MB (yolo11n_416.rknn = 4.3MB ✅)
+- [ ] **模型体积**: ≤5MB (best_person_aug_416_norm_int8.rknn = 4.3MB ✅)
 - [ ] **FPS**: ≥30 (目标: 35-45 FPS @ 416×416)
 - [ ] **延迟**: ≤45ms (端到端)
 - [ ] **内存占用**: ≤500MB
@@ -465,7 +465,7 @@ cat /proc/device-tree/model
 # 检查是否用了640×640（会导致Transpose CPU回退）
 # 改用416×416
 python3 apps/yolov8_rknn_infer.py \
-  --model artifacts/models/yolo11n_416.rknn \
+  --model artifacts/models/best_person_aug_416_norm_int8.rknn \
   --imgsz 416
 
 # 检查NPU核心数

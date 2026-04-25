@@ -1,11 +1,11 @@
 # 🎯 RK3588双千兆网口≥900Mbps验证方案
 
-## ❌ **当前状态说明**
+## **当前状态说明**
 
-**必须诚实承认：**
-- ❌ **PC环境无法验证RK3588的真实900Mbps能力**
-- ❌ **我之前提供的142.4Mbps是应用需求，不是网口能力**
-- ✅ **但技术方案和验证方法已完全准备好**
+**验证边界：**
+- PC/WSL 环境不能替代 RK3588 真实双网口吞吐测试
+- 应用层推流带宽不等于网口物理吞吐能力
+- 当前文档给出板端 `iperf3` 验收方法，最终以 RK3588 实机记录为准
 
 ## 🎯 **正确的项目要求理解**
 
@@ -63,16 +63,16 @@ scp -r RK3588_Deploy/ root@<RK3588_IP>:/root/
 # 2. SSH连接RK3588
 ssh root@<RK3588_IP>
 
-# 3. 运行部署脚本
-cd /root/RK3588_Deploy
-sudo ./deploy.sh
+# 3. 运行板端环境检查
+cd /root/rk-app-new
+bash scripts/deploy/check_board_env.sh
 ```
 
 ### **Phase 2: RGMII驱动验证**
 
 ```bash
 # 在RK3588上执行
-sudo ./scripts/rgmii_driver_config.sh
+sudo ./scripts/network/rgmii_driver_config.sh
 
 # 预期验证结果:
 # ✅ 检测到RGMII0接口 (/sys/firmware/devicetree/base/ethernet@fe1b0000)
@@ -203,9 +203,9 @@ eth1并发: 915+ Mbps
 4. Cat6网线 (支持千兆传输)
 
 # 验证步骤:
-1. 部署系统: sudo ./deploy.sh
-2. 配置网络: sudo ./scripts/rgmii_driver_config.sh
-3. 实测吞吐: sudo ./scripts/actual_900mbps_test.sh
+1. 检查环境: bash scripts/deploy/check_board_env.sh
+2. 配置网络: sudo ./scripts/network/rgmii_driver_config.sh
+3. 实测吞吐: sudo ./scripts/network/network_throughput_validator.sh
 4. 结果验证: eth0≥900Mbps && eth1≥900Mbps
 ```
 

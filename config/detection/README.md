@@ -23,5 +23,4 @@ scripts/deploy/prepare_hikrobot_gige.sh --expect-camera --grab 30
 
 旧的 ONNX/COCO/host 测试配置已经统一改到当前存在的
 `best_person_aug_416_norm.onnx` 或 `best_person_aug_416_norm_int8.rknn`，
-不再引用缺失的 `best.onnx`、`pedestrian_416.rknn`、`yolo11n_*.onnx`
-或 `industrial_15cls_*.rknn`。
+不再引用缺失的 `best.onnx`、`pedestrian_416.rknn` 或旧 ONNX/RKNN 文件名。

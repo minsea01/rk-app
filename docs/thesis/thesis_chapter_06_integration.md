@@ -325,7 +325,7 @@ H.264压缩（30:1）= 1493 / 30 = 49.8 Mbps
 **性能验证脚本**：
 
 ```bash
-# scripts/network_throughput_validator.sh
+# scripts/network/network_throughput_validator.sh
 iperf3 -c 192.168.1.100 -t 60 -i 1  # 网口1测试
 iperf3 -c 192.168.2.100 -t 60 -i 1  # 网口2测试
 ```

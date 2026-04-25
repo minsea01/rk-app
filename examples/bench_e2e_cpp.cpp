@@ -7,7 +7,7 @@
  *   见 scripts/build_cpp_board.sh
  *
  * 运行：
- *   ./build/board/bench_e2e_cpp --model artifacts/models/yolo11n_416.rknn --image assets/test.jpg
+ *   ./build/board/bench_e2e_cpp --model artifacts/models/best_person_aug_416_norm_int8.rknn --image assets/test.jpg
  */
 
 #include <iostream>
@@ -48,7 +48,7 @@ double stddev(const std::vector<double>& v) {
 }
 
 int main(int argc, char** argv) {
-    std::string model_path = "artifacts/models/yolo11n_416.rknn";
+    std::string model_path = "artifacts/models/best_person_aug_416_norm_int8.rknn";
     std::string image_path = "assets/test.jpg";
     int iterations = 50;
     int input_size = 0;

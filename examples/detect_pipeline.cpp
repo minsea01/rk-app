@@ -9,7 +9,7 @@
  * - DMA-BUF zero-copy
  *
  * Usage:
- *   ./detect_pipeline --model yolo11n.rknn --input video.mp4 [options]
+ *   ./detect_pipeline --model artifacts/models/best_person_aug_416_norm_int8.rknn --input video.mp4 [options]
  *
  * Options:
  *   --model PATH      RKNN model path (required)

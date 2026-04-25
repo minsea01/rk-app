@@ -46,7 +46,7 @@ cmake --build build -j$(nproc)
 
 #### **2.1 网络配置部署**
 ```bash
-sudo ./RK3588_Deploy/scripts/setup_network.sh
+sudo ./scripts/network/rgmii_driver_config.sh
 
 # 期望输出示例:
 # ✅ eth0配置完成: 192.168.1.10/24
@@ -95,14 +95,14 @@ wait
 
 #### **3.1 RKNN模型验证**
 ```bash
-# 复制模型到RK3588
-cp artifacts/models/industrial_15cls_rk3588_w8a8.rknn /tmp/
+# 复制主演示模型到RK3588
+cp artifacts/models/best_person_aug_416_norm_int8.rknn /tmp/
 
 # 验证模型加载
 python3 -c "
 from rknnlite.api import RKNNLite
 rknn = RKNNLite()
-ret = rknn.load_rknn('/tmp/industrial_15cls_rk3588_w8a8.rknn')
+ret = rknn.load_rknn('/tmp/best_person_aug_416_norm_int8.rknn')
 print(f'模型加载: {\"成功\" if ret == 0 else \"失败\"}')
 ret = rknn.init_runtime()
 print(f'运行时初始化: {\"成功\" if ret == 0 else \"失败\"}')
@@ -116,7 +116,7 @@ print(f'运行时初始化: {\"成功\" if ret == 0 else \"失败\"}')
 #### **3.2 NPU推理性能测试**
 ```bash
 # 使用RKNN配置运行检测
-timeout 120s ./build/detect_cli --cfg config/deploy/rk3588_industrial_final.yaml 2>&1 | tee rknn_performance.log
+timeout 120s ./build/detect_cli --cfg config/detection/detect_rknn.yaml 2>&1 | tee rknn_performance.log
 
 # 性能数据提取
 echo "=== NPU性能统计 ==="
@@ -139,7 +139,7 @@ while true; do
 done &
 
 # 运行推理并观察NPU工作状态
-./build/detect_cli --cfg config/rk3588_industrial_final.yaml &
+./build/detect_cli --cfg config/detection/detect_rknn.yaml &
 PID=$!
 
 # 10秒后停止
@@ -166,17 +166,13 @@ gst-launch-1.0 -v aravissrc camera-name="IndustrialCamera-2K" ! video/x-raw,widt
 
 #### **4.2 2K@24fps完整系统测试**
 ```bash
-# 修改配置为2K分辨率
-sed -i 's/width=512,height=512,framerate=25\/1/width=2048,height=1536,framerate=24\/1/' config/deploy/rk3588_industrial_final.yaml
-
-# 运行完整2K检测测试
-timeout 120s ./build/detect_cli --cfg config/deploy/rk3588_industrial_final.yaml 2>&1 | tee 2k_system_test.log
+# 使用相机配置运行完整检测测试
+timeout 120s ./build/detect_cli --cfg config/detection/detect_hikrobot_mv_ca020_20gc.yaml 2>&1 | tee camera_system_test.log
 
 # 验证数据量
-echo "2K图像处理验证:"
-echo "图像尺寸: 2048x1536"
-echo "处理帧数: $(grep 'Frame.*detections' 2k_system_test.log | wc -l)"
-echo "系统稳定性: $(grep 'Frame.*detections' 2k_system_test.log | tail -1)"
+echo "相机图像处理验证:"
+echo "处理帧数: $(grep 'Frame.*detections' camera_system_test.log | wc -l)"
+echo "系统稳定性: $(grep 'Frame.*detections' camera_system_test.log | tail -1)"
 
 # 期望: 稳定处理2K图像，帧率满足要求
 ```
@@ -202,12 +198,8 @@ threading.Thread(target=server, daemon=True).start()
 time.sleep(3600)  # 保持1小时
 " &
 
-# 修改配置启用网络上传
-sed -i 's/ip: \"127.0.0.1\"/ip: \"192.168.2.10\"/' config/deploy/rk3588_industrial_final.yaml
-sed -i 's/port: 9000/port: 8080/' config/deploy/rk3588_industrial_final.yaml
-
 # 运行检测验证上传
-timeout 60s ./build/detect_cli --cfg config/deploy/rk3588_industrial_final.yaml
+timeout 60s ./build/detect_cli --cfg config/detection/detect_rknn.yaml
 
 # 期望: 看到"收到数据"的服务器日志输出
 ```
@@ -227,7 +219,7 @@ timeout 60s ./build/detect_cli --cfg config/deploy/rk3588_industrial_final.yaml
 
 ### **✅ 完整系统集成**
 - [ ] 2K工业相机稳定采集
-- [ ] 15类检测正常工作
+- [ ] 行人检测正常工作，COCO80扩展模型可选验证
 - [ ] 网络结果上传成功
 - [ ] 系统连续运行无崩溃
 

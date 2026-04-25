@@ -1,14 +1,11 @@
 #!/usr/bin/env bash
-# Unified training runner for cloud_training scripts.
+# Unified training runner for local and board-delivery experiments.
 #
 # Purpose:
 #   - Keep YOLO train/export/report logic in one place.
 #   - Let scenario scripts only handle dataset/environment preparation.
 
 set -euo pipefail
-
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 usage() {
   cat <<'EOF'

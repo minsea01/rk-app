@@ -91,7 +91,7 @@ python -c "import onnxruntime as ort; print(ort.get_available_providers())"
 存储：≥1GB (用于模型和临时数据)
 ```
 
-**首次部署步骤** (当板子到货时)：
+**首次部署步骤**：
 
 ```bash
 # 1. 登录到RK3588
@@ -288,7 +288,7 @@ def run_inference(model_path, image_path, conf_threshold=0.5):
 
 if __name__ == '__main__':
     # 示例用法
-    engine = RKNNInferenceEngine('artifacts/models/best.rknn', target_size=416)
+    engine = RKNNInferenceEngine('artifacts/models/best_person_aug_416_norm_int8.rknn', target_size=416)
 
     # 加载测试图像
     image = cv2.imread('assets/test.jpg')
@@ -402,7 +402,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 # 配置
-MODEL_PATH="${PROJECT_ROOT}/artifacts/models/best.rknn"
+MODEL_PATH="${PROJECT_ROOT}/artifacts/models/best_person_aug_416_norm_int8.rknn"
 CONFIG_PATH="${PROJECT_ROOT}/config/detection/detect_rknn.yaml"
 RUNNER="${1:-auto}"  # auto|binary|python
 MODEL_OVERRIDE="${2:-}"
@@ -620,8 +620,8 @@ sender.close()
 错误: Could not find model file
 原因: 模型路径不正确或文件损坏
 解决:
-  1. 检查路径: file artifacts/models/best.rknn
-  2. 验证大小: du -h artifacts/models/best.rknn (应为4.7MB)
+  1. 检查路径: file artifacts/models/best_person_aug_416_norm_int8.rknn
+  2. 验证大小: du -h artifacts/models/best_person_aug_416_norm_int8.rknn (应为4.7MB)
   3. 重新转换: python tools/convert_onnx_to_rknn.py
 ```
 

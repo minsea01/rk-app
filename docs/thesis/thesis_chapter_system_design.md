@@ -375,7 +375,7 @@ PyTorch模型 (best.pt)
               • 校准INT8 (300张图片)
               • 转换为RKNN
               ↓
-         RKNN模型 (best.rknn) → 板上部署
+         RKNN模型 (best_person_aug_416_norm_int8.rknn) → 板上部署
               • 4.7MB (满足<5MB)
               • 预编译格式
               • 即插即用
@@ -430,7 +430,7 @@ scp scripts/deploy/rk3588_run.sh root@<board_ip>:/opt/rk-app/
 # 2. 在板子上运行
 ssh root@<board_ip>
 cd /opt/rk-app
-./rk3588_run.sh --runner python --model models/best.rknn
+./rk3588_run.sh --runner python --model models/best_person_aug_416_norm_int8.rknn
 
 # 输出：自动使用Python RKNNLite推理
 ```

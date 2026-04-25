@@ -221,7 +221,7 @@ The compliance with graduation requirements reaches 95%, with 100% software impl
 
 ## 附录B：配置文件示例
 
-**模型转换配置** (`config/quantization_config.yaml`):
+**模型转换入口** (`tools/convert_onnx_to_rknn.py`):
 
 ```yaml
 quantization:
@@ -247,7 +247,7 @@ detection:
 
 ## 附录C：部署操作手册
 
-详见：`docs/deployment/FINAL_DEPLOYMENT_GUIDE.md`
+详见：`docs/deployment/BOARD_DEPLOYMENT_QUICKSTART.md` 和 `docs/guides/BOARD_QUICKSTART.md`
 
 **快速开始**：
 
@@ -271,7 +271,7 @@ scripts/deploy/deploy_to_board.sh --host 192.168.1.100 --run
 
 ## 附录D：测试报告
 
-详见：`artifacts/PROJECT_REVIEW_REPORT.md`
+详见：`docs/RK3588_ACCEPTANCE_EVIDENCE.md`
 
 **单元测试统计**：
 

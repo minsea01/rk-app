@@ -71,7 +71,7 @@ bash scripts/deploy/board_health_check.sh
 ```bash
 export PYTHONPATH=$PWD
 python3 apps/yolov8_rknn_infer.py \
-  --model artifacts/models/yolo11n_416.rknn \
+  --model artifacts/models/best_person_aug_416_norm_int8.rknn \
   --source assets/test.jpg \
   --save result.jpg \
   --imgsz 416 \
@@ -81,7 +81,7 @@ python3 apps/yolov8_rknn_infer.py \
 ### 4. Performance Test
 ```bash
 python3 scripts/profiling/board_benchmark.py \
-  --model artifacts/models/yolo11n_416.rknn \
+  --model artifacts/models/best_person_aug_416_norm_int8.rknn \
   --iterations 100
 ```
 
@@ -144,5 +144,5 @@ echo "  3. Install dependencies:"
 echo "     bash scripts/deploy/install_dependencies.sh"
 echo ""
 echo "  4. Run inference:"
-echo "     bash scripts/deploy/rk3588_run.sh --model artifacts/models/yolo11n_416.rknn"
+echo "     bash scripts/deploy/rk3588_run.sh --model artifacts/models/best_person_aug_416_norm_int8.rknn"
 echo ""

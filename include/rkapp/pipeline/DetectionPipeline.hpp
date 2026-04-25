@@ -149,7 +149,7 @@ using ResultCallback = std::function<void(PipelineResult&&)>;
  * @code
  *   PipelineConfig cfg;
  *   cfg.source.uri = "video.mp4";
- *   cfg.model.model_path = "yolo11n.rknn";
+ *   cfg.model.model_path = "artifacts/models/best_person_aug_416_norm_int8.rknn";
  *
  *   DetectionPipeline pipeline;
  *   pipeline.init(cfg);

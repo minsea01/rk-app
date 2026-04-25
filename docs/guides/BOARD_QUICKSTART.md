@@ -96,7 +96,7 @@ export PYTHONPATH=$PWD
 
 # 方式A: 使用Python直接运行
 python3 apps/yolov8_rknn_infer.py \
-  --model artifacts/models/yolo11n_416.rknn \
+  --model artifacts/models/best_person_aug_416_norm_int8.rknn \
   --source assets/test.jpg \
   --save result.jpg \
   --imgsz 416 \
@@ -104,12 +104,12 @@ python3 apps/yolov8_rknn_infer.py \
 
 # 方式B: 使用一键运行脚本
 bash scripts/deploy/rk3588_run.sh \
-  --model artifacts/models/yolo11n_416.rknn \
+  --model artifacts/models/best_person_aug_416_norm_int8.rknn \
   --runner python \
   -- --source assets/test.jpg --save result.jpg
 
 # 预期输出:
-# [INFO] Loading RKNN model: artifacts/models/yolo11n_416.rknn
+# [INFO] Loading RKNN model: artifacts/models/best_person_aug_416_norm_int8.rknn
 # [INFO] Initializing RKNNLite runtime
 # [INFO] NPU core mask: 0x7 (使用3个NPU核心)
 # [INFO] Inference time: 22.5ms
@@ -134,7 +134,7 @@ scp radxa@192.168.1.100:~/rk-app/result.jpg /tmp/
 
 ```bash
 python3 scripts/profiling/board_benchmark.py \
-  --model artifacts/models/yolo11n_416.rknn \
+  --model artifacts/models/best_person_aug_416_norm_int8.rknn \
   --iterations 100 \
   --imgsz 416 \
   --output artifacts/board_performance.json
@@ -150,7 +150,7 @@ python3 scripts/profiling/board_benchmark.py \
 
 ```bash
 python3 scripts/profiling/end_to_end_latency.py \
-  --model artifacts/models/yolo11n_416.rknn \
+  --model artifacts/models/best_person_aug_416_norm_int8.rknn \
   --source assets/test.jpg \
   --imgsz 416 \
   --iterations 100 \
@@ -187,7 +187,7 @@ bash scripts/deploy/dual_nic_pipeline.sh \
   --input-source rtsp://192.168.1.100:8554/stream \
   --output-host 192.168.2.200 \
   --output-port 8080 \
-  --model artifacts/models/yolo11n_416.rknn
+  --model artifacts/models/best_person_aug_416_norm_int8.rknn
 
 # 或使用USB摄像头测试
 bash scripts/deploy/dual_nic_pipeline.sh \
@@ -205,7 +205,7 @@ bash scripts/deploy/dual_nic_pipeline.sh \
 - [ ] 检测结果正确 (输出bbox、置信度、类别)
 
 ### 性能指标
-- [ ] **模型体积 ≤ 5MB**: yolo11n_416.rknn = 4.3MB ✅
+- [ ] **模型体积 ≤ 5MB**: best_person_aug_416_norm_int8.rknn = 4.3MB ✅
 - [ ] **FPS ≥ 30**: 目标35-45 FPS @ 416×416
 - [ ] **延迟 ≤ 45ms**: 端到端延迟测试
 - [ ] **内存占用 ≤ 500MB**: 监控峰值内存
@@ -248,7 +248,7 @@ pip3 install opencv-python-headless
 ```bash
 # 使用416×416模型（避免Transpose CPU回退）
 python3 apps/yolov8_rknn_infer.py \
-  --model artifacts/models/yolo11n_416.rknn \
+  --model artifacts/models/best_person_aug_416_norm_int8.rknn \
   --imgsz 416
 ```
 
@@ -283,12 +283,12 @@ bash scripts/deploy/board_health_check.sh
 # 【板子端】推理
 export PYTHONPATH=$PWD
 python3 apps/yolov8_rknn_infer.py \
-  --model artifacts/models/yolo11n_416.rknn \
+  --model artifacts/models/best_person_aug_416_norm_int8.rknn \
   --source assets/test.jpg --save result.jpg
 
 # 【板子端】性能测试
 python3 scripts/profiling/board_benchmark.py \
-  --model artifacts/models/yolo11n_416.rknn --iterations 100
+  --model artifacts/models/best_person_aug_416_norm_int8.rknn --iterations 100
 
 # 【板子端】双网卡配置
 sudo bash scripts/deploy/configure_dual_nic.sh

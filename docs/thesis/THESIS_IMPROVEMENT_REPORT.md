@@ -38,7 +38,7 @@
 
 ### 1. 新增第一章：绪论（新增）
 
-**文件**：`docs/thesis_chapter_01_introduction.md`（578行）
+**文件**：`docs/thesis/thesis_chapter_01_introduction.md`（578行）
 
 **内容结构**：
 
@@ -78,7 +78,7 @@
 
 ### 2. 新增第六章：系统集成与验证（新增）
 
-**文件**：`docs/thesis_chapter_06_integration.md`（495行）
+**文件**：`docs/thesis/thesis_chapter_06_integration.md`（495行）
 
 **内容结构**：
 
@@ -123,7 +123,7 @@
 
 ### 3. 新增第七章：总结与展望（新增）
 
-**文件**：`docs/thesis_chapter_07_conclusion.md`（489行）
+**文件**：`docs/thesis/thesis_chapter_07_conclusion.md`（489行）
 
 **内容结构**：
 
@@ -345,19 +345,19 @@ E. 性能测试数据（PC基准 + 参数调优）
 
 ### 新增文件
 
-1. `docs/thesis_chapter_01_introduction.md` - 第1章：绪论（578行）
-2. `docs/thesis_chapter_06_integration.md` - 第6章：系统集成与验证（495行）
-3. `docs/thesis_chapter_07_conclusion.md` - 第7章：总结与展望（489行）
+1. `docs/thesis/thesis_chapter_01_introduction.md` - 第1章：绪论（578行）
+2. `docs/thesis/thesis_chapter_06_integration.md` - 第6章：系统集成与验证（495行）
+3. `docs/thesis/thesis_chapter_07_conclusion.md` - 第7章：总结与展望（489行）
 4. `docs/THESIS_COMPLETE.md` - 完整论文主文档（600+行）
 5. `docs/THESIS_IMPROVEMENT_REPORT.md` - 本改进报告
 
 ### 现有文件（保留）
 
 1. `docs/thesis_opening_report.md` - 开题报告（293行）
-2. `docs/thesis_chapter_system_design.md` - 第2章（534行）
-3. `docs/thesis_chapter_model_optimization.md` - 第3章（580行）
-4. `docs/thesis_chapter_deployment.md` - 第4章（704行）
-5. `docs/thesis_chapter_performance.md` - 第5章（489行）
+2. `docs/thesis/thesis_chapter_system_design.md` - 第2章（534行）
+3. `docs/thesis/thesis_chapter_model_optimization.md` - 第3章（580行）
+4. `docs/thesis/thesis_chapter_deployment.md` - 第4章（704行）
+5. `docs/thesis/thesis_chapter_performance.md` - 第5章（489行）
 6. `docs/开题报告.docx` - Word导出（42KB）
 7. `docs/RK3588行人检测_毕业设计说明书.docx` - Word导出（69KB）
 
@@ -368,13 +368,13 @@ E. 性能测试数据（PC基准 + 参数调优）
 ```bash
 # 导出完整论文
 pandoc docs/THESIS_COMPLETE.md \
-    docs/thesis_chapter_01_introduction.md \
-    docs/thesis_chapter_system_design.md \
-    docs/thesis_chapter_model_optimization.md \
-    docs/thesis_chapter_deployment.md \
-    docs/thesis_chapter_performance.md \
-    docs/thesis_chapter_06_integration.md \
-    docs/thesis_chapter_07_conclusion.md \
+    docs/thesis/thesis_chapter_01_introduction.md \
+    docs/thesis/thesis_chapter_system_design.md \
+    docs/thesis/thesis_chapter_model_optimization.md \
+    docs/thesis/thesis_chapter_deployment.md \
+    docs/thesis/thesis_chapter_performance.md \
+    docs/thesis/thesis_chapter_06_integration.md \
+    docs/thesis/thesis_chapter_07_conclusion.md \
     -o docs/毕业论文_完整版.docx \
     --toc \
     --number-sections \

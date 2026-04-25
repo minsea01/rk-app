@@ -553,11 +553,11 @@ git commit -m "Add model v1.0"
 
 **附录B：部署操作手册**
 
-见文档：`docs/deployment/FINAL_DEPLOYMENT_GUIDE.md`
+见文档：`docs/deployment/BOARD_DEPLOYMENT_QUICKSTART.md`
 
 **附录C：测试报告**
 
-见文档：`artifacts/PROJECT_REVIEW_REPORT.md`
+见文档：`docs/RK3588_ACCEPTANCE_EVIDENCE.md`
 
 ---
 
