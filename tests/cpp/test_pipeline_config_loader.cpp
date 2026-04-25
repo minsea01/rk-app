@@ -28,12 +28,17 @@ fs::path makeTempDir(const std::string& prefix) {
 }  // namespace
 
 TEST(PipelineConfigNormalize, ResolvesStructuredModelSpecAndSidecar) {
+  const fs::path dir = makeTempDir("rkapp_cfg_normalize_");
+  const fs::path model = dir / "demo_person.rknn";
+  std::ofstream(model).put('\n');
+  std::ofstream(model.string() + ".json")
+      << R"({"head":"raw","num_classes":1,"has_objectness":0,"score_is_probability":1})";
+
   rkapp::pipeline::PipelineConfig config;
   config.source.uri = "assets";
   config.source.type = rkapp::capture::SourceType::FOLDER;
   config.source.use_mpp_decode = false;
-  config.model.model_path =
-      (repoRoot() / "artifacts/models/best_person_aug_int8.rknn").string();
+  config.model.model_path = model.string();
   config.model.input_size = 640;
   config.model.conf_threshold = 0.42f;
   config.model.iou_threshold = 0.33f;
@@ -57,8 +62,7 @@ TEST(PipelineConfigNormalize, ResolvesStructuredModelSpecAndSidecar) {
   EXPECT_EQ(normalized.source.uri, "assets");
   EXPECT_EQ(normalized.source.type, rkapp::capture::SourceType::FOLDER);
   EXPECT_FALSE(normalized.source.use_mpp_decode);
-  EXPECT_EQ(normalized.model.model_path,
-            (repoRoot() / "artifacts/models/best_person_aug_int8.rknn").string());
+  EXPECT_EQ(normalized.model.model_path, model.string());
   EXPECT_EQ(normalized.model.input_size, 640);
   EXPECT_FLOAT_EQ(normalized.model.conf_threshold, 0.42f);
   EXPECT_FLOAT_EQ(normalized.model.iou_threshold, 0.33f);
@@ -78,8 +82,10 @@ TEST(PipelineConfigNormalize, ResolvesStructuredModelSpecAndSidecar) {
   EXPECT_EQ(normalized.model.decode_meta.has_objectness, 0);
   EXPECT_EQ(normalized.model.decode_meta.head, "raw");
   EXPECT_EQ(normalized.model.decode_meta.score_is_probability, 1);
-  EXPECT_NE(normalized.model.decode_meta_path.find("best_person_aug_int8.rknn.json"),
+  EXPECT_NE(normalized.model.decode_meta_path.find("demo_person.rknn.json"),
             std::string::npos);
+
+  fs::remove_all(dir);
 }
 
 TEST(PipelineConfigLoader, LoadsCanonicalStructuredSchema) {
@@ -323,15 +329,23 @@ TEST(PipelineConfigLoader, ModelLocalSidecarOverridesMissingMetadata) {
   fs::remove_all(dir);
 }
 
-TEST(PipelineConfigLoader, BestPersonAugInt8UsesModelLocalSidecar) {
-  const auto loaded = rkapp::infer::loadModelMetaFromPath(
-      (repoRoot() / "artifacts/models/best_person_aug_int8.rknn").string());
+TEST(PipelineConfigLoader, LoadsModelLocalSidecarForRknnModel) {
+  const fs::path dir = makeTempDir("rkapp_model_meta_");
+  const fs::path model = dir / "demo_person.rknn";
+  std::ofstream(model).put('\n');
+  std::ofstream(model.string() + ".json")
+      << R"({"head":"raw","num_classes":1,"has_objectness":0,"score_is_probability":1,)"
+         R"("output_index":0})";
+
+  const auto loaded = rkapp::infer::loadModelMetaFromPath(model.string());
   EXPECT_EQ(loaded.meta.head, "raw");
   EXPECT_EQ(loaded.meta.num_classes, 1);
   EXPECT_EQ(loaded.meta.has_objectness, 0);
   EXPECT_EQ(loaded.meta.score_is_probability, 1);
   EXPECT_EQ(loaded.meta.output_index, 0);
-  EXPECT_NE(loaded.source_path.find("best_person_aug_int8.rknn.json"), std::string::npos);
+  EXPECT_NE(loaded.source_path.find("demo_person.rknn.json"), std::string::npos);
+
+  fs::remove_all(dir);
 }
 
 TEST(PipelineFactory, CreateEngineRespectsExplicitBackend) {
