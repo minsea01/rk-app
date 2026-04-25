@@ -31,7 +31,7 @@ _project_root = None
 def get_project_root() -> Path:
     """Get absolute path to project root directory.
 
-    Finds project root by looking for marker files (.git, CLAUDE.md, etc.)
+    Finds project root by looking for marker files (.git, pyproject.toml, etc.)
 
     Returns:
         Path: Absolute path to project root
@@ -46,18 +46,20 @@ def get_project_root() -> Path:
     if _project_root is not None:
         return _project_root
 
-    # Strategy 1: Use __file__ and walk up to find .git
+    project_markers = [".git", "pyproject.toml", "CMakeLists.txt", "requirements.txt"]
+
+    # Strategy 1: Use __file__ and walk up to find project markers
     current = Path(__file__).resolve().parent
     while current != current.parent:  # Stop at filesystem root
         # Look for project markers
-        if any((current / marker).exists() for marker in [".git", "CLAUDE.md", "requirements.txt"]):
+        if any((current / marker).exists() for marker in project_markers):
             _project_root = current
             return _project_root
         current = current.parent
 
     # Strategy 2: Use current working directory
     cwd = Path.cwd()
-    if any((cwd / marker).exists() for marker in [".git", "CLAUDE.md", "requirements.txt"]):
+    if any((cwd / marker).exists() for marker in project_markers):
         _project_root = cwd
         return _project_root
 

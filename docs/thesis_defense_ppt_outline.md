@@ -169,11 +169,11 @@
     --runner python \
     --model artifacts/models/best.rknn
   ```
-- **自动化命令**（Claude Code）：
-  - /full-pipeline: 完整转换流水线
-  - /model-validate: 精度验证
-  - /performance-test: 性能测试
-  - /board-ready: 部署检查
+- **自动化脚本**：
+  - 模型转换流水线
+  - 精度验证
+  - 性能测试
+  - 部署检查
 - **配图**：自动化工作流示意图
 
 ---
@@ -252,7 +252,7 @@
      - 硬件未到货完成98%工作
 
   3. **工程化自动化体系**
-     - 5个Claude命令
+     - 自动化脚本体系
      - 49个单元测试
      - 一键部署
 - **配图**：创新点亮点标注图

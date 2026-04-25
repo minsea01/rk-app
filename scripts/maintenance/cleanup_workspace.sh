@@ -22,8 +22,6 @@ PATTERNS=(
   "=4.1.0"
   "=7.4.0"
   "check*_*.onnx"
-  "bench_dfl_opt"
-  "test_bugfix_arm64"
   "yolo11n.onnx"
   "yolo11n.pt"
   "yolov8n.pt"
@@ -31,12 +29,15 @@ PATTERNS=(
 
 found_any=0
 for pattern in "${PATTERNS[@]}"; do
-  matches=("$ROOT_DIR"/$pattern)
+  matches=()
+  while IFS= read -r candidate; do
+    matches+=("$candidate")
+  done < <(compgen -G "$ROOT_DIR/$pattern" || true)
   for candidate in "${matches[@]}"; do
     if [[ ! -e "$candidate" && ! -L "$candidate" ]]; then
       continue
     fi
-    rel="${candidate#$ROOT_DIR/}"
+    rel="${candidate#"$ROOT_DIR"/}"
     found_any=1
     if [[ "$DRY_RUN" -eq 1 ]]; then
       echo "[DRY-RUN] would remove: $rel"

@@ -211,7 +211,7 @@ done
 - [论文第2章 系统设计](../thesis_chapter_system_design.md)
 - [论文第3章 模型优化](../thesis_chapter_model_optimization.md)
 - [完整论文索引](../THESIS_README.md)
-- [项目主文档](../../CLAUDE.md)
+- [项目主文档](../../README.md)
 
 ## 更新日志
 

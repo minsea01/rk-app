@@ -2,7 +2,7 @@
 """Aggregate benchmark results from iperf3 and ffprobe.
 
 This script aggregates network throughput and media metadata into
-unified JSON, CSV, and Markdown reports for MCP pipeline validation.
+unified JSON, CSV, and Markdown reports for local benchmark validation.
 """
 
 import argparse
@@ -162,7 +162,7 @@ def main():
         raise ConfigurationError(f"Failed to write CSV report: {e}") from e
 
     md = []
-    md.append("# Bench Report (MCP MVP)")
+    md.append("# Bench Report")
     md.append("")
     md.append(f"- Timestamp: {ts}")
     md.append(f"- iperf3 throughput (loopback): {round(mbps,2)} Mbps")

@@ -479,7 +479,7 @@ artifacts/
 - **完整清单**: `docs/deployment/RK3588_DEPLOYMENT_CHECKLIST.md`
 - **部署指南**: `docs/deployment/BOARD_DEPLOYMENT_QUICKSTART.md`
 - **RGMII网络**: `docs/docs/RGMII_NETWORK_GUIDE.md`
-- **项目说明**: `CLAUDE.md`
+- **项目说明**: `README.md`
 
 ### 外部资源
 - **Rockchip RKNN**: https://github.com/rockchip-linux/rknn-toolkit2

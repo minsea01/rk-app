@@ -51,7 +51,7 @@
 
 ### 辅助参考
 
-- **[CLAUDE.md](../CLAUDE.md)** - 项目完整技术文档
+- **[README.md](../../README.md)** - 项目完整技术文档
   - 开发工具链配置
   - 模型转换指南
   - PC模拟验证方法
@@ -90,7 +90,7 @@
 - ✅ **学习模型优化方法** → 阅读 [第三章](thesis_chapter_model_optimization.md)
 - ✅ **了解部署流程** → 阅读 [第四章](thesis_chapter_deployment.md)
 - ✅ **查看性能指标** → 阅读 [第五章](thesis_chapter_performance.md)
-- ✅ **获取开发命令** → 查看 [CLAUDE.md](../CLAUDE.md)
+- ✅ **获取开发命令** → 查看 [README.md](../../README.md)
 
 ### 论文导出建议
 
@@ -160,25 +160,20 @@
 
 ---
 
-## 🔧 自动化命令
+## 🔧 自动化脚本
 
-所有操作都可以通过 Claude Code 的 Slash Commands 快速执行：
+常用操作可以通过项目脚本快速执行：
 
 ```bash
-# 生成性能测试报告
-/performance-test
-
-# 检查部署准备情况
-/board-ready
+# 运行板端部署检查
+bash scripts/deploy/board_health_check.sh
 
 # 验证模型转换质量
-/model-validate
+python scripts/compare_onnx_rknn.py --help
 
-# 执行完整转换流程
-/full-pipeline
+# 运行实时演示
+bash scripts/demo/start_live_web_demo.sh
 ```
-
-*注：Slash Commands 需要在下次Claude Code会话中使用（加载延迟）*
 
 ---
 
@@ -259,4 +254,3 @@
 **更新时间**：2025-10-28
 **文档完成度**：95%
 **下次更新**：Phase 2完成后 (Dec 2025)
-

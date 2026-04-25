@@ -1,7 +1,6 @@
 # Include important documentation
 include README.md
 include LICENSE
-include CLAUDE.md
 include requirements.txt
 include requirements-dev.txt
 include requirements_board.txt
@@ -11,9 +10,6 @@ include requirements_train.txt
 include pyproject.toml
 include setup.py
 recursive-include config *.yaml *.yml *.txt
-
-# Include Claude automation
-recursive-include .claude *.md
 
 # Include scripts
 recursive-include scripts *.sh *.py

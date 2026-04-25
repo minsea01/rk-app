@@ -111,12 +111,12 @@ bash scripts/train/train_citypersons.sh
 - **毕业论文**: [../thesis/](../thesis/) (开题报告、论文章节)
 - **项目报告**: [../reports/](../reports/) (状态报告、评审文档)
 - **主文档**: [../../README.md](../../README.md)
-- **AI助手指南**: [../../CLAUDE.md](../../CLAUDE.md)
+- **项目结构**: [../PROJECT_STRUCTURE.md](../PROJECT_STRUCTURE.md)
 
 ## ❓ 常见问题
 
 ### Q: 如何验证环境配置正确？
-A: 运行 `python scripts/check_paths.py`
+A: 主机侧运行 `cmake --preset x86-debug && ctest --preset x86-debug`；板端运行 `scripts/deploy/check_board_env.sh` 或 `scripts/deploy/board_health_check.sh`。
 
 ### Q: 模型转换失败怎么办？
 A: 检查 ONNX opset版本，参考 QUICK_START_GUIDE.md 的故障排除章节

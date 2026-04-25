@@ -36,14 +36,14 @@ class TestGetProjectRoot:
         # Project name may vary depending on workspace configuration
         assert root.name in ("rk-app", "workspace"), f"Unexpected project root name: {root.name}"
 
-    def test_finds_project_root_from_claude_md(self, tmp_path, monkeypatch):
-        """Test that CLAUDE.md marker is recognized."""
+    def test_finds_project_root_from_pyproject_marker(self, tmp_path, monkeypatch):
+        """Test that pyproject.toml marker is recognized."""
         import apps.utils.paths as paths_module
 
         marker_root = tmp_path / "project"
         module_dir = marker_root / "apps" / "utils"
         module_dir.mkdir(parents=True)
-        (marker_root / "CLAUDE.md").write_text("", encoding="utf-8")
+        (marker_root / "pyproject.toml").write_text("", encoding="utf-8")
 
         monkeypatch.setattr(paths_module, "_project_root", None)
         monkeypatch.setattr(paths_module, "__file__", str(module_dir / "paths.py"))

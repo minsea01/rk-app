@@ -202,7 +202,7 @@ bool TcpOutput::open(const std::string& config) {
         }
 
         if (enable_file_output_) {
-            file_output_.open(file_path_, std::ios::app);
+            file_output_.open(file_path_, std::ios::out | std::ios::trunc);
             if (!file_output_.is_open()) {
                 LOGE("TcpOutput: failed to open output file: ", file_path_);
                 enable_file_output_ = false;

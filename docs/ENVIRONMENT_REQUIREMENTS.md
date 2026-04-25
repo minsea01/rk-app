@@ -56,7 +56,7 @@ pip install numpy
 | `scripts/deploy/deploy_to_board.sh` | ✅ | N/A | ssh, scp | Deploy to board via SSH |
 | **Testing & Utilities** |
 | `tests/unit/*.py` | ✅ | ✅ | pytest | Unit tests |
-| `tools/aggregate.py` | ✅ | ✅ | - | MCP benchmark aggregation |
+| `tools/aggregate.py` | ✅ | ✅ | - | Benchmark aggregation |
 | `scripts/run_bench.sh` | ✅ | ✅ | iperf3, ffprobe | Benchmark pipeline |
 
 **Legend:**
@@ -193,7 +193,7 @@ find $(pwd) -name "*.jpg" | sort > calib.txt
 - [x] Code quality (linting, formatting)
 - [x] Preprocessing pipeline
 - [x] Post-processing (NMS, decoding)
-- [x] MCP benchmark utilities
+- [x] Benchmark utilities
 
 ### ⚠️ Partially Testable
 
@@ -245,7 +245,7 @@ python3 scripts/compare_onnx_rknn.py
 
 ## 📚 Additional Resources
 
-- **CLAUDE.md** - Complete project guide and workflow
+- **README.md** - Complete project guide and workflow
 - **QUICK_START_GUIDE.md** - Quick start commands
 - **RK3588_VALIDATION_CHECKLIST.md** - On-device validation steps
 - **README.md** - Project overview

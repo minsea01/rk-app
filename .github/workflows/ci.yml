@@ -2,7 +2,7 @@ name: CI/CD Pipeline
 
 on:
   push:
-    branches: [ main, master, develop, claude/** ]
+    branches: [ main, master, develop, feature/** ]
   pull_request:
     branches: [ main, master, develop ]
 
@@ -216,8 +216,8 @@ jobs:
       - name: Check documentation files
         run: |
           echo "Checking documentation..."
-          test -f CLAUDE.md && echo "✓ CLAUDE.md exists"
           test -f README.md && echo "✓ README.md exists"
+          test -f docs/PROJECT_STRUCTURE.md && echo "✓ project structure exists"
           test -f docs/reports/S_LEVEL_COMPLETION_REPORT.md && echo "✓ S-level report exists"
           test -f docs/reports/HONEST_ENGINEERING_ASSESSMENT.md && echo "✓ Honest assessment exists"
           test -f docs/reports/TASK_REQUIREMENTS_ASSESSMENT.md && echo "✓ Task assessment exists"

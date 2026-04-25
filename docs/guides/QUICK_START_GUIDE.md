@@ -8,9 +8,10 @@
 rk-app/
 ├── artifacts/models/          # 所有模型文件 (.pt, .onnx, .rknn)
 ├── config/
-│   ├── detection/            # 检测配置 (detect.yaml)
-│   ├── deploy/              # 部署配置 (rk3588_industrial_final.yaml)
-│   └── industrial_classes.txt
+│   ├── detection/            # 检测配置
+│   ├── deploy/               # RK3588部署配置
+│   ├── person_classes.txt    # 行人检测类别
+│   └── coco80_names.txt      # COCO80多类别扩展
 ├── scripts/
 │   ├── demo/                # 演示脚本
 │   ├── benchmark/           # 性能测试
@@ -37,12 +38,16 @@ sudo -E arv-fake-gv-camera-0.10 -i 127.0.0.1 >/tmp/arv_fake.log 2>&1 &
 ./build/detect_cli --cfg config/detection/detect.yaml
 ```
 
-### **方法2：使用演示脚本**
+### **方法2：使用实时演示脚本**
 ```bash
 cd ~/rk-app
 
-# 运行完整演示脚本（推荐给老师演示）
-./scripts/demo/demo_presentation_script.sh
+# WSL/无图形界面推荐：启动板端推理、SSH隧道和浏览器查看页
+./scripts/demo/start_live_web_demo.sh
+
+# 查看状态或停止
+./scripts/demo/status_live_web_demo.sh
+./scripts/demo/stop_live_web_demo.sh
 ```
 
 ## 📊 查看历史测试数据
@@ -69,12 +74,12 @@ cat docs/RK3588_VALIDATION_CHECKLIST.md
 
 | 文件类型 | 位置 | 说明 |
 |---------|------|------|
-| **ONNX模型** | `artifacts/models/best.onnx` | x86验证用 |
-| **RKNN模型** | `artifacts/models/industrial_15cls_rk3588_w8a8.rknn` | RK3588 NPU用 |
+| **行人RKNN模型** | `artifacts/models/best_person_aug_416_norm_int8.rknn` | RK3588 NPU主演示 |
+| **多类别RKNN模型** | `artifacts/models/yolo11n_coco80_416_int8.rknn` | COCO80扩展验证 |
 | **检测配置** | `config/detection/detect.yaml` | 当前演示配置 |
 | **部署配置** | `config/deploy/rk3588_industrial_final.yaml` | RK3588最终配置 |
 | **演示日志** | `logs/demo_results.log` | 实际测试数据 |
-| **演示脚本** | `scripts/demo/demo_presentation_script.sh` | 老师汇报用 |
+| **演示脚本** | `scripts/demo/start_live_web_demo.sh` | 实时画面/结果传输演示 |
 | **验证清单** | `docs/RK3588_VALIDATION_CHECKLIST.md` | 硬件验证指南 |
 
 ## ⚡ 常见问题
@@ -92,7 +97,7 @@ grep "model:" config/detection/detect.yaml
 ```bash
 # 确保从项目根目录运行
 cd ~/rk-app
-./scripts/demo/demo_presentation_script.sh
+./scripts/demo/start_live_web_demo.sh
 ```
 
 ### **Q: 相机连接失败**
@@ -106,10 +111,9 @@ sudo -E arv-fake-gv-camera-0.10 -i 127.0.0.1 >/tmp/arv_fake.log 2>&1 &
 
 ```bash
 # 检查关键文件完整性
-echo "✅ 模型文件:" && ls artifacts/models/*.rknn *.onnx
+echo "✅ 模型文件:" && ls artifacts/models/*.rknn
 echo "✅ 配置文件:" && ls config/detection/ config/deploy/
 echo "✅ 演示脚本:" && ls scripts/demo/
-echo "✅ 测试日志:" && ls logs/
 echo "✅ 技术文档:" && ls docs/
 ```
 

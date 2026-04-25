@@ -378,7 +378,7 @@ iperf3 -c 192.168.2.100 -t 60 -i 1  # 网口2测试
    - Black/Flake8/Pylint代码规范
 
 2. **自动化程度**：
-   - 5个Slash Commands（Claude Code集成）
+   - 自动化脚本体系
    - 一键部署脚本
    - 自动化测试管道
 

@@ -480,5 +480,5 @@ pandoc docs/THESIS_COMPLETE.md \
 ---
 
 **改进完成时间**：2025-11-16
-**改进负责人**：Claude Code (Senior Technical Writer)
+**改进负责人**：项目组
 **下一步**：提交论文、准备答辩PPT、录制演示视频

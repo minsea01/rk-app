@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Unit tests for tools.http_post module.
 
-Tests HTTP POST utility for MCP pipeline validation.
+Tests HTTP POST utility for local pipeline validation.
 """
 
 import json

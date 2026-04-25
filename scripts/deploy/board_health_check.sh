@@ -99,7 +99,7 @@ if check "RKNNLite导入" "python3 -c 'from rknnlite.api import RKNNLite'"; then
         if run_rknn_probe "$MODEL_PATH" > /dev/null 2>&1; then
             echo -e "${GREEN}PASS${NC}"
             PASS=$((PASS + 1))
-            echo "  使用模型: ${MODEL_PATH#$ROOT/}"
+            echo "  使用模型: ${MODEL_PATH#"$ROOT"/}"
         else
             echo -e "${RED}FAIL${NC}"
             FAIL=$((FAIL + 1))
@@ -115,7 +115,7 @@ echo ""
 echo "=== Layer 4: NPU硬件 ==="
 check_or_continue "NPU设备节点" "compgen -G '/dev/rknpu*' > /dev/null || compgen -G '/dev/dri/renderD*' > /dev/null"
 if has_rknpu_device || has_render_node; then
-    ls -l /dev/rknpu* /dev/dri/renderD* 2>/dev/null | sed 's/^/  /'
+    find /dev -maxdepth 3 \( -name 'rknpu*' -o -path '/dev/dri/renderD*' \) -exec ls -l {} + 2>/dev/null | sed 's/^/  /'
 fi
 
 check_or_continue "RKNPU驱动信息" "test -f /sys/kernel/debug/rknpu/version || dmesg 2>/dev/null | grep -qi rknpu"
@@ -165,7 +165,7 @@ check_or_continue "磁盘可用空间>=2G" "[ \$(df -Pk . | awk 'NR==2 {print \$
 # Layer 8: 网络
 echo ""
 echo "=== Layer 8: 网络接口 ==="
-ip link show | grep -E "^[0-9]+" | awk '{print $2}' | sed 's/:$//' | while read iface; do
+ip link show | grep -E "^[0-9]+" | awk '{print $2}' | sed 's/:$//' | while read -r iface; do
     if [ "$iface" != "lo" ]; then
         STATE=$(ip link show "$iface" | grep -o "state [A-Z]*" | awk '{print $2}')
         echo "  $iface: $STATE"

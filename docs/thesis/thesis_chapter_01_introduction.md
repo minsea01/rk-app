@@ -189,7 +189,7 @@ RK3588是Rockchip于2022年推出的高性能边缘AI SoC，主要特性：
 3. **系统测试**：
    - 单元测试（40+测试用例，覆盖率88-100%）
    - 集成测试（端到端推理流程）
-   - 性能基准测试（MCP管道）
+   - 性能基准测试（本地基准流程）
 
 ### 1.3.4 工程化与自动化
 
@@ -198,9 +198,9 @@ RK3588是Rockchip于2022年推出的高性能边缘AI SoC，主要特性：
    - 部署脚本（`rk3588_run.sh`, `deploy_to_board.sh`）
    - 性能测试脚本（`run_bench.sh`, `compare_onnx_rknn.py`）
 
-2. **Claude Code自动化**：
-   - 5个Slash Commands（/full-pipeline, /thesis-report等）
+2. **自动化脚本体系**：
    - 完整的CI/CD友好脚本
+   - 支持模型转换、部署检查与性能测试
 
 3. **文档体系**：
    - 技术文档（21个Markdown文件）

@@ -367,12 +367,13 @@ ls -l artifacts/detection_results/
 ### 4.1 单帧延迟测试
 
 ```bash
-# 运行性能测试
-python scripts/generate_performance_report.py \
-    --model artifacts/models/best.rknn \
+# 运行板端端到端延迟测试
+python scripts/profiling/end_to_end_latency.py \
+    --model artifacts/models/best_person_aug_416_norm_int8.rknn \
+    --source assets/bus.jpg \
     --imgsz 416 \
     --runs 50 \
-    --output artifacts/hardware_performance.md
+    --output artifacts/hardware_performance.json
 
 # 预期结果:
 # 单帧延迟: 20-30 ms (vs PC 60ms)
@@ -660,7 +661,7 @@ tcpdump -i eth0 -c 100 | grep -E "error|drop"
 |------|------|
 | OFFLINE_PIPELINE_INTEGRATION.md | 流水线架构设计 |
 | QUICK_START_PHASE2.md | 快速开始指南 |
-| CLAUDE.md | 开发指南 |
+| README.md | 项目主文档 |
 | artifacts/board_ready_report.md | 部署就绪报告 |
 
 ---

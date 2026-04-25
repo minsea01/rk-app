@@ -3,6 +3,7 @@
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <thread>
 
 #include "rkapp/output/TcpOutput.hpp"
@@ -89,6 +90,34 @@ TEST(TcpOutputTest, SerializesEmbeddedImagePayloadToJsonFile) {
     EXPECT_NE(line.find("\"encoding\":\"jpeg\""), std::string::npos);
     EXPECT_NE(line.find("\"contains_overlays\":true"), std::string::npos);
     EXPECT_NE(line.find("\"data_base64\":\"AQID\""), std::string::npos);
+
+    fs::remove(out_path);
+}
+
+TEST(TcpOutputTest, JsonFileStartsFreshOnOpen) {
+    namespace fs = std::filesystem;
+
+    const auto unique =
+        std::chrono::steady_clock::now().time_since_epoch().count();
+    const fs::path out_path = fs::temp_directory_path() /
+                              ("rkapp_tcp_output_fresh_" + std::to_string(unique) + ".jsonl");
+
+    {
+        std::ofstream stale(out_path);
+        stale << "stale payload\n";
+    }
+
+    TcpOutput output;
+    ASSERT_TRUE(output.open("127.0.0.1:65533,file:" + out_path.string()));
+    EXPECT_TRUE(output.send(makeResult(11)));
+    output.close();
+
+    std::ifstream handle(out_path);
+    ASSERT_TRUE(handle.is_open());
+    std::string contents((std::istreambuf_iterator<char>(handle)),
+                         std::istreambuf_iterator<char>());
+    EXPECT_EQ(contents.find("stale payload"), std::string::npos);
+    EXPECT_NE(contents.find("\"frame_id\":11"), std::string::npos);
 
     fs::remove(out_path);
 }

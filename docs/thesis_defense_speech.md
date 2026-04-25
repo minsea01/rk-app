@@ -322,8 +322,7 @@ scripts/deploy/rk3588_run.sh \
 ### 6.2 工程特色
 
 **1. 高度自动化的工作流**
-- **5个Claude Code命令**: /full-pipeline, /model-validate, /performance-test, /board-ready, /thesis-report
-- **46+自动化脚本**: 覆盖转换、评估、部署全流程
+- **自动化脚本体系**: 覆盖转换、评估、部署全流程
 - **一键部署**: `rk3588_run.sh`自动检测环境并运行
 
 **2. 严格的代码质量控制**

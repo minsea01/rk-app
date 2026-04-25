@@ -1,8 +1,0 @@
-{
-  "head": "raw",
-  "num_classes": 80,
-  "has_objectness": 0,
-  "score_is_probability": 1,
-  "coords_are_normalized": 1,
-  "output_index": 0
-}

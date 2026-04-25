@@ -515,7 +515,7 @@ pip3 install rknn_toolkit_lite2-*.whl
 
 | 文档 | 路径 | 大小 | 说明 |
 |------|------|------|------|
-| **CLAUDE.md** | 根目录 | 42KB | 完整项目指导（含RKNN章节） |
+| **README.md** | 根目录 | - | 项目总览与常用命令 |
 | **Thesis Chapter 4** | docs/thesis_chapter_deployment.md | - | 部署章节 |
 | **Thesis Chapter 5** | docs/thesis_chapter_performance.md | - | 性能测试章节 |
 | **Board Ready检查** | artifacts/board_ready_report.md | - | 板卡就绪检查 |
@@ -584,6 +584,6 @@ docker run --privileged -v /dev:/dev rk-app-rk3588:latest \
 
 ---
 
-**报告生成:** Claude Code (AI Agent)
+**报告生成:** 项目组
 **标准:** 千万年薪工程师 + 本科毕业设计双重标准
 **最后更新:** 2025-11-21

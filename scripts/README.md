@@ -12,10 +12,14 @@ Scripts layout
   - `performance_profiler.py`
   - `end_to_end_latency.py`
 - `reports/`: Report generation assets
-  - `generate_achievement_report.py`
   - `charts/gen_chart.py`
   - `charts/gen_code_charts.py`
   - `charts/gen_more_charts.py`
+- Live result viewers:
+  - `live_viewer.py`: OpenCV window/headless latest-frame receiver for embedded JPEG streams
+  - `live_web_viewer.py`: Browser-based receiver for WSL or headless hosts
+  - `demo/start_live_web_demo.sh`: one-command WSL live demo startup
+  - `demo/status_live_web_demo.sh`, `demo/stop_live_web_demo.sh`: inspect/stop the demo
 - `benchmark/`, `demo/`, `datasets/`, `train/`, `tune/`, `network/`, `maintenance/`: scenario-specific automation
 
 Root-level ad hoc scripts have been folded into these subdirectories so the
