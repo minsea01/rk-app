@@ -40,8 +40,9 @@ struct drm_rockchip_gem_map_offset {
 #endif
 #endif
 
-// RGA headers for handle import
-#if defined(__aarch64__) || defined(__arm__)
+// RGA headers for handle import. Some board images ship librga.so without
+// development headers; keep DMA-BUF usable when ENABLE_RGA=OFF.
+#if RKNN_USE_RGA && (defined(__aarch64__) || defined(__arm__))
 #define RKAPP_HAS_RGA 1
 #include <im2d.h>
 #include <rga.h>

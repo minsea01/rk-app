@@ -167,13 +167,21 @@ target_link_libraries(rkapp_core PUBLIC ${OpenCV_LIBS})
 
 set(RKAPP_RGA_FOUND OFF)
 if (ENABLE_RGA)
-    find_library(RGA_LIB rga)
-    if (RGA_LIB)
+    find_library(RGA_LIB NAMES rga)
+    find_path(RGA_INCLUDE_DIR
+        NAMES im2d.h rga.h
+        PATH_SUFFIXES rga
+    )
+    if (RGA_LIB AND RGA_INCLUDE_DIR)
         message(STATUS "Found RGA: ${RGA_LIB}")
+        message(STATUS "  RGA include: ${RGA_INCLUDE_DIR}")
+        target_include_directories(rkapp_core PUBLIC ${RGA_INCLUDE_DIR})
         target_link_libraries(rkapp_core PUBLIC ${RGA_LIB})
         # Preprocess/MppSource are compiled in rkapp_core and gate RGA code on this macro.
         target_compile_definitions(rkapp_core PUBLIC RKNN_USE_RGA=1)
         set(RKAPP_RGA_FOUND ON)
+    elseif(RGA_LIB)
+        message(STATUS "RGA library found but headers are missing; rkapp_core will fallback to OpenCV preprocess/conversion")
     else()
         message(STATUS "RGA not found; rkapp_core will fallback to OpenCV preprocess/conversion")
     endif()

@@ -32,8 +32,14 @@ std::filesystem::path findRepoRoot(const std::filesystem::path& start_dir) {
   std::error_code ec;
   auto current = start_dir;
   while (!current.empty()) {
-    if (std::filesystem::exists(current / "CMakeLists.txt", ec) &&
-        std::filesystem::exists(current / "CMakePresets.json", ec)) {
+    const bool source_tree =
+        std::filesystem::exists(current / "CMakeLists.txt", ec) &&
+        std::filesystem::exists(current / "CMakePresets.json", ec);
+    const bool deploy_tree =
+        std::filesystem::exists(current / ".rkapp-root", ec) ||
+        (std::filesystem::exists(current / "config/person_classes.txt", ec) &&
+         std::filesystem::exists(current / "artifacts/models", ec));
+    if (source_tree || deploy_tree) {
       return current;
     }
     const auto parent = current.parent_path();
