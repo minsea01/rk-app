@@ -74,7 +74,9 @@ def build_summary(evidence_dir: Path) -> dict[str, Any]:
                 "result_fps": round(len(rows) / duration_s, 3) if duration_s > 0 else 0,
                 "frames_with_detections": sum(1 for row in rows if row.get("detections")),
                 "total_detections": len(detections),
-                "max_confidence": max((float(d.get("confidence", 0)) for d in detections), default=0),
+                "max_confidence": max(
+                    (float(d.get("confidence", 0)) for d in detections), default=0
+                ),
             }
         )
 
@@ -105,7 +107,9 @@ def write_report(evidence_dir: Path, summary: dict[str, Any]) -> None:
         "- The generated effective YAML in this evidence folder records the exact camera source URI and thresholds.",
         "",
     ]
-    (evidence_dir / "summary.json").write_text(json.dumps(summary, indent=2, ensure_ascii=False) + "\n")
+    (evidence_dir / "summary.json").write_text(
+        json.dumps(summary, indent=2, ensure_ascii=False) + "\n"
+    )
     (evidence_dir / "REPORT.md").write_text("\n".join(lines))
 
 
