@@ -90,6 +90,7 @@ datasets/coco_raw/
 artifacts/onnx_gpu_test2/
 artifacts/onnx_optimized/
 artifacts/board_taskbook_*/
+artifacts/gige_acceptance_*/
 
 # Exclude large ONNX models (>10MB)
 *.onnx

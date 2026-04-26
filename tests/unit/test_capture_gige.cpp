@@ -15,6 +15,7 @@ bool containsCaps(const std::vector<std::string>& caps, const std::string& value
 TEST(GigeSourceTest, ParseDefaults) {
     auto cfg = GigeSource::parseUri("");
     EXPECT_EQ(cfg.camera_name, "Aravis-Fake-GV01");
+    EXPECT_TRUE(cfg.camera_name_explicit);
     EXPECT_FALSE(cfg.use_videoconvert);
     EXPECT_EQ(cfg.desired_format, "GRAY8");
     EXPECT_EQ(cfg.pull_timeout.count(), 200);
@@ -24,6 +25,17 @@ TEST(GigeSourceTest, ParseDefaults) {
     const auto pipeline = GigeSource::buildPipelineDescription(cfg);
     EXPECT_NE(pipeline.find("format=GRAY8"), std::string::npos);
     EXPECT_EQ(pipeline.find("videoconvert"), std::string::npos);
+}
+
+TEST(GigeSourceTest, AutoCameraNameOmitsProperty) {
+    auto cfg = GigeSource::parseUri("camera-name=auto,width=1920,height=1200,format=BGR");
+    EXPECT_TRUE(cfg.camera_name.empty());
+    EXPECT_FALSE(cfg.camera_name_explicit);
+
+    const auto pipeline = GigeSource::buildPipelineDescription(cfg);
+    EXPECT_EQ(pipeline.find("camera-name="), std::string::npos);
+    EXPECT_NE(pipeline.find("aravissrc !"), std::string::npos);
+    EXPECT_NE(pipeline.find("format=BGR"), std::string::npos);
 }
 
 TEST(GigeSourceTest, ParseColorPipeline) {

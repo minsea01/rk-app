@@ -14,6 +14,7 @@ class GigeSource : public GstSourceBase {
   // URI 配置键值解析结果（如 camera-name/format/pull-timeout-ms）。
   struct UriConfig {
     std::string camera_name = "Aravis-Fake-GV01";
+    bool camera_name_explicit = true;
     std::vector<std::string> caps_kv;
     std::string desired_format = "GRAY8";
     bool use_videoconvert = false;

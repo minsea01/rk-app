@@ -128,7 +128,14 @@ GigeSource::UriConfig GigeSource::parseUri(const std::string& uri) {
 
       const std::string lowered = rkapp::common::toLowerCopy(key);
       if (lowered == "camera-name") {
-        if (!value.empty()) config.camera_name = value;
+        const std::string value_lowered = rkapp::common::toLowerCopy(value);
+        if (value.empty() || value_lowered == "auto" || value_lowered == "first") {
+          config.camera_name.clear();
+          config.camera_name_explicit = false;
+        } else {
+          config.camera_name = value;
+          config.camera_name_explicit = true;
+        }
         continue;
       }
 
@@ -214,8 +221,11 @@ std::string GigeSource::buildPipelineDescription(const UriConfig& config) {
 
   std::ostringstream pipeline;
   // aravissrc 负责拉取 GigE Vision 图像，appsink 输出到本进程。
-  pipeline << "aravissrc camera-name=\"" << sanitizeCameraName(config.camera_name) << "\" ! "
-           << caps << " ! ";
+  pipeline << "aravissrc";
+  if (config.camera_name_explicit) {
+    pipeline << " camera-name=\"" << sanitizeCameraName(config.camera_name) << "\"";
+  }
+  pipeline << " ! " << caps << " ! ";
   if (config.use_videoconvert) {
     pipeline << "videoconvert ! video/x-raw,format=" << config.desired_format
              << " ! appsink name=sink sync=false max-buffers=2 drop=true";
@@ -238,7 +248,6 @@ std::string GigeSource::sanitizeCameraName(const std::string& name) {
       safe.push_back(ch);
     }
   }
-  if (safe.empty()) safe = "camera";
   return safe;
 }
 
