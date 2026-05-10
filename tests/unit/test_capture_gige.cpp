@@ -14,8 +14,8 @@ bool containsCaps(const std::vector<std::string>& caps, const std::string& value
 
 TEST(GigeSourceTest, ParseDefaults) {
     auto cfg = GigeSource::parseUri("");
-    EXPECT_EQ(cfg.camera_name, "Aravis-Fake-GV01");
-    EXPECT_TRUE(cfg.camera_name_explicit);
+    EXPECT_TRUE(cfg.camera_name.empty());
+    EXPECT_FALSE(cfg.camera_name_explicit);
     EXPECT_FALSE(cfg.use_videoconvert);
     EXPECT_EQ(cfg.desired_format, "GRAY8");
     EXPECT_EQ(cfg.pull_timeout.count(), 200);
@@ -76,6 +76,35 @@ TEST(GigeSourceTest, ParseMono8AsGray8) {
     EXPECT_FALSE(cfg.use_videoconvert);
     EXPECT_EQ(cfg.desired_format, "GRAY8");
     EXPECT_TRUE(containsCaps(cfg.caps_kv, "format=GRAY8"));
+}
+
+TEST(GigeSourceTest, ParsesAravisSourceProperties) {
+    auto cfg = GigeSource::parseUri(
+        "width=1920,height=1200,format=GRAY8,exposure-auto=false,exposure=8000,"
+        "gain-auto=false,gain=6,packet-resend=true");
+    EXPECT_TRUE(containsCaps(cfg.caps_kv, "width=1920"));
+    EXPECT_TRUE(containsCaps(cfg.caps_kv, "height=1200"));
+    EXPECT_FALSE(containsCaps(cfg.caps_kv, "exposure=8000"));
+    EXPECT_FALSE(containsCaps(cfg.caps_kv, "gain=6"));
+    EXPECT_NE(std::find(cfg.source_properties.begin(), cfg.source_properties.end(),
+                        "exposure-auto=false"),
+              cfg.source_properties.end());
+    EXPECT_NE(std::find(cfg.source_properties.begin(), cfg.source_properties.end(),
+                        "exposure=8000"),
+              cfg.source_properties.end());
+    EXPECT_NE(std::find(cfg.source_properties.begin(), cfg.source_properties.end(),
+                        "gain-auto=false"),
+              cfg.source_properties.end());
+    EXPECT_NE(std::find(cfg.source_properties.begin(), cfg.source_properties.end(),
+                        "gain=6"),
+              cfg.source_properties.end());
+
+    const auto pipeline = GigeSource::buildPipelineDescription(cfg);
+    EXPECT_NE(pipeline.find("aravissrc exposure-auto=false exposure=8000 gain-auto=false gain=6"),
+              std::string::npos);
+    EXPECT_NE(pipeline.find("packet-resend=true"), std::string::npos);
+    EXPECT_NE(pipeline.find("video/x-raw,width=1920,height=1200,format=GRAY8"),
+              std::string::npos);
 }
 
 TEST(GigeSourceTest, ParseBayerAliasFormat) {

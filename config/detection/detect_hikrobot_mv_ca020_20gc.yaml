@@ -2,19 +2,17 @@
 # Hikrobot MV-CA020-20GC GigE Vision production config
 # ------------------------------------------------------------
 # Target topology:
-#   eth0: camera network, board IP 192.168.1.10/24
-#   eth1: uplink / SSH, board IP 192.168.137.56/24
+#   eth1: camera network, board IP 192.168.1.10/24
+#   eth0: uplink / SSH, board IP 192.168.137.226/24
 #   PC receiver: 192.168.137.1:9000
 #
-# If aravis lists a different camera name, replace camera-name below with
-# the exact name from `arv-tool-0.8 list` or run detect_cli with --source.
-# If BGR negotiation fails, try format=BayerRG8/BayerGB8 after checking the
-# pixel format with Hikrobot MVS.
+# Current board default uses the first discovered Aravis camera and the
+# verified GRAY8 stream from the Hikvision MV-CA020-20GC.
 # ============================================================
 
 source:
   type: gige
-  uri: "camera-name=MV-CA020-20GC,width=1920,height=1200,framerate=30/1,format=BGR,pull-timeout-ms=500,max-failures=10"
+  uri: "width=1920,height=1200,framerate=30/1,format=GRAY8,pull-timeout-ms=1000,max-failures=10"
 
 engine:
   type: rknn
@@ -62,25 +60,33 @@ output:
     host: "192.168.137.1"
     port: 9000
     queue_size: 32
-    bind_ip: "192.168.137.56"
-    bind_interface: "eth1"
+    bind_ip: "192.168.137.226"
+    bind_interface: "eth0"
     include_image: true
-    image_quality: 80
-    image_interval: 3
+    image_quality: 88
+    image_interval: 1
     draw_detections: true
+    image_roi:
+      enable: false
+      mode: normalized
+      # Optional far-field digital zoom for live viewing, e.g. [0.20, 0.00, 0.60, 0.70].
+      normalized_xywh: [0.0, 0.0, 1.0, 1.0]
+      pixel_xywh: [0, 0, 0, 0]
+      clamp: true
+      min_size: 64
 
 logging:
   level: "INFO"
 
 camera_interface:
-  device: eth0
+  device: eth1
   ip: 192.168.1.10
   netmask: 255.255.255.0
   mtu: 1500
 
 upload_interface:
-  device: eth1
-  ip: 192.168.137.56
+  device: eth0
+  ip: 192.168.137.226
   netmask: 255.255.255.0
 
 expected_camera:
@@ -88,7 +94,7 @@ expected_camera:
   model: MV-CA020-20GC
   native_resolution: "1920x1200"
   nominal_fps: 30
-  preferred_format: BGR
-  fallback_formats: [BayerRG8, BayerGB8, BayerBG8, BayerGR8, Mono8]
+  preferred_format: GRAY8
+  fallback_formats: [BayerRG8, BayerGB8, BayerBG8, BayerGR8, BGR]
 
 classes: "config/person_classes.txt"

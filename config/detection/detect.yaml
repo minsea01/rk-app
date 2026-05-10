@@ -19,8 +19,8 @@ source:
   # folder=图片文件夹、video=视频文件、rtsp=网络流、gige=工业相机、csi=MIPI 摄像头
   type: gige                # folder|video|rtsp|gige|csi
   # 具体输入地址。不同 source.type 的 URI 语法不同。
-  # gige 示例：camera-name + 分辨率 + 帧率
-  uri: "camera-name=Aravis-Fake-GV01,width=512,height=512,framerate=25/1"
+  # gige 示例：默认不写 camera-name，自动选择第一台 Aravis 相机。
+  uri: "width=1920,height=1200,framerate=30/1,format=GRAY8,pull-timeout-ms=1000,max-failures=10"
 
 # CSI example (OV5647 / MIPI CSI-2):
 # source:

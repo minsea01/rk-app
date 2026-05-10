@@ -34,8 +34,8 @@ output:
     host: "192.168.137.1"
     port: 9000
     queue_size: 64        # 本地发送队列深度
-    bind_ip: "192.168.137.56"
-    bind_interface: "eth1"
+    bind_ip: "192.168.137.226"
+    bind_interface: "eth0"
 
 runtime:
   warmup: 5

@@ -6,7 +6,7 @@ set -euo pipefail
 
 ROOT="$(cd -- "$(dirname "${BASH_SOURCE[0]}")"/../.. && pwd)"
 
-BOARD_HOST="${BOARD_HOST:-192.168.137.56}"
+BOARD_HOST="${BOARD_HOST:-192.168.137.226}"
 BOARD_USER="${BOARD_USER:-root}"
 SSH_PORT="${SSH_PORT:-22}"
 DEST="${DEST:-/opt/rk_app_current}"

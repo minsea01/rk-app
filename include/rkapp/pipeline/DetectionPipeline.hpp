@@ -63,6 +63,12 @@ struct PipelineConfig {
         int image_quality = 85;
         int image_interval = 1;
         bool draw_detections = true;
+        bool image_roi_enable = false;
+        std::string image_roi_mode = "normalized";  // normalized|pixel
+        std::array<float, 4> image_roi_normalized_xywh{0.0f, 0.0f, 1.0f, 1.0f};
+        std::array<int, 4> image_roi_pixel_xywh{0, 0, 0, 0};
+        bool image_roi_clamp = true;
+        int image_roi_min_size = 8;
         bool enable_profiling = false;
     };
 

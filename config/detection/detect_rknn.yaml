@@ -2,8 +2,8 @@
 # RK3588 默认 RKNN 运行配置（GigE 双网口主线）
 # ------------------------------------------------------------
 # 默认入口统一指向 GigE Vision 生产链路：
-#   eth0 连接工业相机 / GigE Vision
-#   eth1 上传检测结果 / SSH: 192.168.137.56/24
+#   eth1 连接工业相机 / GigE Vision
+#   eth0 上传检测结果 / SSH: 192.168.137.226/24
 #   PC 接收端: 192.168.137.1:9000
 # 若现场 Aravis 相机名称或像素格式不同，请修改下方 `source.uri`
 # 与 `output.tcp.*`。
@@ -11,7 +11,7 @@
 
 source:
   type: gige
-  uri: "camera-name=MV-CA020-20GC,width=1920,height=1200,framerate=30/1,format=BGR,pull-timeout-ms=500,max-failures=10"
+  uri: "width=1920,height=1200,framerate=30/1,format=GRAY8,pull-timeout-ms=1000,max-failures=10"
 
 engine:
   type: rknn
@@ -59,12 +59,20 @@ output:
     host: "192.168.137.1"
     port: 9000
     queue_size: 32
-    bind_ip: "192.168.137.56"
-    bind_interface: "eth1"
+    bind_ip: "192.168.137.226"
+    bind_interface: "eth0"
     include_image: true
-    image_quality: 80
-    image_interval: 3
+    image_quality: 88
+    image_interval: 1
     draw_detections: true
+    image_roi:
+      enable: false
+      mode: normalized
+      # Optional far-field digital zoom for live viewing, e.g. [0.20, 0.00, 0.60, 0.70].
+      normalized_xywh: [0.0, 0.0, 1.0, 1.0]
+      pixel_xywh: [0, 0, 0, 0]
+      clamp: true
+      min_size: 64
 
 logging:
   level: "INFO"

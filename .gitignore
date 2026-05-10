@@ -136,6 +136,7 @@ check*.onnx
 /artifacts/board_benchmark.json
 /artifacts/BOARD_EVIDENCE_*.md
 /artifacts/models/*.json
+!/artifacts/models/*.rknn.json
 /artifacts/test_train/
 /artifacts/*.mp4
 /artifacts/*.jpg

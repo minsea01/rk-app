@@ -6,7 +6,7 @@ set -euo pipefail
 # This is intentionally host-pushed instead of NTP-based: Windows ICS/WSL setups
 # often block or omit UDP/123, while SSH is already required for deployment.
 
-BOARD_HOST=${BOARD_HOST:-192.168.137.56}
+BOARD_HOST=${BOARD_HOST:-192.168.137.226}
 BOARD_USER=${BOARD_USER:-root}
 SSH_PORT=${SSH_PORT:-22}
 SSH_KNOWN_HOSTS=${SSH_KNOWN_HOSTS:-/tmp/rk-app-known-hosts}
@@ -24,7 +24,7 @@ Environment overrides:
   MAX_SKEW_SEC=$MAX_SKEW_SEC
 
 Example:
-  $0 --host 192.168.137.56 --user root
+  $0 --host 192.168.137.226 --user root
 EOF
 }
 

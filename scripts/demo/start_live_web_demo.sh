@@ -8,9 +8,9 @@ SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 REPO_ROOT=$(cd -- "$SCRIPT_DIR/../.." && pwd)
 cd "$REPO_ROOT"
 
-BOARD_HOST=${BOARD_HOST:-192.168.137.56}
+BOARD_HOST=${BOARD_HOST:-192.168.137.226}
 BOARD_USER=${BOARD_USER:-root}
-BOARD_ROOT=${BOARD_ROOT:-/root/rk-app-new}
+BOARD_ROOT=${BOARD_ROOT:-/opt/rk_app_current}
 MODE=${MODE:-fake}                 # fake|real
 TRANSPORT=${TRANSPORT:-tunnel}     # tunnel|direct
 HTTP_HOST=${HTTP_HOST:-127.0.0.1}
@@ -24,8 +24,19 @@ BOARD_JSON_OUT=${BOARD_JSON_OUT:-}
 BOARD_JSON_MAX_BYTES=${BOARD_JSON_MAX_BYTES:-268435456}
 SYNC_BOARD_CLOCK=${SYNC_BOARD_CLOCK:-1}
 DIRECT_HOST=${DIRECT_HOST:-192.168.137.1}
-DIRECT_BIND_IP=${DIRECT_BIND_IP:-192.168.137.56}
-DIRECT_BIND_INTERFACE=${DIRECT_BIND_INTERFACE:-eth1}
+DIRECT_BIND_IP=${DIRECT_BIND_IP:-192.168.137.226}
+DIRECT_BIND_INTERFACE=${DIRECT_BIND_INTERFACE:-eth0}
+LIVE_IMAGE_QUALITY=${LIVE_IMAGE_QUALITY:-88}
+LIVE_IMAGE_INTERVAL=${LIVE_IMAGE_INTERVAL:-1}
+LIVE_IMAGE_ROI_ENABLE=${LIVE_IMAGE_ROI_ENABLE:-false}
+LIVE_IMAGE_ROI_MODE=${LIVE_IMAGE_ROI_MODE:-normalized}
+LIVE_IMAGE_ROI_NORMALIZED_XYWH=${LIVE_IMAGE_ROI_NORMALIZED_XYWH:-[0.0, 0.0, 1.0, 1.0]}
+LIVE_IMAGE_ROI_PIXEL_XYWH=${LIVE_IMAGE_ROI_PIXEL_XYWH:-[0, 0, 0, 0]}
+LIVE_IMAGE_ROI_MIN_SIZE=${LIVE_IMAGE_ROI_MIN_SIZE:-64}
+LIVE_TUNE_CAMERA_NIC=${LIVE_TUNE_CAMERA_NIC:-1}
+LIVE_CAMERA_IFACE=${LIVE_CAMERA_IFACE:-eth1}
+LIVE_CAMERA_RX_RING=${LIVE_CAMERA_RX_RING:-1024}
+LIVE_CAMERA_TX_RING=${LIVE_CAMERA_TX_RING:-1024}
 
 VIEWER_PID_FILE="$LOCAL_ARTIFACT_DIR/live_web_viewer.pid"
 TUNNEL_PID_FILE="$LOCAL_ARTIFACT_DIR/live_web_tunnel.pid"
@@ -46,6 +57,14 @@ Environment overrides:
   BOARD_JSON_OUT=$BOARD_JSON_OUT
   BOARD_JSON_MAX_BYTES=$BOARD_JSON_MAX_BYTES
   SYNC_BOARD_CLOCK=$SYNC_BOARD_CLOCK
+  LIVE_IMAGE_QUALITY=$LIVE_IMAGE_QUALITY
+  LIVE_IMAGE_INTERVAL=$LIVE_IMAGE_INTERVAL
+  LIVE_IMAGE_ROI_ENABLE=$LIVE_IMAGE_ROI_ENABLE
+  LIVE_IMAGE_ROI_NORMALIZED_XYWH=$LIVE_IMAGE_ROI_NORMALIZED_XYWH
+  LIVE_TUNE_CAMERA_NIC=$LIVE_TUNE_CAMERA_NIC
+  LIVE_CAMERA_IFACE=$LIVE_CAMERA_IFACE
+  LIVE_CAMERA_RX_RING=$LIVE_CAMERA_RX_RING
+  LIVE_CAMERA_TX_RING=$LIVE_CAMERA_TX_RING
 
 Default mode is WSL-safe:
   MODE=fake TRANSPORT=tunnel $0
@@ -85,6 +104,32 @@ fi
 if ! [[ "$BOARD_JSON_MAX_BYTES" =~ ^[0-9]+$ ]]; then
   echo "BOARD_JSON_MAX_BYTES must be an integer byte limit, got: $BOARD_JSON_MAX_BYTES" >&2
   exit 2
+fi
+if ! [[ "$LIVE_IMAGE_QUALITY" =~ ^[0-9]+$ ]] || (( LIVE_IMAGE_QUALITY < 1 || LIVE_IMAGE_QUALITY > 100 )); then
+  echo "LIVE_IMAGE_QUALITY must be an integer in 1..100, got: $LIVE_IMAGE_QUALITY" >&2
+  exit 2
+fi
+if ! [[ "$LIVE_IMAGE_INTERVAL" =~ ^[0-9]+$ ]] || (( LIVE_IMAGE_INTERVAL < 1 )); then
+  echo "LIVE_IMAGE_INTERVAL must be a positive integer, got: $LIVE_IMAGE_INTERVAL" >&2
+  exit 2
+fi
+if ! [[ "$LIVE_IMAGE_ROI_MIN_SIZE" =~ ^[0-9]+$ ]] || (( LIVE_IMAGE_ROI_MIN_SIZE < 1 )); then
+  echo "LIVE_IMAGE_ROI_MIN_SIZE must be a positive integer, got: $LIVE_IMAGE_ROI_MIN_SIZE" >&2
+  exit 2
+fi
+if [[ "$LIVE_TUNE_CAMERA_NIC" != "0" ]]; then
+  if ! [[ "$LIVE_CAMERA_IFACE" =~ ^[A-Za-z0-9_.:-]+$ ]]; then
+    echo "LIVE_CAMERA_IFACE contains unsupported characters: $LIVE_CAMERA_IFACE" >&2
+    exit 2
+  fi
+  if ! [[ "$LIVE_CAMERA_RX_RING" =~ ^[0-9]+$ ]] || (( LIVE_CAMERA_RX_RING < 1 )); then
+    echo "LIVE_CAMERA_RX_RING must be a positive integer, got: $LIVE_CAMERA_RX_RING" >&2
+    exit 2
+  fi
+  if ! [[ "$LIVE_CAMERA_TX_RING" =~ ^[0-9]+$ ]] || (( LIVE_CAMERA_TX_RING < 1 )); then
+    echo "LIVE_CAMERA_TX_RING must be a positive integer, got: $LIVE_CAMERA_TX_RING" >&2
+    exit 2
+  fi
 fi
 
 mkdir -p "$LOCAL_ARTIFACT_DIR"
@@ -249,7 +294,14 @@ prepare_board_config() {
 
   ssh_board "cd '$BOARD_ROOT' && mkdir -p artifacts && \
 BASE_CFG='$base_cfg' OUT_CFG='$out_cfg' TARGET_HOST='$target_host' \
-BIND_IP='$bind_ip' BIND_INTERFACE='$bind_interface' python3 - <<'PY'
+BIND_IP='$bind_ip' BIND_INTERFACE='$bind_interface' \
+LIVE_IMAGE_QUALITY='$LIVE_IMAGE_QUALITY' \
+LIVE_IMAGE_INTERVAL='$LIVE_IMAGE_INTERVAL' \
+LIVE_IMAGE_ROI_ENABLE='$LIVE_IMAGE_ROI_ENABLE' \
+LIVE_IMAGE_ROI_MODE='$LIVE_IMAGE_ROI_MODE' \
+LIVE_IMAGE_ROI_NORMALIZED_XYWH='$LIVE_IMAGE_ROI_NORMALIZED_XYWH' \
+LIVE_IMAGE_ROI_PIXEL_XYWH='$LIVE_IMAGE_ROI_PIXEL_XYWH' \
+LIVE_IMAGE_ROI_MIN_SIZE='$LIVE_IMAGE_ROI_MIN_SIZE' python3 - <<'PY'
 import os
 from pathlib import Path
 
@@ -258,14 +310,24 @@ out = Path(os.environ['OUT_CFG'])
 host = os.environ['TARGET_HOST']
 bind_ip = os.environ['BIND_IP']
 bind_interface = os.environ['BIND_INTERFACE']
+image_quality = os.environ['LIVE_IMAGE_QUALITY']
+image_interval = os.environ['LIVE_IMAGE_INTERVAL']
+image_roi_enable = os.environ['LIVE_IMAGE_ROI_ENABLE'].lower()
+image_roi_mode = os.environ['LIVE_IMAGE_ROI_MODE']
+image_roi_normalized = os.environ['LIVE_IMAGE_ROI_NORMALIZED_XYWH']
+image_roi_pixel = os.environ['LIVE_IMAGE_ROI_PIXEL_XYWH']
+image_roi_min_size = os.environ['LIVE_IMAGE_ROI_MIN_SIZE']
 
 lines = base.read_text(encoding='utf-8').splitlines()
 updated = []
 in_output = False
 in_tcp = False
+in_image_roi = False
 output_indent = -1
 tcp_indent = -1
+image_roi_indent = -1
 touched = set()
+has_image_roi = any(line.strip() == 'image_roi:' for line in lines)
 
 for line in lines:
     stripped = line.strip()
@@ -273,21 +335,45 @@ for line in lines:
     indent_len = len(indent)
 
     if stripped and not stripped.startswith('#'):
+        if in_image_roi and indent_len <= image_roi_indent:
+            in_image_roi = False
         if in_tcp and indent_len <= tcp_indent:
             in_tcp = False
+            in_image_roi = False
         if in_output and indent_len <= output_indent and stripped != 'output:':
             in_output = False
             in_tcp = False
+            in_image_roi = False
 
     if stripped == 'output:' and not stripped.startswith('#'):
         in_output = True
         in_tcp = False
+        in_image_roi = False
         output_indent = indent_len
     elif in_output and stripped == 'tcp:' and indent_len > output_indent:
         in_tcp = True
+        in_image_roi = False
         tcp_indent = indent_len
+    elif in_tcp and stripped == 'image_roi:' and indent_len > tcp_indent:
+        in_image_roi = True
+        image_roi_indent = indent_len
 
-    if in_tcp and indent_len > tcp_indent and stripped.startswith('host: '):
+    if in_image_roi and indent_len > image_roi_indent and stripped.startswith('enable: '):
+        updated.append(f'{indent}enable: {image_roi_enable}')
+        touched.add('image_roi_enable')
+    elif in_image_roi and indent_len > image_roi_indent and stripped.startswith('mode: '):
+        updated.append(f'{indent}mode: {image_roi_mode}')
+        touched.add('image_roi_mode')
+    elif in_image_roi and indent_len > image_roi_indent and stripped.startswith('normalized_xywh: '):
+        updated.append(f'{indent}normalized_xywh: {image_roi_normalized}')
+        touched.add('image_roi_normalized_xywh')
+    elif in_image_roi and indent_len > image_roi_indent and stripped.startswith('pixel_xywh: '):
+        updated.append(f'{indent}pixel_xywh: {image_roi_pixel}')
+        touched.add('image_roi_pixel_xywh')
+    elif in_image_roi and indent_len > image_roi_indent and stripped.startswith('min_size: '):
+        updated.append(f'{indent}min_size: {image_roi_min_size}')
+        touched.add('image_roi_min_size')
+    elif in_tcp and indent_len > tcp_indent and stripped.startswith('host: '):
         updated.append(f'{indent}host: \"{host}\"')
         touched.add('host')
     elif in_tcp and indent_len > tcp_indent and stripped.startswith('bind_ip: '):
@@ -299,10 +385,37 @@ for line in lines:
     elif in_tcp and indent_len > tcp_indent and stripped.startswith('include_image: '):
         updated.append(f'{indent}include_image: true')
         touched.add('include_image')
+    elif in_tcp and indent_len > tcp_indent and stripped.startswith('image_quality: '):
+        updated.append(f'{indent}image_quality: {image_quality}')
+        touched.add('image_quality')
+    elif in_tcp and indent_len > tcp_indent and stripped.startswith('image_interval: '):
+        updated.append(f'{indent}image_interval: {image_interval}')
+        touched.add('image_interval')
+    elif in_tcp and indent_len > tcp_indent and stripped.startswith('draw_detections: '):
+        updated.append(line)
+        if not has_image_roi:
+            roi_indent = indent
+            child_indent = indent + '  '
+            updated.extend([
+                f'{roi_indent}image_roi:',
+                f'{child_indent}enable: {image_roi_enable}',
+                f'{child_indent}mode: {image_roi_mode}',
+                f'{child_indent}normalized_xywh: {image_roi_normalized}',
+                f'{child_indent}pixel_xywh: {image_roi_pixel}',
+                f'{child_indent}clamp: true',
+                f'{child_indent}min_size: {image_roi_min_size}',
+            ])
+            touched.update({
+                'image_roi_enable',
+                'image_roi_mode',
+                'image_roi_normalized_xywh',
+                'image_roi_pixel_xywh',
+                'image_roi_min_size',
+            })
     else:
         updated.append(line)
 
-missing = {'host', 'bind_ip', 'bind_interface', 'include_image'} - touched
+missing = {'host', 'bind_ip', 'bind_interface', 'include_image', 'image_quality', 'image_interval'} - touched
 if missing:
     raise SystemExit(f'{base} is missing output.tcp keys: {sorted(missing)}')
 
@@ -348,6 +461,16 @@ while true; do
   sleep "$RESTART_DELAY"
 done
 EOS
+}
+
+tune_camera_nic() {
+  if [[ "$MODE" != "real" || "$LIVE_TUNE_CAMERA_NIC" == "0" ]]; then
+    return 0
+  fi
+
+  ssh_board "if command -v ethtool >/dev/null 2>&1 && ip link show '$LIVE_CAMERA_IFACE' >/dev/null 2>&1; then \
+ethtool -G '$LIVE_CAMERA_IFACE' rx '$LIVE_CAMERA_RX_RING' tx '$LIVE_CAMERA_TX_RING' >/dev/null 2>&1 || true; \
+fi"
 }
 
 start_board_runner() {
@@ -401,6 +524,7 @@ start_viewer
 start_tunnel
 prepare_board_config
 install_board_runner
+tune_camera_nic
 start_board_runner
 START_SUCCEEDED=1
 trap - ERR

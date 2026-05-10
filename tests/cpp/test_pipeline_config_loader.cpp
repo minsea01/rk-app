@@ -136,6 +136,12 @@ output:
     image_quality: 72
     image_interval: 3
     draw_detections: false
+    image_roi:
+      enable: true
+      mode: normalized
+      normalized_xywh: [0.2, 0.1, 0.6, 0.7]
+      clamp: true
+      min_size: 16
 runtime:
   warmup: 7
   async: true
@@ -182,6 +188,14 @@ failure:
   EXPECT_EQ(loaded.config.output.image_quality, 72);
   EXPECT_EQ(loaded.config.output.image_interval, 3);
   EXPECT_FALSE(loaded.config.output.draw_detections);
+  EXPECT_TRUE(loaded.config.output.image_roi_enable);
+  EXPECT_EQ(loaded.config.output.image_roi_mode, "normalized");
+  EXPECT_FLOAT_EQ(loaded.config.output.image_roi_normalized_xywh[0], 0.2f);
+  EXPECT_FLOAT_EQ(loaded.config.output.image_roi_normalized_xywh[1], 0.1f);
+  EXPECT_FLOAT_EQ(loaded.config.output.image_roi_normalized_xywh[2], 0.6f);
+  EXPECT_FLOAT_EQ(loaded.config.output.image_roi_normalized_xywh[3], 0.7f);
+  EXPECT_TRUE(loaded.config.output.image_roi_clamp);
+  EXPECT_EQ(loaded.config.output.image_roi_min_size, 16);
   EXPECT_EQ(loaded.config.runtime.warmup_iterations, 7);
   EXPECT_TRUE(loaded.config.runtime.async_mode);
   EXPECT_EQ(loaded.config.logging.level, "DEBUG");

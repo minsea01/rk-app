@@ -2,6 +2,7 @@
 #include <atomic>
 #include <chrono>
 #include <cctype>
+#include <cmath>
 #include <cstdio>
 #include <filesystem>
 #include <iostream>
@@ -9,6 +10,7 @@
 #include <optional>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #include <opencv2/opencv.hpp>
@@ -17,6 +19,7 @@
 #include "rkapp/common/log.hpp"
 #include "rkapp/output/TcpOutput.hpp"
 #include "rkapp/pipeline/DetectionPipeline.hpp"
+#include "rkapp/preprocess/Preprocess.hpp"
 
 namespace {
 
@@ -119,6 +122,38 @@ void drawDetections(cv::Mat& image, const std::vector<rkapp::infer::Detection>& 
     cv::putText(image, label, cv::Point(label_x, label_y - baseline),
                 cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(0, 0, 0), 1);
   }
+}
+
+bool modeIsNormalized(const std::string& mode) {
+  return rkapp::common::toLowerCopy(mode) != "pixel";
+}
+
+std::vector<rkapp::infer::Detection> detectionsForImageRoi(
+    const std::vector<rkapp::infer::Detection>& detections, const cv::Rect& roi) {
+  std::vector<rkapp::infer::Detection> adjusted;
+  adjusted.reserve(detections.size());
+  const cv::Rect image_rect(0, 0, roi.width, roi.height);
+  for (const auto& det : detections) {
+    cv::Rect box(static_cast<int>(std::round(det.x - roi.x)),
+                 static_cast<int>(std::round(det.y - roi.y)),
+                 static_cast<int>(std::round(det.w)),
+                 static_cast<int>(std::round(det.h)));
+    box &= image_rect;
+    if (box.width <= 0 || box.height <= 0) {
+      continue;
+    }
+    auto shifted = det;
+    shifted.x = static_cast<float>(box.x);
+    shifted.y = static_cast<float>(box.y);
+    shifted.w = static_cast<float>(box.width);
+    shifted.h = static_cast<float>(box.height);
+    for (auto& keypoint : shifted.keypoints) {
+      keypoint.x -= static_cast<float>(roi.x);
+      keypoint.y -= static_cast<float>(roi.y);
+    }
+    adjusted.push_back(std::move(shifted));
+  }
+  return adjusted;
 }
 
 std::optional<CliOptions> parseCliOptions(int argc, char* argv[]) {
@@ -235,6 +270,14 @@ std::unique_ptr<rkapp::output::IOutput> createOutput(
   return output;
 }
 
+struct EncodedOutputImage {
+  std::vector<uint8_t> bytes;
+  int width = 0;
+  int height = 0;
+  bool roi_applied = false;
+  cv::Rect roi;
+};
+
 void saveVisualization(const rkapp::pipeline::PipelineResult& result,
                        const std::filesystem::path& output_dir) {
   if (result.frame.empty()) {
@@ -247,30 +290,67 @@ void saveVisualization(const rkapp::pipeline::PipelineResult& result,
   cv::imwrite(vis_path.string(), vis_frame);
 }
 
-std::vector<uint8_t> encodeOutputImage(const rkapp::pipeline::PipelineResult& result,
-                                       const rkapp::pipeline::PipelineConfig::OutputSpec& output) {
+EncodedOutputImage encodeOutputImage(
+    const rkapp::pipeline::PipelineResult& result,
+    const rkapp::pipeline::PipelineConfig::OutputSpec& output) {
+  EncodedOutputImage encoded_image;
   if (!output.include_image || result.frame.empty()) {
-    return {};
+    return encoded_image;
   }
 
   const int interval = std::max(1, output.image_interval);
   if (result.frame_id < 0 || (result.frame_id % interval) != 0) {
-    return {};
+    return encoded_image;
   }
 
   cv::Mat image = result.frame;
-  if (output.draw_detections && !result.detections.empty()) {
-    image = result.frame.clone();
-    drawDetections(image, result.detections);
+  std::vector<rkapp::infer::Detection> display_detections = result.detections;
+  cv::Rect image_roi(0, 0, result.frame.cols, result.frame.rows);
+  if (output.image_roi_enable) {
+    const cv::Rect2f normalized_roi(
+        output.image_roi_normalized_xywh[0],
+        output.image_roi_normalized_xywh[1],
+        output.image_roi_normalized_xywh[2],
+        output.image_roi_normalized_xywh[3]);
+    const cv::Rect pixel_roi(
+        output.image_roi_pixel_xywh[0],
+        output.image_roi_pixel_xywh[1],
+        output.image_roi_pixel_xywh[2],
+        output.image_roi_pixel_xywh[3]);
+    cv::Rect resolved_roi;
+    if (rkapp::preprocess::Preprocess::resolveRoiRect(
+            result.frame.size(), modeIsNormalized(output.image_roi_mode), normalized_roi,
+            pixel_roi, output.image_roi_clamp, output.image_roi_min_size, resolved_roi)) {
+      image_roi = resolved_roi;
+      image = result.frame(image_roi);
+      display_detections = detectionsForImageRoi(result.detections, image_roi);
+      encoded_image.roi_applied = image_roi.x != 0 || image_roi.y != 0 ||
+                                  image_roi.width != result.frame.cols ||
+                                  image_roi.height != result.frame.rows;
+    } else {
+      LOGW("Invalid output image_roi; sending full frame");
+    }
+  }
+
+  if (output.draw_detections && !display_detections.empty()) {
+    if (image.channels() == 1) {
+      cv::cvtColor(image, image, cv::COLOR_GRAY2BGR);
+    } else {
+      image = image.clone();
+    }
+    drawDetections(image, display_detections);
   }
 
   const int quality = std::clamp(output.image_quality, 1, 100);
-  std::vector<uint8_t> encoded;
-  if (!cv::imencode(".jpg", image, encoded, {cv::IMWRITE_JPEG_QUALITY, quality})) {
+  if (!cv::imencode(".jpg", image, encoded_image.bytes, {cv::IMWRITE_JPEG_QUALITY, quality})) {
     LOGW("Failed to encode frame ", result.frame_id, " as JPEG for uplink");
-    return {};
+    encoded_image.bytes.clear();
+    return encoded_image;
   }
-  return encoded;
+  encoded_image.width = image.cols;
+  encoded_image.height = image.rows;
+  encoded_image.roi = image_roi;
+  return encoded_image;
 }
 
 void publishResult(const rkapp::pipeline::PipelineResult& result, rkapp::output::IOutput* output,
@@ -288,10 +368,18 @@ void publishResult(const rkapp::pipeline::PipelineResult& result, rkapp::output:
   frame_result.height = result.frame.rows;
   frame_result.detections = result.detections;
   frame_result.source_uri = source_uri;
-  frame_result.image_bytes = encodeOutputImage(result, config.output);
+  auto encoded_image = encodeOutputImage(result, config.output);
+  frame_result.image_bytes = std::move(encoded_image.bytes);
   if (!frame_result.image_bytes.empty()) {
     frame_result.image_encoding = "jpeg";
     frame_result.image_contains_overlays = config.output.draw_detections;
+    frame_result.image_width = encoded_image.width;
+    frame_result.image_height = encoded_image.height;
+    frame_result.image_roi_applied = encoded_image.roi_applied;
+    frame_result.image_roi_x = encoded_image.roi.x;
+    frame_result.image_roi_y = encoded_image.roi.y;
+    frame_result.image_roi_w = encoded_image.roi.width;
+    frame_result.image_roi_h = encoded_image.roi.height;
   }
   output->send(frame_result);
 }

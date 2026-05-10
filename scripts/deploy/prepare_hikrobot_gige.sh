@@ -3,17 +3,17 @@ set -u -o pipefail
 
 ROOT="$(cd -- "$(dirname "${BASH_SOURCE[0]}")"/../.. && pwd)"
 
-CAMERA_IFACE="${CAMERA_IFACE:-eth0}"
+CAMERA_IFACE="${CAMERA_IFACE:-eth1}"
 CAMERA_ADDR="${CAMERA_ADDR:-192.168.1.10/24}"
-CAMERA_NAME="${CAMERA_NAME:-MV-CA020-20GC}"
-UPLOAD_IFACE="${UPLOAD_IFACE:-eth1}"
-UPLOAD_ADDR="${UPLOAD_ADDR:-192.168.137.56/24}"
+CAMERA_NAME="${CAMERA_NAME:-auto}"
+UPLOAD_IFACE="${UPLOAD_IFACE:-eth0}"
+UPLOAD_ADDR="${UPLOAD_ADDR:-192.168.137.226/24}"
 PC_HOST="${PC_HOST:-192.168.137.1}"
 PC_PORT="${PC_PORT:-9000}"
 WIDTH="${WIDTH:-1920}"
 HEIGHT="${HEIGHT:-1200}"
 FPS="${FPS:-30}"
-FORMAT="${FORMAT:-BGR}"
+FORMAT="${FORMAT:-GRAY8}"
 MTU="${MTU:-1500}"
 CONFIG="${CONFIG:-config/detection/detect_hikrobot_mv_ca020_20gc.yaml}"
 BINARY="${BINARY:-build/board/detect_cli}"
@@ -42,7 +42,7 @@ camera is powered and connected.
 
 Options:
   --apply-network          Configure camera NIC only: ${CAMERA_IFACE}=${CAMERA_ADDR}, mtu=${MTU}
-  --expect-camera          Treat eth0 link / camera discovery / grab failures as failures
+  --expect-camera          Treat camera link / discovery / grab failures as failures
   --grab [frames]          Try a GStreamer aravissrc grab (default frames: 30)
   --run-detect <seconds>   Run detect_cli for N seconds with the Hikrobot config
   --camera-iface <iface>   Camera NIC (default: ${CAMERA_IFACE})
@@ -175,7 +175,7 @@ find_arv_tool() {
 
 canonical_format() {
   local token
-  token="$(printf '%s' "$1" | tr '[:lower:]' '[:upper:]' | tr -d '_- ')"
+  token="$(printf '%s' "$1" | tr '[:lower:]' '[:upper:]' | tr -d ' _-')"
   case "$token" in
     BGR|BGR8|BGR888) echo "BGR" ;;
     RGB|RGB8|RGB888) echo "RGB" ;;
@@ -206,11 +206,11 @@ upload_ip() {
 }
 
 build_source_uri() {
-  local uri=""
+  local uri
+  uri="width=${WIDTH},height=${HEIGHT},framerate=${FPS}/1,format=${FORMAT},pull-timeout-ms=1000,max-failures=10"
   if ! camera_name_is_auto; then
-    uri="camera-name=${CAMERA_NAME},"
+    uri="camera-name=${CAMERA_NAME},${uri}"
   fi
-  uri+="width=${WIDTH},height=${HEIGHT},framerate=${FPS}/1,format=${FORMAT},pull-timeout-ms=500,max-failures=10"
   printf '%s\n' "$uri"
 }
 
@@ -354,24 +354,40 @@ discover_camera() {
 }
 
 grab_camera() {
-  local fmt media caps timeout_s
+  local fmt media caps timeout_s output status chain_count
   fmt="$(canonical_format "$FORMAT")"
   media="$(media_type_for_format "$FORMAT")"
   caps="${media},width=${WIDTH},height=${HEIGHT},framerate=${FPS}/1,format=${fmt}"
   timeout_s=$((GRAB_FRAMES / FPS + 8))
   if [[ "$timeout_s" -lt 10 ]]; then timeout_s=10; fi
 
-  local -a cmd=(timeout "${timeout_s}s" gst-launch-1.0 -q aravissrc)
+  local -a cmd=(timeout "${timeout_s}s" gst-launch-1.0 -v aravissrc)
   if ! camera_name_is_auto; then
     cmd+=("camera-name=${CAMERA_NAME}")
   fi
-  cmd+=("num-buffers=${GRAB_FRAMES}" "!" "$caps" "!" fakesink sync=false)
+  cmd+=("!" "$caps" "!" identity silent=false "!" fakesink sync=false "num-buffers=${GRAB_FRAMES}")
 
   echo "Running: ${cmd[*]}"
-  if "${cmd[@]}"; then
-    ok "GStreamer grabbed ${GRAB_FRAMES} frame(s)"
+  if output="$("${cmd[@]}" 2>&1)"; then
+    status=0
   else
-    fail "GStreamer grab failed"
+    status=$?
+  fi
+  printf '%s\n' "$output" | awk '
+    /caps =|last-message = chain/ {
+      print
+      shown += 1
+      if (shown >= 40) {
+        print "  ... output truncated ..."
+        exit
+      }
+    }
+  '
+  chain_count="$(printf '%s\n' "$output" | grep -c 'last-message = chain' || true)"
+  if [[ "$chain_count" -ge "$GRAB_FRAMES" ]]; then
+    ok "GStreamer grabbed ${chain_count}/${GRAB_FRAMES} frame(s)"
+  else
+    fail "GStreamer grab observed ${chain_count}/${GRAB_FRAMES} frame(s) (status ${status})"
   fi
 }
 
@@ -389,7 +405,7 @@ validate_yaml_config() {
     return
   fi
 
-  if python3 - "$ROOT" "$cfg" <<'PY'
+  if python3 - "$ROOT" "$cfg" "$UPLOAD_IFACE" <<'PY'
 import pathlib
 import sys
 
@@ -397,6 +413,7 @@ import yaml
 
 root = pathlib.Path(sys.argv[1])
 cfg_path = pathlib.Path(sys.argv[2])
+expected_upload_iface = sys.argv[3]
 cfg = yaml.safe_load(cfg_path.read_text()) or {}
 errors = []
 source = cfg.get("source", {})
@@ -410,8 +427,8 @@ if not model.exists():
     errors.append(f"model missing: {model}")
 if not output.get("host"):
     errors.append("output.tcp.host is required")
-if output.get("bind_interface") != "eth1":
-    errors.append("output.tcp.bind_interface should be eth1")
+if output.get("bind_interface") != expected_upload_iface:
+    errors.append(f"output.tcp.bind_interface should be {expected_upload_iface}")
 if errors:
     for error in errors:
         print(error)

@@ -467,11 +467,11 @@ std::vector<Detection> RknnEngine::inferPreprocessed(
   const float out_scale_snapshot = impl->out_attr.scale;
   const int32_t out_zp_snapshot = impl->out_attr.zp;
 
-  // RKNN 训练/转换常用 RGB 输入；上游传入 BGR，这里统一转换一次。
-  cv::Mat rgb =
-      rkapp::preprocess::Preprocess::convertColor(preprocessed_image, cv::COLOR_BGR2RGB);
-  if (!rgb.isContinuous()) {
-    rgb = rgb.clone();
+  // 项目转换工具默认把 BGR->RGB 和 /255 固化进 RKNN 配置；
+  // 与 Python runner 保持一致，运行期直接喂 OpenCV BGR uint8。
+  cv::Mat input_bgr = preprocessed_image;
+  if (!input_bgr.isContinuous()) {
+    input_bgr = input_bgr.clone();
   }
 
   rknn_input in{};
@@ -488,7 +488,7 @@ std::vector<Detection> RknnEngine::inferPreprocessed(
     if (impl->input_type == RKNN_TENSOR_INT8) {
       static std::once_flag int8_input_log_once;
       std::call_once(int8_input_log_once, [&]() {
-        LOGI("RknnEngine: Feeding UINT8 input to INT8 model input (runtime quantization, scale=",
+        LOGI("RknnEngine: Feeding UINT8 BGR input to INT8 model input (runtime quantization, scale=",
              impl->in_attr.scale, ", zp=", impl->in_attr.zp, ")");
       });
       in.type = RKNN_TENSOR_UINT8;
@@ -500,7 +500,7 @@ std::vector<Detection> RknnEngine::inferPreprocessed(
     if (impl->input_type == RKNN_TENSOR_FLOAT16 || impl->input_type == RKNN_TENSOR_FLOAT32) {
       static std::once_flag float_input_log_once;
       std::call_once(float_input_log_once, [&]() {
-        LOGI("RknnEngine: Feeding UINT8 RGB input to FLOAT model input (runtime conversion)");
+        LOGI("RknnEngine: Feeding UINT8 BGR input to FLOAT model input (runtime conversion)");
       });
       in.type = RKNN_TENSOR_UINT8;
       in.size = static_cast<uint32_t>(byte_count);
@@ -514,9 +514,9 @@ std::vector<Detection> RknnEngine::inferPreprocessed(
 
   if (impl->input_fmt == RKNN_TENSOR_NCHW) {
     // RKNN NCHW 输入时，需要把 HWC 内存重排成 CHW 连续内存。
-    const int h = rgb.rows;
-    const int w = rgb.cols;
-    const int c = rgb.channels();
+    const int h = input_bgr.rows;
+    const int w = input_bgr.cols;
+    const int c = input_bgr.channels();
     const size_t needed = static_cast<size_t>(h) * w * c;
     thread_local std::vector<uint8_t> input_local;
     input_local.resize(needed);
@@ -527,13 +527,13 @@ std::vector<Detection> RknnEngine::inferPreprocessed(
         cv::Mat(h, w, CV_8UC1, input_local.data() + 2 * hw),
     };
     const int from_to[] = {0, 0, 1, 1, 2, 2};
-    cv::mixChannels(&rgb, 1, planes.data(), static_cast<int>(planes.size()), from_to, 3);
+    cv::mixChannels(&input_bgr, 1, planes.data(), static_cast<int>(planes.size()), from_to, 3);
     if (!prepareInputBuffer(input_local.data(), needed)) {
       return {};
     }
   } else {
     // NHWC 路径可直接复用 OpenCV 连续内存。
-    if (!prepareInputBuffer(rgb.data, rgb.total() * rgb.elemSize())) {
+    if (!prepareInputBuffer(input_bgr.data, input_bgr.total() * input_bgr.elemSize())) {
       return {};
     }
   }

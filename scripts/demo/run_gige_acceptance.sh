@@ -2,25 +2,26 @@
 set -euo pipefail
 
 # Host-side one-command GigE acceptance runner.
-# It syncs board time, optionally tests eth1 throughput, starts a TCP sink,
+# It syncs board time, optionally tests upload-NIC throughput, starts a TCP sink,
 # runs the board-side GigE preparation script, and pulls evidence back.
 
 ROOT="$(cd -- "$(dirname "${BASH_SOURCE[0]}")"/../.. && pwd)"
 cd "$ROOT"
 
-BOARD_HOST="${BOARD_HOST:-192.168.137.56}"
+BOARD_HOST="${BOARD_HOST:-192.168.137.226}"
 BOARD_USER="${BOARD_USER:-root}"
 BOARD_ROOT="${BOARD_ROOT:-/opt/rk_app_current}"
 PC_HOST="${PC_HOST:-192.168.137.1}"
 PC_PORT="${PC_PORT:-9000}"
 CAMERA_NAME="${CAMERA_NAME:-auto}"
-CAMERA_IFACE="${CAMERA_IFACE:-eth0}"
+CAMERA_IFACE="${CAMERA_IFACE:-eth1}"
 CAMERA_ADDR="${CAMERA_ADDR:-192.168.1.10/24}"
-UPLOAD_ADDR="${UPLOAD_ADDR:-192.168.137.56/24}"
+UPLOAD_IFACE="${UPLOAD_IFACE:-eth0}"
+UPLOAD_ADDR="${UPLOAD_ADDR:-192.168.137.226/24}"
 WIDTH="${WIDTH:-1920}"
 HEIGHT="${HEIGHT:-1200}"
 FPS="${FPS:-30}"
-FORMAT="${FORMAT:-BGR}"
+FORMAT="${FORMAT:-GRAY8}"
 CONF_THRESHOLD="${CONF_THRESHOLD:-0.55}"
 NMS_THRESHOLD="${NMS_THRESHOLD:-0.35}"
 IMAGE_INTERVAL="${IMAGE_INTERVAL:-3}"
@@ -39,12 +40,12 @@ Usage: $0 [options]
 
 Common:
   --software-only            Readiness checks only; no camera required (default)
-  --full                     Apply eth0 config, expect camera, grab 30 frames, detect 30s, run iperf
+  --full                     Apply camera NIC config, expect camera, grab 30 frames, detect 30s, run iperf
   --expect-camera            Treat camera link/discovery/grab failures as failures
-  --apply-network            Configure board eth0 before checks
+  --apply-network            Configure board camera NIC before checks
   --grab <frames>            Grab N frames through aravissrc
   --run-detect <seconds>     Run detect_cli for N seconds
-  --iperf                    Run eth1 iperf3 host receiver test
+  --iperf                    Run upload-NIC iperf3 host receiver test
 
 Board:
   --host <ip>                Board IP (default: ${BOARD_HOST})
@@ -53,7 +54,9 @@ Board:
 
 Camera:
   --camera-name <name|auto>  Aravis camera name; auto selects first camera (default: ${CAMERA_NAME})
+  --camera-iface <iface>     Board camera NIC (default: ${CAMERA_IFACE})
   --camera-addr <cidr>       Board camera NIC address (default: ${CAMERA_ADDR})
+  --upload-iface <iface>     Board upload NIC (default: ${UPLOAD_IFACE})
   --upload-addr <cidr>       Board upload NIC address (default: ${UPLOAD_ADDR})
   --format <fmt>             BGR, BayerRG8, Mono8, ... (default: ${FORMAT})
   --width <px>               Capture width (default: ${WIDTH})
@@ -82,7 +85,9 @@ while [[ $# -gt 0 ]]; do
     --user) BOARD_USER="$2"; shift 2 ;;
     --board-root) BOARD_ROOT="$2"; shift 2 ;;
     --camera-name) CAMERA_NAME="$2"; shift 2 ;;
+    --camera-iface) CAMERA_IFACE="$2"; shift 2 ;;
     --camera-addr) CAMERA_ADDR="$2"; shift 2 ;;
+    --upload-iface) UPLOAD_IFACE="$2"; shift 2 ;;
     --upload-addr) UPLOAD_ADDR="$2"; shift 2 ;;
     --format) FORMAT="$2"; shift 2 ;;
     --width) WIDTH="$2"; shift 2 ;;
@@ -128,13 +133,13 @@ echo "[gige] evidence: $EVIDENCE_DIR"
 if [[ "$RUN_IPERF" -eq 1 ]]; then
   if command -v iperf3 >/dev/null 2>&1; then
     board_upload_ip="${UPLOAD_ADDR%%/*}"
-    iperf3 -s -1 -B "$PC_HOST" -p 5201 > "$EVIDENCE_DIR/iperf_eth1_server.log" 2>&1 &
+    iperf3 -s -1 -B "$PC_HOST" -p 5201 > "$EVIDENCE_DIR/iperf_upload_server.log" 2>&1 &
     cleanup_pids+=("$!")
     sleep 0.8
     "${SSH[@]}" "iperf3 -c '$PC_HOST' -B '$board_upload_ip' -p 5201 -t 10 -i 1" \
-      > "$EVIDENCE_DIR/iperf_eth1_client.log" 2>&1 || true
+      > "$EVIDENCE_DIR/iperf_upload_client.log" 2>&1 || true
   else
-    echo "iperf3 missing on host" > "$EVIDENCE_DIR/iperf_eth1_client.log"
+    echo "iperf3 missing on host" > "$EVIDENCE_DIR/iperf_upload_client.log"
   fi
 fi
 
@@ -152,6 +157,7 @@ board_cmd=(
   --camera-iface "$CAMERA_IFACE"
   --camera-addr "$CAMERA_ADDR"
   --camera-name "$CAMERA_NAME"
+  --upload-iface "$UPLOAD_IFACE"
   --upload-addr "$UPLOAD_ADDR"
   --pc-host "$PC_HOST"
   --pc-port "$PC_PORT"

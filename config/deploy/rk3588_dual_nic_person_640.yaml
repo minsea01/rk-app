@@ -1,12 +1,12 @@
 # RK3588 双网口行人检测最终验收配置
 # 说明：文件名保留历史 640 口径，但当前默认主线已切到 416 INT8。
-# eth0: GigE Vision 相机输入
-# eth1: 检测结果上传 / SSH: 192.168.137.56/24
+# eth1: GigE Vision 相机输入
+# eth0: 检测结果上传 / SSH: 192.168.137.226/24
 # PC 接收端: 192.168.137.1:9000
 
 source:
   type: gige
-  uri: "camera-name=MV-CA020-20GC,width=1920,height=1200,framerate=30/1,format=BGR,pull-timeout-ms=500,max-failures=10"
+  uri: "width=1920,height=1200,framerate=30/1,format=GRAY8,pull-timeout-ms=1000,max-failures=10"
 
 engine:
   type: rknn
@@ -43,25 +43,33 @@ output:
     host: "192.168.137.1"
     port: 9000
     queue_size: 32
-    bind_ip: "192.168.137.56"
-    bind_interface: "eth1"
+    bind_ip: "192.168.137.226"
+    bind_interface: "eth0"
     include_image: true
-    image_quality: 80
-    image_interval: 3
+    image_quality: 88
+    image_interval: 1
     draw_detections: true
+    image_roi:
+      enable: false
+      mode: normalized
+      # Optional far-field digital zoom for live viewing, e.g. [0.20, 0.00, 0.60, 0.70].
+      normalized_xywh: [0.0, 0.0, 1.0, 1.0]
+      pixel_xywh: [0, 0, 0, 0]
+      clamp: true
+      min_size: 64
 
 logging:
   level: "INFO"
 
 camera_interface:
-  device: eth0
+  device: eth1
   ip: 192.168.1.10
   netmask: 255.255.255.0
   mtu: 9000
 
 upload_interface:
-  device: eth1
-  ip: 192.168.137.56
+  device: eth0
+  ip: 192.168.137.226
   netmask: 255.255.255.0
 
 expected_performance:

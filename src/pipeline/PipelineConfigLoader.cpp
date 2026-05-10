@@ -359,6 +359,38 @@ void resolveModelMetadata(PipelineConfig::ModelSpec& model, std::vector<std::str
   }
 }
 
+void parseImageRoiNode(const YAML::Node& image_roi, PipelineConfig::OutputSpec& spec) {
+  if (!image_roi || !image_roi.IsMap()) {
+    return;
+  }
+  if (image_roi["enable"]) {
+    spec.image_roi_enable = image_roi["enable"].as<bool>(spec.image_roi_enable);
+  }
+  if (image_roi["mode"]) {
+    spec.image_roi_mode = image_roi["mode"].as<std::string>(spec.image_roi_mode);
+  }
+  if (image_roi["normalized_xywh"] && image_roi["normalized_xywh"].IsSequence() &&
+      image_roi["normalized_xywh"].size() == 4) {
+    for (size_t i = 0; i < 4; ++i) {
+      spec.image_roi_normalized_xywh[i] =
+          image_roi["normalized_xywh"][i].as<float>(spec.image_roi_normalized_xywh[i]);
+    }
+  }
+  if (image_roi["pixel_xywh"] && image_roi["pixel_xywh"].IsSequence() &&
+      image_roi["pixel_xywh"].size() == 4) {
+    for (size_t i = 0; i < 4; ++i) {
+      spec.image_roi_pixel_xywh[i] =
+          image_roi["pixel_xywh"][i].as<int>(spec.image_roi_pixel_xywh[i]);
+    }
+  }
+  if (image_roi["clamp"]) {
+    spec.image_roi_clamp = image_roi["clamp"].as<bool>(spec.image_roi_clamp);
+  }
+  if (image_roi["min_size"]) {
+    spec.image_roi_min_size = image_roi["min_size"].as<int>(spec.image_roi_min_size);
+  }
+}
+
 }  // namespace
 
 PipelineConfig normalizePipelineConfig(const PipelineConfig& raw_config,
@@ -513,6 +545,7 @@ PipelineConfigLoadResult loadPipelineConfigFile(const std::string& config_path) 
         result.config.output.draw_detections =
             tcp["draw_detections"].as<bool>(result.config.output.draw_detections);
       }
+      parseImageRoiNode(tcp["image_roi"], result.config.output);
     }
   }
 

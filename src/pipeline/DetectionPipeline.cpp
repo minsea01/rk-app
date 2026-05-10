@@ -498,6 +498,106 @@ PipelineResult DetectionPipeline::process(const capture::CaptureFrame& frame) {
 
     auto preprocess_start = Clock::now();
 
+#if RKAPP_WITH_RKNN
+    const bool gray_fast_path =
+        impl_->rknn_engine && frame.pixel_format == capture::PixelFormat::GRAY8 &&
+        frame.mat.type() == CV_8UC1 && !impl_->calibration_loaded &&
+        !impl_->preprocess_flags.denoise && !impl_->preprocess_flags.white_balance &&
+        !impl_->preprocess_flags.gamma;
+    if (gray_fast_path) {
+        cv::Mat working = frame.mat;
+        bool working_aliases_source = true;
+        const cv::Size coord_space_size = working.size();
+        cv::Rect roi_rect(0, 0, working.cols, working.rows);
+        bool roi_applied = false;
+
+        if (impl_->config.preprocess.roi_enable) {
+            cv::Rect resolved_roi;
+            const cv::Rect2f normalized_roi(
+                impl_->config.preprocess.roi_normalized_xywh[0],
+                impl_->config.preprocess.roi_normalized_xywh[1],
+                impl_->config.preprocess.roi_normalized_xywh[2],
+                impl_->config.preprocess.roi_normalized_xywh[3]);
+            const cv::Rect pixel_roi(
+                impl_->config.preprocess.roi_pixel_xywh[0],
+                impl_->config.preprocess.roi_pixel_xywh[1],
+                impl_->config.preprocess.roi_pixel_xywh[2],
+                impl_->config.preprocess.roi_pixel_xywh[3]);
+            if (preprocess::Preprocess::resolveRoiRect(
+                    working.size(), roiModeIsNormalized(impl_->config.preprocess.roi_mode),
+                    normalized_roi, pixel_roi, impl_->config.preprocess.roi_clamp,
+                    impl_->config.preprocess.roi_min_size, resolved_roi)) {
+                roi_rect = resolved_roi;
+                if (roi_rect.x != 0 || roi_rect.y != 0 ||
+                    roi_rect.width != working.cols || roi_rect.height != working.rows) {
+                    cv::Mat cropped = preprocess::Preprocess::cropRoi(working, roi_rect);
+                    if (!cropped.empty()) {
+                        working = std::move(cropped);
+                        working_aliases_source = false;
+                        roi_applied = true;
+                    } else {
+                        LOGW("DetectionPipeline: ROI crop failed, using full frame");
+                        roi_rect = cv::Rect(0, 0, working.cols, working.rows);
+                    }
+                }
+            } else {
+                LOGW("DetectionPipeline: Invalid ROI config, using full frame");
+            }
+        }
+
+        preprocess::LetterboxInfo letterbox_info;
+        cv::Mat preprocessed_gray = preprocess::Preprocess::letterbox(
+            working, impl_->config.model.input_size, letterbox_info,
+            preprocess::AccelBackend::OPENCV);
+        if (preprocessed_gray.empty()) {
+            LOGW("DetectionPipeline: Gray letterbox preprocessing failed");
+            return result;
+        }
+
+        cv::Mat preprocessed_bgr;
+        cv::cvtColor(preprocessed_gray, preprocessed_bgr, cv::COLOR_GRAY2BGR);
+
+        if (impl_->config.output.enable_profiling) {
+            result.timing.preprocess_us = microsecondsSince(preprocess_start);
+        }
+
+        auto inference_start = Clock::now();
+        result.detections = impl_->rknn_engine->inferPreprocessed(
+            preprocessed_bgr, working.size(), letterbox_info);
+
+        if (roi_applied) {
+            applyRoiOffsetAndClip(result.detections, roi_rect, coord_space_size);
+        }
+
+        auto postprocess_start = Clock::now();
+        post::Postprocess::mapClassNames(result.detections, impl_->config.model.class_names);
+        if (impl_->config.model.min_box_size > 0.0f || impl_->config.model.max_box_size > 0.0f ||
+            impl_->config.model.min_aspect_ratio > 0.0f ||
+            impl_->config.model.max_aspect_ratio > 0.0f) {
+            post::NMSConfig filter_cfg;
+            filter_cfg.conf_thres = 0.0f;
+            filter_cfg.iou_thres = 1.0f;
+            filter_cfg.topk = 0;
+            filter_cfg.max_det = impl_->config.model.max_detections;
+            filter_cfg.min_box_size = impl_->config.model.min_box_size;
+            filter_cfg.max_box_size = impl_->config.model.max_box_size;
+            filter_cfg.min_aspect_ratio = impl_->config.model.min_aspect_ratio;
+            filter_cfg.max_aspect_ratio = impl_->config.model.max_aspect_ratio;
+            result.detections = post::Postprocess::nms(result.detections, filter_cfg);
+        }
+        impl_->maybeStabilizeDetections(result);
+        result.frame = capture::detachFrameIfAliased(working, frame, working_aliases_source);
+
+        if (impl_->config.output.enable_profiling) {
+            result.timing.inference_us = microsecondsSince(inference_start);
+            result.timing.postprocess_us = microsecondsSince(postprocess_start);
+        }
+
+        result.timing.total_us = microsecondsSince(total_start);
+        return result;
+    }
+#endif
+
     capture::BgrFrameView bgr_view = capture::convertToBgr(frame, backend);
     if (bgr_view.empty()) {
         LOGW("DetectionPipeline: Failed to normalize frame to BGR8");

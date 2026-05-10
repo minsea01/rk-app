@@ -4,7 +4,7 @@
 # 硬件链路：
 #   OV5640 → MIPI CSI-2 → rkcif → /dev/video0 → v4l2src
 #   → NV12 → [RGA letterbox] → RKNN NPU (3核) → NMS
-#   → TCP @ eth1 (网口2，上传检测结果)
+#   → TCP @ eth0 (上传检测结果)
 #
 # 答辩命令示例：
 #   ./build/arm64-release/detect_cli --cfg config/detection/detect_ov5640.yaml
@@ -57,13 +57,12 @@ runtime:
 
 output:
   type: tcp
-  # 结果走 eth1 (任务书"网口2"指定)
-  # 当前板端 eth1 = 192.168.137.56，PC = 192.168.137.1
+  # 当前板端 eth0 = 192.168.137.226，PC = 192.168.137.1
   tcp:
     host: "192.168.137.1"
     port: 9000
-    bind_ip: "192.168.137.56"
-    bind_interface: "eth1"
+    bind_ip: "192.168.137.226"
+    bind_interface: "eth0"
     include_image: true       # 同时上传 JPEG 图像到上位机
     image_quality: 80         # 1080p 演示链路的带宽/画质折中
     image_interval: 3         # 每 3 帧发 1 帧图像，降低编码与链路压力

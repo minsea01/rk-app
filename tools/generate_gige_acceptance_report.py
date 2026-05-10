@@ -32,7 +32,7 @@ def _parse_iperf(path: Path) -> dict[str, Any]:
     matches = re.findall(r"\s(\d+(?:\.\d+)?)\s+Mbits/sec\s+\d*\s*sender", text)
     if not matches:
         matches = re.findall(r"\s(\d+(?:\.\d+)?)\s+Mbits/sec\s+receiver", text)
-    return {"eth1_mbps": float(matches[-1])} if matches else {}
+    return {"upload_mbps": float(matches[-1])} if matches else {}
 
 
 def _parse_prepare_log(path: Path) -> dict[str, Any]:
@@ -45,9 +45,13 @@ def _parse_prepare_log(path: Path) -> dict[str, Any]:
         result["prepare_pass"] = int(m.group(1))
         result["prepare_warn"] = int(m.group(2))
         result["prepare_fail"] = int(m.group(3))
-    result["camera_link_detected"] = "[PASS] eth0 link detected" in text
-    result["grab_ok"] = "GStreamer grabbed" in text and "[PASS]" in text
-    result["detect_ok"] = "detect_cli ran" in text and "[PASS]" in text
+    result["camera_link_detected"] = bool(
+        re.search(r"\[PASS\]\s+eth\d+\s+link detected", text)
+    )
+    if "== Camera Grab ==" in text:
+        result["grab_ok"] = bool(re.search(r"\[PASS\]\s+GStreamer grabbed", text))
+    if "== Detect CLI ==" in text:
+        result["detect_ok"] = bool(re.search(r"\[PASS\]\s+detect_cli ran", text))
     return result
 
 
@@ -81,11 +85,15 @@ def build_summary(evidence_dir: Path) -> dict[str, Any]:
         )
 
     summary.update(_parse_prepare_log(evidence_dir / "gige_acceptance_board.log"))
-    summary.update(_parse_iperf(evidence_dir / "iperf_eth1_client.log"))
+    summary.update(_parse_iperf(evidence_dir / "iperf_upload_client.log"))
+    if "upload_mbps" not in summary:
+        summary.update(_parse_iperf(evidence_dir / "iperf_eth1_client.log"))
     return summary
 
 
 def write_report(evidence_dir: Path, summary: dict[str, Any]) -> None:
+    upload_mbps = summary.get("upload_mbps")
+    upload_text = f"{upload_mbps} Mbps" if upload_mbps is not None else "n/a"
     lines = [
         "# RK3588 GigE Acceptance Report",
         "",
@@ -93,17 +101,17 @@ def write_report(evidence_dir: Path, summary: dict[str, Any]) -> None:
         f"- Prepare checks: PASS={summary.get('prepare_pass', 'n/a')} "
         f"WARN={summary.get('prepare_warn', 'n/a')} FAIL={summary.get('prepare_fail', 'n/a')}",
         f"- Camera link detected: `{summary.get('camera_link_detected', False)}`",
-        f"- Grab OK: `{summary.get('grab_ok', False)}`",
-        f"- Detect OK: `{summary.get('detect_ok', False)}`",
+        f"- Grab OK: `{summary.get('grab_ok', 'n/a')}`",
+        f"- Detect OK: `{summary.get('detect_ok', 'n/a')}`",
         f"- TCP frames received: `{summary.get('tcp_frames_received', 0)}`",
         f"- Board JSON rows: `{summary.get('board_result_rows', 0)}`",
         f"- Result FPS: `{summary.get('result_fps', 'n/a')}`",
-        f"- eth1 throughput: `{summary.get('eth1_mbps', 'n/a')} Mbps`",
+        f"- Upload throughput: `{upload_text}`",
         "",
         "## Notes",
         "",
-        "- `eth0` is the camera input NIC.",
-        "- `eth1` is the result upload / SSH NIC.",
+        "- `eth1` is the camera input NIC.",
+        "- `eth0` is the result upload / SSH NIC.",
         "- The generated effective YAML in this evidence folder records the exact camera source URI and thresholds.",
         "",
     ]

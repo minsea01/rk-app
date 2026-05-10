@@ -60,8 +60,8 @@ public:
    * 如果启用 ENABLE_RKNN_IO_MEM（RKNN SDK >= 1.5.0），可进一步优化 IO 绑定。
    *
    * 支持输入格式：
-   * - RGB888（3 通道，且已 letterbox 到 input_size_）可走直接 DMA-FD 路径
-   * - BGR888/NV12/NV21/RGBA/BGRA 会回退到拷贝+颜色转换路径
+   * - BGR888（3 通道，且已 letterbox 到 input_size_）可走直接 DMA-FD 路径
+   * - RGB888/NV12/NV21/RGBA/BGRA 会回退到拷贝+颜色转换路径
    *
    * @param input 包含预处理图像的 DMA-BUF
    * @param original_size 原图尺寸

@@ -5,9 +5,9 @@ SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 REPO_ROOT=$(cd -- "$SCRIPT_DIR/../.." && pwd)
 cd "$REPO_ROOT"
 
-BOARD_HOST=${BOARD_HOST:-192.168.137.56}
+BOARD_HOST=${BOARD_HOST:-192.168.137.226}
 BOARD_USER=${BOARD_USER:-root}
-BOARD_ROOT=${BOARD_ROOT:-/root/rk-app-new}
+BOARD_ROOT=${BOARD_ROOT:-/opt/rk_app_current}
 HTTP_PORT=${HTTP_PORT:-8080}
 TCP_PORT=${TCP_PORT:-9000}
 LOCAL_ARTIFACT_DIR=${LOCAL_ARTIFACT_DIR:-artifacts/live_view}

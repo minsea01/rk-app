@@ -513,6 +513,36 @@ INDEX_HTML = """<!doctype html>
       font-weight: 650;
       letter-spacing: 0;
     }
+    .header-tools {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-width: 0;
+    }
+    .zoom-controls {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 2px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #f9faf8;
+    }
+    .zoom-controls button {
+      min-width: 42px;
+      height: 28px;
+      border: 0;
+      border-radius: 4px;
+      background: transparent;
+      color: var(--muted);
+      font: inherit;
+      font-weight: 650;
+      cursor: pointer;
+    }
+    .zoom-controls button.active {
+      background: var(--ink);
+      color: #fff;
+    }
     main {
       display: grid;
       grid-template-columns: minmax(0, 1fr) 360px;
@@ -535,6 +565,16 @@ INDEX_HTML = """<!doctype html>
       width: 100%;
       height: 100%;
       object-fit: contain;
+    }
+    .stage.zoomed {
+      align-items: flex-start;
+      justify-content: flex-start;
+      overflow: auto;
+    }
+    .stage.zoomed img {
+      max-width: none;
+      max-height: none;
+      object-fit: initial;
     }
     aside {
       min-width: 0;
@@ -607,6 +647,7 @@ INDEX_HTML = """<!doctype html>
     .status.live .dot { background: var(--accent); }
     @media (max-width: 900px) {
       header { height: auto; min-height: 56px; align-items: flex-start; flex-direction: column; padding: 12px; }
+      .header-tools { width: 100%; justify-content: space-between; }
       main { grid-template-columns: 1fr; grid-template-rows: minmax(280px, 58vh) auto; height: auto; padding: 12px; }
       aside { grid-template-rows: auto minmax(240px, 42vh); }
     }
@@ -615,11 +656,18 @@ INDEX_HTML = """<!doctype html>
 <body>
   <header>
     <h1>RK3588 Live Detection</h1>
-    <div id="status" class="status"><span class="dot"></span><span>waiting</span></div>
+    <div class="header-tools">
+      <div class="zoom-controls" aria-label="zoom">
+        <button type="button" data-zoom="fit" class="active">Fit</button>
+        <button type="button" data-zoom="1">1:1</button>
+        <button type="button" data-zoom="2">2x</button>
+      </div>
+      <div id="status" class="status"><span class="dot"></span><span>waiting</span></div>
+    </div>
   </header>
   <main>
-    <section class="stage">
-      <img src="/stream.mjpg" alt="live detection stream">
+    <section id="stage" class="stage">
+      <img id="stream" src="/stream.mjpg" alt="live detection stream">
     </section>
     <aside>
       <section class="metrics">
@@ -646,10 +694,38 @@ INDEX_HTML = """<!doctype html>
       latest: document.getElementById("latest"),
       status: document.getElementById("status")
     };
+    const stage = document.getElementById("stage");
+    const stream = document.getElementById("stream");
+    const zoomButtons = Array.from(document.querySelectorAll(".zoom-controls button"));
+    let zoomMode = "fit";
 
     function fmt(value, digits = 1) {
       return Number.isFinite(value) ? value.toFixed(digits) : "-";
     }
+
+    function applyZoom(mode) {
+      zoomMode = mode;
+      zoomButtons.forEach((button) => button.classList.toggle("active", button.dataset.zoom === mode));
+      if (mode === "fit") {
+        stage.classList.remove("zoomed");
+        stream.style.width = "";
+        stream.style.height = "";
+        return;
+      }
+      const factor = mode === "2" ? 2 : 1;
+      stage.classList.add("zoomed");
+      const naturalWidth = stream.naturalWidth || 1920;
+      const naturalHeight = stream.naturalHeight || 1200;
+      stream.style.width = `${naturalWidth * factor}px`;
+      stream.style.height = `${naturalHeight * factor}px`;
+    }
+
+    zoomButtons.forEach((button) => {
+      button.addEventListener("click", () => applyZoom(button.dataset.zoom || "fit"));
+    });
+    stream.addEventListener("load", () => {
+      if (zoomMode !== "fit") applyZoom(zoomMode);
+    });
 
     async function refresh() {
       try {

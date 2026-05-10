@@ -266,6 +266,16 @@ bool TcpOutput::send(const FrameResult& result) {
                  << "\","
                  << "\"contains_overlays\":"
                  << (result.image_contains_overlays ? "true" : "false") << ','
+                 << "\"width\":" << result.image_width << ','
+                 << "\"height\":" << result.image_height << ','
+                 << "\"roi_applied\":"
+                 << (result.image_roi_applied ? "true" : "false") << ','
+                 << "\"roi\":{"
+                 << "\"x\":" << result.image_roi_x << ','
+                 << "\"y\":" << result.image_roi_y << ','
+                 << "\"w\":" << result.image_roi_w << ','
+                 << "\"h\":" << result.image_roi_h
+                 << "},"
                  << "\"data_base64\":\"" << base64_encode(result.image_bytes) << "\""
                  << '}';
         }

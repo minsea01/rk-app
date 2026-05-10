@@ -50,7 +50,7 @@ preprocess:
 # 输入源配置
 source:
   type: gige
-  uri: "rtspsrc location=rtsp://192.168.1.10:8554/stream ! rtph264depay ! h264parse ! avdec_h264 ! videoconvert ! appsink"
+  uri: "width=1920,height=1200,framerate=30/1,format=GRAY8,pull-timeout-ms=1000,max-failures=10"
 
 # 输出配置
 output:
@@ -59,8 +59,8 @@ output:
     host: "192.168.137.1"
     port: 9000
     queue_size: 64        # 本地发送队列深度
-    bind_ip: "192.168.137.56"
-    bind_interface: "eth1"
+    bind_ip: "192.168.137.226"
+    bind_interface: "eth0"
 
 runtime:
   warmup: 5

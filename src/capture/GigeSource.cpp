@@ -46,6 +46,15 @@ bool parseBool(const std::string& input) {
          lowered == "bgr" || lowered == "rgb";
 }
 
+bool isAravisSourceProperty(const std::string& key) {
+  return key == "exposure" || key == "exposure-auto" ||
+         key == "gain" || key == "gain-auto" ||
+         key == "h-binning" || key == "v-binning" ||
+         key == "offset-x" || key == "offset-y" ||
+         key == "packet-resend" || key == "do-timestamp" ||
+         key == "blocksize" || key == "num-buffers";
+}
+
 using detail::canonicalCapsFormat;
 using detail::mediaTypeForFormat;
 using detail::shouldUseVideoConvert;
@@ -168,6 +177,14 @@ GigeSource::UriConfig GigeSource::parseUri(const std::string& uri) {
         continue;
       }
 
+      if (isAravisSourceProperty(lowered)) {
+        auto sanitized = sanitizePropertyValue(value);
+        if (!sanitized.empty()) {
+          config.source_properties.push_back(lowered + "=" + sanitized);
+        }
+        continue;
+      }
+
       auto sanitized = sanitizeCaps(token);
       if (!sanitized.empty()) {
         config.caps_kv.push_back(std::move(sanitized));
@@ -225,6 +242,9 @@ std::string GigeSource::buildPipelineDescription(const UriConfig& config) {
   if (config.camera_name_explicit) {
     pipeline << " camera-name=\"" << sanitizeCameraName(config.camera_name) << "\"";
   }
+  for (const auto& property : config.source_properties) {
+    pipeline << " " << property;
+  }
   pipeline << " ! " << caps << " ! ";
   if (config.use_videoconvert) {
     pipeline << "videoconvert ! video/x-raw,format=" << config.desired_format
@@ -258,6 +278,18 @@ std::string GigeSource::sanitizeCaps(const std::string& caps) {
     unsigned char c = static_cast<unsigned char>(ch);
     if (std::isalnum(c) || ch == '_' || ch == '-' || ch == ':' || ch == '/' ||
         ch == '=' || ch == ',' || ch == '.') {
+      safe.push_back(ch);
+    }
+  }
+  return safe;
+}
+
+std::string GigeSource::sanitizePropertyValue(const std::string& value) {
+  std::string safe;
+  safe.reserve(value.size());
+  for (char ch : trimCopy(value)) {
+    unsigned char c = static_cast<unsigned char>(ch);
+    if (std::isalnum(c) || ch == '_' || ch == '-' || ch == '.' || ch == '+') {
       safe.push_back(ch);
     }
   }

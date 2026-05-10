@@ -17,6 +17,13 @@ struct FrameResult {
     std::vector<uint8_t> image_bytes;
     std::string image_encoding;
     bool image_contains_overlays = false;
+    int image_width = 0;
+    int image_height = 0;
+    bool image_roi_applied = false;
+    int image_roi_x = 0;
+    int image_roi_y = 0;
+    int image_roi_w = 0;
+    int image_roi_h = 0;
 };
 
 enum class OutputType {
