@@ -12,7 +12,7 @@ Usage:
 
     # Resolve relative path from PathConfig
     model_path = resolve_path(PathConfig.DEFAULT_ONNX_MODEL)
-    # → /home/user/rk-app/artifacts/models/yolo11n_416.onnx
+    # → /home/user/rk-app/artifacts/models/best_person_aug_416_norm.onnx
 
     # Ensure directory exists
     ensure_dir(PathConfig.MODELS_DIR)  # Creates artifacts/models if needed
@@ -31,7 +31,7 @@ _project_root = None
 def get_project_root() -> Path:
     """Get absolute path to project root directory.
 
-    Finds project root by looking for marker files (.git, CLAUDE.md, etc.)
+    Finds project root by looking for marker files (.git, pyproject.toml, etc.)
 
     Returns:
         Path: Absolute path to project root
@@ -46,18 +46,20 @@ def get_project_root() -> Path:
     if _project_root is not None:
         return _project_root
 
-    # Strategy 1: Use __file__ and walk up to find .git
+    project_markers = [".git", "pyproject.toml", "CMakeLists.txt", "requirements.txt"]
+
+    # Strategy 1: Use __file__ and walk up to find project markers
     current = Path(__file__).resolve().parent
     while current != current.parent:  # Stop at filesystem root
         # Look for project markers
-        if any((current / marker).exists() for marker in [".git", "CLAUDE.md", "requirements.txt"]):
+        if any((current / marker).exists() for marker in project_markers):
             _project_root = current
             return _project_root
         current = current.parent
 
     # Strategy 2: Use current working directory
     cwd = Path.cwd()
-    if any((cwd / marker).exists() for marker in [".git", "CLAUDE.md", "requirements.txt"]):
+    if any((cwd / marker).exists() for marker in project_markers):
         _project_root = cwd
         return _project_root
 
@@ -83,11 +85,11 @@ def resolve_path(relative_path: Union[str, Path], create_dirs: bool = False) -> 
         Path: Absolute path
 
     Examples:
-        >>> resolve_path('artifacts/models/best.onnx')
-        PosixPath('/home/user/rk-app/artifacts/models/best.onnx')
+        >>> resolve_path('artifacts/models/best_person_aug_416_norm.onnx')
+        PosixPath('/home/user/rk-app/artifacts/models/best_person_aug_416_norm.onnx')
 
         >>> resolve_path(PathConfig.DEFAULT_ONNX_MODEL)
-        PosixPath('/home/user/rk-app/artifacts/models/yolo11n_416.onnx')
+        PosixPath('/home/user/rk-app/artifacts/models/best_person_aug_416_norm.onnx')
 
         >>> resolve_path('artifacts/new/model.onnx', create_dirs=True)
         # Creates artifacts/new/ directory
@@ -142,10 +144,10 @@ def get_model_path(model_name: str = None) -> Path:
 
     Examples:
         >>> get_model_path()  # Uses default
-        PosixPath('/home/user/rk-app/artifacts/models/yolo11n_416.onnx')
+        PosixPath('/home/user/rk-app/artifacts/models/best_person_aug_416_norm.onnx')
 
-        >>> get_model_path('best.onnx')  # Looks in MODELS_DIR
-        PosixPath('/home/user/rk-app/artifacts/models/best.onnx')
+        >>> get_model_path('best_person_aug_416_norm.onnx')  # Looks in MODELS_DIR
+        PosixPath('/home/user/rk-app/artifacts/models/best_person_aug_416_norm.onnx')
 
         >>> get_model_path('custom/dir/model.onnx')  # Uses as-is
         PosixPath('/home/user/rk-app/custom/dir/model.onnx')
@@ -227,8 +229,8 @@ def relative_to_project(absolute_path: Union[str, Path]) -> Path:
         Path: Relative path from project root
 
     Examples:
-        >>> relative_to_project('/home/user/rk-app/artifacts/models/best.onnx')
-        PosixPath('artifacts/models/best.onnx')
+        >>> relative_to_project('/home/user/rk-app/artifacts/models/best_person_aug_416_norm.onnx')
+        PosixPath('artifacts/models/best_person_aug_416_norm.onnx')
     """
     path = Path(absolute_path)
     root = get_project_root()

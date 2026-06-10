@@ -60,8 +60,6 @@ htmlcov/
 *.so
 out/
 build/
-bench_dfl_opt
-test_bugfix_arm64
 
 # Video files (too large)
 assets/*.mp4
@@ -71,16 +69,6 @@ assets/*.mp4
 .tmp*
 *.tmp
 temp_data/
-
-# Generated documentation
-AGENT_SDK_CONFIG_GUIDE.md
-AUTO_TRAINING_GUIDE.md
-FINAL_STATUS.md
-FULL_PROJECT_REPORT.md
-MCP_USAGE_GUIDE.md
-PROGRESS_SUMMARY.md
-README_AGENT.md
-TEST_REPORT.md
 
 # Archive (old experimental files)
 archive/
@@ -101,6 +89,8 @@ datasets/coco/train2017/
 datasets/coco_raw/
 artifacts/onnx_gpu_test2/
 artifacts/onnx_optimized/
+artifacts/board_taskbook_*/
+artifacts/gige_acceptance_*/
 
 # Exclude large ONNX models (>10MB)
 *.onnx
@@ -109,7 +99,7 @@ cloud_training/test_citypersons/images/
 .cache/
 *.so.*
 
-# AI-generated reports and status docs
+# Generated reports and status docs
 docs/reports/
 artifacts/CODE_INTEGRITY_REPORT.md
 artifacts/PIPELINE_VALIDATION_REPORT.md
@@ -127,23 +117,26 @@ artifacts/unmerged_branches_report.md
 /gen_more_charts.py
 check*.onnx
 
-# Claude Code / AI tool configs (local only)
-.claude/
-CLAUDE.md
-AGENTS.md
-MEMORY.md
-mcp.config.json
-examples/rk_agent.py
-examples/simple_agent.py
-examples/test_api.py
-scripts/check_agent_sdk.sh
-
 # Additional generated outputs and local datasets
 /industrial_dataset/
 /cloud_training/test_citypersons/
 /logs/
 /output/
 /artifacts/vis/
+/artifacts/live_view/
+/artifacts/live_view_smoke/
+/artifacts/live_view_test/
+/artifacts/received*/
+/artifacts/net_test_*/
+/artifacts/weekly_reports/
+/artifacts/visualizations/
+/artifacts/taskbook_run_*/
+/artifacts/taskbook_live_*/
+/artifacts/taskbook_trial/
+/artifacts/board_benchmark.json
+/artifacts/BOARD_EVIDENCE_*.md
+/artifacts/models/*.json
+!/artifacts/models/*.rknn.json
 /artifacts/test_train/
 /artifacts/*.mp4
 /artifacts/*.jpg

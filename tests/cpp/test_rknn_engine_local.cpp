@@ -44,6 +44,7 @@ TEST(RknnEngineLocalTest, InitUsesModelSpecMetadataOverConflictingSidecar) {
   spec.decode_meta.head = "raw";
   spec.decode_meta.num_classes = 1;
   spec.decode_meta.has_objectness = 0;
+  spec.decode_meta.score_is_probability = 1;
   spec.decode_meta.output_index = 0;
   spec.decode_meta_path = "model_spec://unit-test";
 
@@ -52,6 +53,7 @@ TEST(RknnEngineLocalTest, InitUsesModelSpecMetadataOverConflictingSidecar) {
   EXPECT_EQ(engine.model_meta_.head, "raw");
   EXPECT_EQ(engine.model_meta_.num_classes, 1);
   EXPECT_EQ(engine.model_meta_.has_objectness, 0);
+  EXPECT_EQ(engine.model_meta_.score_is_probability, 1);
   EXPECT_EQ(engine.model_meta_.output_index, 0);
   EXPECT_EQ(engine.model_meta_source_, "model_spec://unit-test");
 

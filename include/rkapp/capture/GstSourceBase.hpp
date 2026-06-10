@@ -16,8 +16,9 @@ namespace rkapp::capture {
 // GStreamer 输入源基类：封装 pipeline 生命周期、拉流与重连逻辑。
 class GstSourceBase : public ISource {
  public:
-  bool read(cv::Mat& frame) override;
-  bool readFrame(CaptureFrame& frame) override;
+  // 便捷方法（非接口）：读取一帧并转换为 BGR；多态调用方使用 readFrameEx。
+  bool read(cv::Mat& frame);
+  bool readFrame(CaptureFrame& frame);
   ReadStatus readFrameEx(CaptureFrame& frame) override;
   void release() override;
   bool isOpened() const override;

@@ -1,10 +1,10 @@
 # ============================================================
-# OV5640 MIPI CSI 行人检测配置（用于答辩现场 Demo）
+# OV5640 MIPI CSI 行人检测配置（用于答辩现场 Demo，416 INT8 主线）
 # ------------------------------------------------------------
 # 硬件链路：
 #   OV5640 → MIPI CSI-2 → rkcif → /dev/video0 → v4l2src
 #   → NV12 → [RGA letterbox] → RKNN NPU (3核) → NMS
-#   → TCP @ eth1 (网口2，上传检测结果)
+#   → TCP @ eth0 (上传检测结果)
 #
 # 答辩命令示例：
 #   ./build/arm64-release/detect_cli --cfg config/detection/detect_ov5640.yaml
@@ -19,8 +19,8 @@ source:
 
 engine:
   type: rknn                  # 板端走 RKNN NPU
-  model: "artifacts/models/best_person_aug_int8.rknn"
-  input_size: [640, 640]      # 与训练/量化一致
+  model: "artifacts/models/best_person_aug_416_norm_int8.rknn"
+  input_size: [416, 416]      # 当前板端已验证可用的实时主线
   use_zero_copy: false        # 仅在源头提供 DMA 且已打通直通时再开启
 
 preprocess:
@@ -38,9 +38,18 @@ preprocess:
     enable: false
 
 postprocess:
-  conf_threshold: 0.50        # 生产阈值，避免 NMS 瓶颈 (见 PERFORMANCE_ANALYSIS.md)
-  nms_threshold: 0.50
+  conf_threshold: 0.40        # 稀疏场景下更稳，结合 tracking 抑制闪烁
+  nms_threshold: 0.35         # 更积极压重复框
   max_detections: 300
+
+tracking:
+  enable: true
+  match_iou: 0.30
+  ema_alpha: 0.65
+  confirm_hits: 2
+  max_misses: 4
+  keep_missing_tracks: true
+  missing_conf_decay: 0.08
 
 runtime:
   warmup: 10                  # OV5640 AWB/AE 收敛需要几帧时间
@@ -48,10 +57,15 @@ runtime:
 
 output:
   type: tcp
-  # 结果走 eth1 (任务书"网口2"指定)
-  # 上位机如果在同一台 PC，改成 PC 的 IP
+  # 当前板端 eth0 = 192.168.137.226，PC = 192.168.137.1
   tcp:
     host: "192.168.137.1"
     port: 9000
+    bind_ip: "192.168.137.226"
+    bind_interface: "eth0"
+    include_image: true       # 同时上传 JPEG 图像到上位机
+    image_quality: 80         # 1080p 演示链路的带宽/画质折中
+    image_interval: 3         # 每 3 帧发 1 帧图像，降低编码与链路压力
+    draw_detections: true     # 发送到 PC 的图像直接带检测框
 
 classes: "config/person_classes.txt"

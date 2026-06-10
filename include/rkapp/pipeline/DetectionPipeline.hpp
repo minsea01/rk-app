@@ -5,14 +5,15 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <cstdint>
 #include <array>
 #include <vector>
 #include <opencv2/opencv.hpp>
 
 #include "rkapp/capture/ISource.hpp"
+#include "rkapp/common/StageTiming.hpp"
 #include "rkapp/infer/IInferEngine.hpp"
 #include "rkapp/preprocess/Preprocess.hpp"
-#include "rkapp/common/DmaBuf.hpp"
 
 namespace rkapp::pipeline {
 
@@ -56,12 +57,34 @@ struct PipelineConfig {
         std::string host = "127.0.0.1";
         int port = 9000;
         int queue_size = 0;
+        std::string bind_ip;
+        std::string bind_interface;
+        bool include_image = false;
+        int image_quality = 85;
+        int image_interval = 1;
+        bool draw_detections = true;
+        bool image_roi_enable = false;
+        std::string image_roi_mode = "normalized";  // normalized|pixel
+        std::array<float, 4> image_roi_normalized_xywh{0.0f, 0.0f, 1.0f, 1.0f};
+        std::array<int, 4> image_roi_pixel_xywh{0, 0, 0, 0};
+        bool image_roi_clamp = true;
+        int image_roi_min_size = 8;
         bool enable_profiling = false;
     };
 
     struct RuntimeSpec {
         int warmup_iterations = 5;
         bool async_mode = false;
+    };
+
+    struct TrackingSpec {
+        bool enable = false;
+        float match_iou = 0.30f;
+        float ema_alpha = 0.65f;
+        int confirm_hits = 2;
+        int max_misses = 4;
+        bool keep_missing_tracks = true;
+        float missing_conf_decay = 0.08f;
     };
 
     struct LoggingSpec {
@@ -81,6 +104,7 @@ struct PipelineConfig {
     PreprocessSpec preprocess;
     OutputSpec output;
     RuntimeSpec runtime;
+    TrackingSpec tracking;
     LoggingSpec logging;
     FailurePolicy failure;
 };
@@ -99,18 +123,17 @@ PipelineConfigLoadResult loadPipelineConfigFile(const std::string& config_path);
  * @brief 单帧检测结果（含可选耗时）
  */
 struct PipelineResult {
+    // 处理是否成功完成；失败时其余字段不保证有效。
+    // 调用方应据此判断，而不是通过“结果为空”推断失败。
+    bool ok = false;
     std::vector<infer::Detection> detections;
     int64_t frame_id = -1;
     cv::Mat frame;  // 可选：原始图像（按调用方需要保留）
 
-    // 分阶段耗时（微秒，仅在 enable_profiling=true 时有意义）
-    struct Timing {
-        int64_t capture_us = 0;
-        int64_t preprocess_us = 0;
-        int64_t inference_us = 0;
-        int64_t postprocess_us = 0;
-        int64_t total_us = 0;
-    } timing;
+    // 分阶段耗时（微秒；capture_us/total_us 始终有效，
+    // 其余字段仅在 enable_profiling=true 时填充）
+    using Timing = common::StageTimingUs;
+    Timing timing;
 };
 
 /**
@@ -131,7 +154,7 @@ using ResultCallback = std::function<void(PipelineResult&&)>;
  * @code
  *   PipelineConfig cfg;
  *   cfg.source.uri = "video.mp4";
- *   cfg.model.model_path = "yolo11n.rknn";
+ *   cfg.model.model_path = "artifacts/models/best_person_aug_416_norm_int8.rknn";
  *
  *   DetectionPipeline pipeline;
  *   pipeline.init(cfg);

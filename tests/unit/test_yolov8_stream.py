@@ -517,7 +517,9 @@ class TestRunStreamRobustness:
             return frame.copy(), {"ratio_pad": (1.0, (0.0, 0.0))}, frame.copy()
 
         with patch.object(stream.cv2, "VideoCapture", return_value=FakeCapture(frame)):
-            with patch.object(stream, "build_preprocess_config", return_value=_make_preprocess_config()):
+            with patch.object(
+                stream, "build_preprocess_config", return_value=_make_preprocess_config()
+            ):
                 with patch.object(stream, "run_preprocess", side_effect=fake_run_preprocess):
                     with patch.object(
                         stream,
@@ -565,7 +567,9 @@ class TestRunStreamRobustness:
             )
 
         with patch.object(stream.cv2, "VideoCapture", return_value=FakeCapture(frame)):
-            with patch.object(stream, "build_preprocess_config", return_value=_make_preprocess_config()):
+            with patch.object(
+                stream, "build_preprocess_config", return_value=_make_preprocess_config()
+            ):
                 with patch.object(
                     stream,
                     "run_preprocess",

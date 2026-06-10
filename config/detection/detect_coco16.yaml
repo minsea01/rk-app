@@ -1,11 +1,13 @@
+# Compatibility smoke config. The old COCO16 ONNX artifact is not shipped in
+# this workspace; this file now uses the current person acceptance ONNX model.
 source:
   type: folder
   uri: "datasets/coco/images/val"
 
 engine:
   type: onnx
-  model: "artifacts/models/yolo11n_416.onnx"
-  input_size: [640, 640]
+  model: "artifacts/models/best_person_aug_416_norm.onnx"
+  input_size: [416, 416]
 
 postprocess:
   conf_threshold: 0.25
@@ -22,4 +24,4 @@ output:
     host: "127.0.0.1"
     port: 9000
 
-classes: "config/classes_16.txt"
+classes: "config/person_classes.txt"

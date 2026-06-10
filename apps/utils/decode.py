@@ -87,6 +87,9 @@ def decode_predictions(
     if raw_layout is None:
         return _empty_decode_result()
     has_objness, num_classes = raw_layout
+    score_is_probability = decode_meta["score_is_probability"] == 1
+    coords_are_normalized = decode_meta["coords_are_normalized"] == 1
+    score_fn = (lambda arr: np.clip(arr, 0.0, 1.0)) if score_is_probability else sigmoid
 
     # raw path: [cx, cy, w, h, obj, cls...]
     p = pred_nc[0]
@@ -94,10 +97,10 @@ def decode_predictions(
         return _empty_decode_result()
 
     cx, cy, w, h = p[:, 0], p[:, 1], p[:, 2], p[:, 3]
-    obj = sigmoid(p[:, 4]) if has_objness else np.ones_like(cx, dtype=np.float32)
+    obj = score_fn(p[:, 4]) if has_objness else np.ones_like(cx, dtype=np.float32)
     cls_offset = 5 if has_objness else 4
     if num_classes > 0:
-        cls_scores = sigmoid(p[:, cls_offset : cls_offset + num_classes])
+        cls_scores = score_fn(p[:, cls_offset : cls_offset + num_classes])
         cls_ids = cls_scores.argmax(axis=1)
         cls_conf = cls_scores.max(axis=1)
     else:
@@ -112,7 +115,9 @@ def decode_predictions(
     # Heuristic:
     # If width/height 95th percentile is < 1.0, outputs are likely normalized to [0,1].
     # In that case scale by imgsz before converting to xyxy.
-    scale_needed = (np.percentile(w[mask], 95) < 1.0) or (np.percentile(h[mask], 95) < 1.0)
+    scale_needed = coords_are_normalized or (
+        (np.percentile(w[mask], 95) < 1.0) or (np.percentile(h[mask], 95) < 1.0)
+    )
     scale = float(imgsz) if scale_needed else 1.0
     cx *= scale
     cy *= scale

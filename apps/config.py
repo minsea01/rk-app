@@ -111,15 +111,15 @@ class PathConfig:
 
     # Model paths
     MODELS_DIR = "artifacts/models"
-    DEFAULT_ONNX_MODEL = "artifacts/models/yolo11n_416.onnx"
-    DEFAULT_RKNN_MODEL = "artifacts/models/yolo11n.rknn"
+    DEFAULT_ONNX_MODEL = "artifacts/models/best_person_aug_416_norm.onnx"
+    DEFAULT_RKNN_MODEL = "artifacts/models/best_person_aug_416_norm_int8.rknn"
 
     # Common model names
-    YOLO11N_ONNX_416 = "artifacts/models/yolo11n_416.onnx"
+    YOLO11N_ONNX_416 = "artifacts/models/yolo11n_coco80_416.onnx"
     YOLO11N_ONNX_640 = "artifacts/models/yolo11n_640.onnx"
-    YOLO11N_RKNN = "artifacts/models/yolo11n.rknn"
-    BEST_ONNX = "artifacts/models/best.onnx"
-    BEST_RKNN = "artifacts/models/best.rknn"
+    YOLO11N_RKNN = "artifacts/models/yolo11n_coco80_416_int8.rknn"
+    BEST_ONNX = "artifacts/models/best_person_aug_416_norm.onnx"
+    BEST_RKNN = "artifacts/models/best_person_aug_416_norm_int8.rknn"
 
     # Dataset paths
     DATASETS_DIR = "datasets"

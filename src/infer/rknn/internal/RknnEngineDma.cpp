@@ -143,19 +143,25 @@ std::vector<Detection> RknnEngine::inferDmaBuf(
   const int out_n_snapshot = impl->out_n;
   const int out_c_snapshot = impl->out_c;
   const int out_elems_snapshot = impl->out_elems;
+  const int out_buffer_elems_snapshot = impl->out_buffer_elems;
+  const int out_w_stride_snapshot = impl->out_w_stride;
   const int out_n_dims_snapshot = impl->out_attr.n_dims;
   const int out_dim1_snapshot = impl->out_attr.dims[1];
   const int out_dim2_snapshot = impl->out_attr.dims[2];
   const uint32_t out_index_snapshot = impl->out_attr.index;
+  const int out_type_snapshot = static_cast<int>(impl->out_attr.type);
+  const int out_fmt_snapshot = static_cast<int>(impl->out_attr.fmt);
+  const float out_scale_snapshot = impl->out_attr.scale;
+  const int32_t out_zp_snapshot = impl->out_attr.zp;
 
   if (impl->input_fmt != RKNN_TENSOR_NHWC || impl->input_type != RKNN_TENSOR_UINT8) {
     // 直接 DMA-FD 仅支持 NHWC UINT8。
     LOGW("RknnEngine::inferDmaBuf: Zero-copy requires NHWC UINT8, falling back to copy");
     return fallback_to_copy();
   }
-  if (input.format() != rkapp::common::DmaBuf::PixelFormat::RGB888) {
-    // 当前直通路径只接受 RGB888，其他格式走回退转换。
-    LOGW("RknnEngine::inferDmaBuf: Direct DMA-FD path expects RGB888 input, falling back to copy");
+  if (input.format() != rkapp::common::DmaBuf::PixelFormat::BGR888) {
+    // 当前项目 RKNN 转换默认在 runtime 内部完成 BGR->RGB，直通路径只接受 BGR888。
+    LOGW("RknnEngine::inferDmaBuf: Direct DMA-FD path expects BGR888 input, falling back to copy");
     return fallback_to_copy();
   }
 
@@ -228,17 +234,43 @@ std::vector<Detection> RknnEngine::inferDmaBuf(
     return {};
   }
 
-  const size_t logits_elems = static_cast<size_t>(out_elems_snapshot);
-  // thread_local 减少重复分配。
+  const bool quantized_raw_format_supported =
+      out_fmt_snapshot == RKNN_TENSOR_NCHW || out_fmt_snapshot == RKNN_TENSOR_NHWC;
+  const bool use_quantized_raw_output =
+      model_meta_snapshot.head == "raw" && out_scale_snapshot > 0.0f &&
+      (out_type_snapshot == RKNN_TENSOR_INT8 || out_type_snapshot == RKNN_TENSOR_UINT8) &&
+      quantized_raw_format_supported;
+  if (!use_quantized_raw_output && model_meta_snapshot.head == "raw" && out_scale_snapshot > 0.0f &&
+      (out_type_snapshot == RKNN_TENSOR_INT8 || out_type_snapshot == RKNN_TENSOR_UINT8) &&
+      !quantized_raw_format_supported) {
+    static std::once_flag quantized_raw_fallback_log_once;
+    std::call_once(quantized_raw_fallback_log_once, [&]() {
+      LOGW("RknnEngine::inferDmaBuf: Quantized RAW fast path disabled for unsupported output fmt=",
+           out_fmt_snapshot, ", falling back to float outputs");
+    });
+  }
+  const size_t logits_elems = static_cast<size_t>(
+      use_quantized_raw_output ? out_buffer_elems_snapshot : out_elems_snapshot);
   thread_local std::vector<float> logits_local;
-  logits_local.resize(logits_elems);
-
+  thread_local std::vector<int8_t> logits_int8_local;
+  thread_local std::vector<uint8_t> logits_uint8_local;
   rknn_output out{};
-  out.want_float = 1;
+  out.want_float = use_quantized_raw_output ? 0 : 1;
   out.is_prealloc = 1;
-  out.buf = logits_local.data();
-  out.size = logits_local.size() * sizeof(float);
   out.index = out_index_snapshot;
+  if (use_quantized_raw_output && out_type_snapshot == RKNN_TENSOR_INT8) {
+    logits_int8_local.resize(logits_elems);
+    out.buf = logits_int8_local.data();
+    out.size = logits_int8_local.size() * sizeof(int8_t);
+  } else if (use_quantized_raw_output && out_type_snapshot == RKNN_TENSOR_UINT8) {
+    logits_uint8_local.resize(logits_elems);
+    out.buf = logits_uint8_local.data();
+    out.size = logits_uint8_local.size() * sizeof(uint8_t);
+  } else {
+    logits_local.resize(logits_elems);
+    out.buf = logits_local.data();
+    out.size = logits_local.size() * sizeof(float);
+  }
   ret = rknn_outputs_get(impl->ctx, 1, &out, nullptr);
 
 #if defined(RKAPP_RKNN_IO_MEM)
@@ -258,11 +290,26 @@ std::vector<Detection> RknnEngine::inferDmaBuf(
   rknn_outputs_release(impl->ctx, 1, &out);
   lock.unlock();
 
-  auto nms_result = rknn_internal::decodeOutputAndNms(
-      logits_local.data(), out_n_snapshot, out_c_snapshot, out_elems_snapshot, out_n_dims_snapshot,
-      out_dim1_snapshot, out_dim2_snapshot, num_classes, model_meta_snapshot,
-      decode_params_snapshot, original_size, letterbox_info, &impl->dfl_layout,
-      "RknnEngine::inferDmaBuf");
+  std::vector<Detection> nms_result;
+  if (use_quantized_raw_output && out_type_snapshot == RKNN_TENSOR_INT8) {
+    nms_result = rknn_internal::decodeOutputAndNmsQuantizedRaw(
+        logits_int8_local.data(), out_scale_snapshot, out_zp_snapshot, out_n_snapshot,
+        out_w_stride_snapshot, out_c_snapshot, out_buffer_elems_snapshot, num_classes,
+        model_meta_snapshot,
+        decode_params_snapshot, original_size, letterbox_info, "RknnEngine::inferDmaBuf");
+  } else if (use_quantized_raw_output && out_type_snapshot == RKNN_TENSOR_UINT8) {
+    nms_result = rknn_internal::decodeOutputAndNmsQuantizedRaw(
+        logits_uint8_local.data(), out_scale_snapshot, out_zp_snapshot, out_n_snapshot,
+        out_w_stride_snapshot, out_c_snapshot, out_buffer_elems_snapshot, num_classes,
+        model_meta_snapshot,
+        decode_params_snapshot, original_size, letterbox_info, "RknnEngine::inferDmaBuf");
+  } else {
+    nms_result = rknn_internal::decodeOutputAndNms(
+        logits_local.data(), out_n_snapshot, out_c_snapshot, out_elems_snapshot,
+        out_n_dims_snapshot, out_dim1_snapshot, out_dim2_snapshot, num_classes,
+        model_meta_snapshot, decode_params_snapshot, original_size, letterbox_info,
+        &impl->dfl_layout, "RknnEngine::inferDmaBuf");
+  }
 
   {
     std::lock_guard<std::mutex> state_lock(state_mutex_);

@@ -143,6 +143,8 @@ TEST(RknnDecodeMetadata, LoadsModelLocalSidecar) {
   EXPECT_EQ(meta.head, "raw");
   EXPECT_EQ(meta.num_classes, 3);
   EXPECT_EQ(meta.has_objectness, 0);
+  EXPECT_EQ(meta.score_is_probability, -1);
+  EXPECT_EQ(meta.coords_are_normalized, -1);
 
   fs::remove_all(dir);
 }
@@ -179,6 +181,141 @@ TEST(RknnDecodeMetadata, MergesAdjacentSidecars) {
   EXPECT_EQ(meta.head, "raw");
   EXPECT_EQ(meta.num_classes, 2);
   EXPECT_EQ(meta.has_objectness, 0);
+  EXPECT_EQ(meta.score_is_probability, -1);
+  EXPECT_EQ(meta.coords_are_normalized, -1);
 
   fs::remove_all(dir);
+}
+
+TEST(RknnDecodeMetadata, LoadsRawProbabilityFlagFromSidecar) {
+  const fs::path dir = makeTempDir("rkapp_rknn_meta_prob_");
+  const fs::path model = dir / "demo.rknn";
+  std::ofstream(model).put('\n');
+  std::ofstream(model.string() + ".json")
+      << R"({"head":"raw","num_classes":1,"has_objectness":0,"score_is_probability":true})";
+
+  const ModelMeta meta = loadModelMeta(model.string());
+
+  EXPECT_EQ(meta.head, "raw");
+  EXPECT_EQ(meta.num_classes, 1);
+  EXPECT_EQ(meta.has_objectness, 0);
+  EXPECT_EQ(meta.score_is_probability, 1);
+  EXPECT_EQ(meta.coords_are_normalized, -1);
+
+  fs::remove_all(dir);
+}
+
+TEST(RknnDecodeMetadata, LoadsNormalizedCoordFlagFromSidecar) {
+  const fs::path dir = makeTempDir("rkapp_rknn_meta_norm_");
+  const fs::path model = dir / "demo.rknn";
+  std::ofstream(model).put('\n');
+  std::ofstream(model.string() + ".json")
+      << R"({"head":"raw","num_classes":1,"has_objectness":0,"coords_are_normalized":true})";
+
+  const ModelMeta meta = loadModelMeta(model.string());
+
+  EXPECT_EQ(meta.head, "raw");
+  EXPECT_EQ(meta.num_classes, 1);
+  EXPECT_EQ(meta.has_objectness, 0);
+  EXPECT_EQ(meta.coords_are_normalized, 1);
+
+  fs::remove_all(dir);
+}
+
+TEST(RknnDecodeRaw, FloatProbabilityScoresSkipSigmoid) {
+  ModelMeta meta;
+  meta.head = "raw";
+  meta.num_classes = 1;
+  meta.has_objectness = 0;
+  meta.score_is_probability = 1;
+
+  rkapp::infer::DecodeParams params;
+  params.conf_thres = 0.8f;
+  params.iou_thres = 0.45f;
+
+  rkapp::preprocess::LetterboxInfo lb{1.0f, 0.0f, 0.0f, 320, 320};
+  std::vector<float> logits = {
+      200.0f,  // cx
+      100.0f,  // cy
+      50.0f,   // w
+      60.0f,   // h
+      0.85f,   // score already in probability domain
+  };
+  int num_classes = -1;
+
+  const auto dets = rkapp::infer::rknn_internal::decodeOutputAndNms(
+      logits.data(), 1, 5, 5, 3, 5, 1, num_classes, meta, params, cv::Size(320, 320), lb,
+      nullptr, "test");
+
+  ASSERT_EQ(dets.size(), 1u);
+  EXPECT_EQ(num_classes, 1);
+  EXPECT_NEAR(dets[0].confidence, 0.85f, 1e-5f);
+  EXPECT_NEAR(dets[0].x, 175.0f, 1e-5f);
+  EXPECT_NEAR(dets[0].y, 70.0f, 1e-5f);
+  EXPECT_NEAR(dets[0].w, 50.0f, 1e-5f);
+  EXPECT_NEAR(dets[0].h, 60.0f, 1e-5f);
+}
+
+TEST(RknnDecodeRaw, QuantizedProbabilityScoresDoNotTurnZeroIntoHalf) {
+  ModelMeta meta;
+  meta.head = "raw";
+  meta.num_classes = 1;
+  meta.has_objectness = 0;
+  meta.score_is_probability = 1;
+
+  rkapp::infer::DecodeParams params;
+  params.conf_thres = 0.5f;
+  params.iou_thres = 0.45f;
+
+  rkapp::preprocess::LetterboxInfo lb{1.0f, 0.0f, 0.0f, 320, 320};
+  std::vector<uint8_t> logits = {
+      50,  // cx
+      60,  // cy
+      20,  // w
+      30,  // h
+      0,   // score already probability 0.0
+  };
+  int num_classes = -1;
+
+  const auto dets = rkapp::infer::rknn_internal::decodeOutputAndNmsQuantizedRaw(
+      logits.data(), 1.0f, 0, 1, 1, 5, 5, num_classes, meta, params, cv::Size(320, 320), lb,
+      "test");
+
+  EXPECT_TRUE(dets.empty());
+  EXPECT_EQ(num_classes, 1);
+}
+
+TEST(RknnDecodeRaw, FloatNormalizedCoordsScaleBackToPixels) {
+  ModelMeta meta;
+  meta.head = "raw";
+  meta.num_classes = 1;
+  meta.has_objectness = 0;
+  meta.score_is_probability = 1;
+  meta.coords_are_normalized = 1;
+
+  rkapp::infer::DecodeParams params;
+  params.conf_thres = 0.5f;
+  params.iou_thres = 0.45f;
+
+  rkapp::preprocess::LetterboxInfo lb{1.0f, 0.0f, 0.0f, 416, 416};
+  std::vector<float> logits = {
+      0.5f,   // cx
+      0.5f,   // cy
+      0.25f,  // w
+      0.5f,   // h
+      0.9f,   // score already in probability domain
+  };
+  int num_classes = -1;
+
+  const auto dets = rkapp::infer::rknn_internal::decodeOutputAndNms(
+      logits.data(), 1, 5, 5, 3, 5, 1, num_classes, meta, params, cv::Size(416, 416), lb,
+      nullptr, "test");
+
+  ASSERT_EQ(dets.size(), 1u);
+  EXPECT_EQ(num_classes, 1);
+  EXPECT_NEAR(dets[0].confidence, 0.9f, 1e-5f);
+  EXPECT_NEAR(dets[0].x, 156.0f, 1e-5f);
+  EXPECT_NEAR(dets[0].y, 104.0f, 1e-5f);
+  EXPECT_NEAR(dets[0].w, 104.0f, 1e-5f);
+  EXPECT_NEAR(dets[0].h, 208.0f, 1e-5f);
 }

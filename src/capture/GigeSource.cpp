@@ -46,6 +46,15 @@ bool parseBool(const std::string& input) {
          lowered == "bgr" || lowered == "rgb";
 }
 
+bool isAravisSourceProperty(const std::string& key) {
+  return key == "exposure" || key == "exposure-auto" ||
+         key == "gain" || key == "gain-auto" ||
+         key == "h-binning" || key == "v-binning" ||
+         key == "offset-x" || key == "offset-y" ||
+         key == "packet-resend" || key == "do-timestamp" ||
+         key == "blocksize" || key == "num-buffers";
+}
+
 using detail::canonicalCapsFormat;
 using detail::mediaTypeForFormat;
 using detail::shouldUseVideoConvert;
@@ -128,7 +137,14 @@ GigeSource::UriConfig GigeSource::parseUri(const std::string& uri) {
 
       const std::string lowered = rkapp::common::toLowerCopy(key);
       if (lowered == "camera-name") {
-        if (!value.empty()) config.camera_name = value;
+        const std::string value_lowered = rkapp::common::toLowerCopy(value);
+        if (value.empty() || value_lowered == "auto" || value_lowered == "first") {
+          config.camera_name.clear();
+          config.camera_name_explicit = false;
+        } else {
+          config.camera_name = value;
+          config.camera_name_explicit = true;
+        }
         continue;
       }
 
@@ -157,6 +173,14 @@ GigeSource::UriConfig GigeSource::parseUri(const std::string& uri) {
       if (lowered == "format") {
         if (!value.empty()) {
           applyFormat(value);
+        }
+        continue;
+      }
+
+      if (isAravisSourceProperty(lowered)) {
+        auto sanitized = sanitizePropertyValue(value);
+        if (!sanitized.empty()) {
+          config.source_properties.push_back(lowered + "=" + sanitized);
         }
         continue;
       }
@@ -214,8 +238,14 @@ std::string GigeSource::buildPipelineDescription(const UriConfig& config) {
 
   std::ostringstream pipeline;
   // aravissrc 负责拉取 GigE Vision 图像，appsink 输出到本进程。
-  pipeline << "aravissrc camera-name=\"" << sanitizeCameraName(config.camera_name) << "\" ! "
-           << caps << " ! ";
+  pipeline << "aravissrc";
+  if (config.camera_name_explicit) {
+    pipeline << " camera-name=\"" << sanitizeCameraName(config.camera_name) << "\"";
+  }
+  for (const auto& property : config.source_properties) {
+    pipeline << " " << property;
+  }
+  pipeline << " ! " << caps << " ! ";
   if (config.use_videoconvert) {
     pipeline << "videoconvert ! video/x-raw,format=" << config.desired_format
              << " ! appsink name=sink sync=false max-buffers=2 drop=true";
@@ -238,7 +268,6 @@ std::string GigeSource::sanitizeCameraName(const std::string& name) {
       safe.push_back(ch);
     }
   }
-  if (safe.empty()) safe = "camera";
   return safe;
 }
 
@@ -249,6 +278,18 @@ std::string GigeSource::sanitizeCaps(const std::string& caps) {
     unsigned char c = static_cast<unsigned char>(ch);
     if (std::isalnum(c) || ch == '_' || ch == '-' || ch == ':' || ch == '/' ||
         ch == '=' || ch == ',' || ch == '.') {
+      safe.push_back(ch);
+    }
+  }
+  return safe;
+}
+
+std::string GigeSource::sanitizePropertyValue(const std::string& value) {
+  std::string safe;
+  safe.reserve(value.size());
+  for (char ch : trimCopy(value)) {
+    unsigned char c = static_cast<unsigned char>(ch);
+    if (std::isalnum(c) || ch == '_' || ch == '-' || ch == '.' || ch == '+') {
       safe.push_back(ch);
     }
   }

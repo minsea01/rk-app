@@ -74,6 +74,8 @@ def normalize_decode_meta(meta: Optional[Mapping[str, Any]]) -> DecodeMeta:
         "strides": None,
         "num_classes": None,
         "has_objectness": None,
+        "score_is_probability": None,
+        "coords_are_normalized": None,
         "task": None,
         "num_keypoints": None,
     }
@@ -102,6 +104,22 @@ def normalize_decode_meta(meta: Optional[Mapping[str, Any]]) -> DecodeMeta:
     if has_obj is not None:
         out["has_objectness"] = has_obj
 
+    score_is_probability = _coerce_bool_flag(meta.get("score_is_probability"))
+    if score_is_probability is None:
+        score_is_probability = _coerce_bool_flag(meta.get("scores_are_probabilities"))
+    if score_is_probability is None:
+        score_is_probability = _coerce_bool_flag(meta.get("score_is_prob"))
+    if score_is_probability is not None:
+        out["score_is_probability"] = score_is_probability
+
+    coords_are_normalized = _coerce_bool_flag(meta.get("coords_are_normalized"))
+    if coords_are_normalized is None:
+        coords_are_normalized = _coerce_bool_flag(meta.get("normalized_coords"))
+    if coords_are_normalized is None:
+        coords_are_normalized = _coerce_bool_flag(meta.get("coords_normalized"))
+    if coords_are_normalized is not None:
+        out["coords_are_normalized"] = coords_are_normalized
+
     strides = _coerce_strides(meta.get("strides"))
     if strides is not None:
         out["strides"] = strides
@@ -128,6 +146,8 @@ def _has_any(meta: DecodeMeta) -> bool:
             "strides",
             "num_classes",
             "has_objectness",
+            "score_is_probability",
+            "coords_are_normalized",
             "task",
             "num_keypoints",
         )
@@ -192,6 +212,18 @@ def _parse_text_meta(content: str) -> DecodeMeta:
         val = find_bool(key)
         if val is not None:
             raw["has_objectness"] = val
+            break
+
+    for key in ("score_is_probability", "scores_are_probabilities", "score_is_prob"):
+        val = find_bool(key)
+        if val is not None:
+            raw["score_is_probability"] = val
+            break
+
+    for key in ("coords_are_normalized", "normalized_coords", "coords_normalized"):
+        val = find_bool(key)
+        if val is not None:
+            raw["coords_are_normalized"] = val
             break
 
     strides = find_strides()

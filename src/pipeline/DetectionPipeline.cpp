@@ -7,6 +7,7 @@
 #include "rkapp/capture/FrameOps.hpp"
 #include "rkapp/infer/RknnEngine.hpp"
 #include "rkapp/infer/OnnxEngine.hpp"
+#include "rkapp/pipeline/BoxTracker.hpp"
 #include "rkapp/post/Postprocess.hpp"
 #include "rkapp/common/StringUtils.hpp"
 #include "rkapp/common/log.hpp"
@@ -112,6 +113,75 @@ void applyRoiOffsetAndClip(std::vector<infer::Detection>& detections,
     }
 }
 
+// 流程中间帧：把图像与“是否仍别名采集源内存”绑在一起传递。
+// 采集源回收底层缓冲后别名 Mat 即悬空，因此该标记决定最终是否需要 clone 脱钩；
+// 所有派生产物（颜色转换/裁剪/增强）一律经 assignDerived 收口为非别名。
+struct StagedFrame {
+    cv::Mat mat;
+    bool aliases_source = false;
+
+    void assignDerived(cv::Mat&& derived) {
+        mat = std::move(derived);
+        aliases_source = false;
+    }
+};
+
+// 解析并应用 ROI 裁剪；返回是否真正裁剪了子区域，roi_rect 输出生效区域。
+// 配置无效或裁剪失败时回退整帧并告警。
+bool applyConfiguredRoi(const PipelineConfig::PreprocessSpec& cfg,
+                        StagedFrame& working, cv::Rect& roi_rect) {
+    roi_rect = cv::Rect(0, 0, working.mat.cols, working.mat.rows);
+    if (!cfg.roi_enable) {
+        return false;
+    }
+
+    const cv::Rect2f normalized_roi(cfg.roi_normalized_xywh[0], cfg.roi_normalized_xywh[1],
+                                    cfg.roi_normalized_xywh[2], cfg.roi_normalized_xywh[3]);
+    const cv::Rect pixel_roi(cfg.roi_pixel_xywh[0], cfg.roi_pixel_xywh[1],
+                             cfg.roi_pixel_xywh[2], cfg.roi_pixel_xywh[3]);
+    cv::Rect resolved_roi;
+    if (!preprocess::Preprocess::resolveRoiRect(working.mat.size(),
+                                                roiModeIsNormalized(cfg.roi_mode), normalized_roi,
+                                                pixel_roi, cfg.roi_clamp, cfg.roi_min_size,
+                                                resolved_roi)) {
+        LOGW("DetectionPipeline: Invalid ROI config, using full frame");
+        return false;
+    }
+    if (resolved_roi.x == 0 && resolved_roi.y == 0 &&
+        resolved_roi.width == working.mat.cols && resolved_roi.height == working.mat.rows) {
+        roi_rect = resolved_roi;
+        return false;
+    }
+
+    cv::Mat cropped = preprocess::Preprocess::cropRoi(working.mat, resolved_roi);
+    if (cropped.empty()) {
+        LOGW("DetectionPipeline: ROI crop failed, using full frame");
+        return false;
+    }
+    roi_rect = resolved_roi;
+    working.assignDerived(std::move(cropped));
+    return true;
+}
+
+// 框尺寸/长宽比过滤：复用 NMS 的过滤通道，置信度与 IoU 阈值不参与。
+void applyBoxFilters(std::vector<infer::Detection>& detections,
+                     const PipelineConfig::ModelSpec& model) {
+    if (model.min_box_size <= 0.0f && model.max_box_size <= 0.0f &&
+        model.min_aspect_ratio <= 0.0f && model.max_aspect_ratio <= 0.0f) {
+        return;
+    }
+    post::NMSConfig filter_cfg;
+    filter_cfg.conf_thres = 0.0f;
+    filter_cfg.iou_thres = 1.0f;
+    filter_cfg.topk = 0;
+    filter_cfg.max_det = model.max_detections;
+    filter_cfg.min_box_size = model.min_box_size;
+    filter_cfg.max_box_size = model.max_box_size;
+    filter_cfg.min_aspect_ratio = model.min_aspect_ratio;
+    filter_cfg.max_aspect_ratio = model.max_aspect_ratio;
+    detections = post::Postprocess::nms(detections, filter_cfg);
+}
+
 } // namespace
 
 // ============================================================================
@@ -124,8 +194,6 @@ struct DetectionPipeline::Impl {
     // 管线核心组件
     capture::SourcePtr source;
     std::unique_ptr<infer::IInferEngine> engine;
-    infer::RknnEngine* rknn_engine = nullptr;
-    std::unique_ptr<common::DmaBufPool> buffer_pool;
 
     // 运行状态
     std::atomic<bool> running{false};
@@ -155,6 +223,7 @@ struct DetectionPipeline::Impl {
     cv::Size undistort_size{0, 0};
     PreprocessFeatureFlags preprocess_flags;
     int consecutive_frame_errors = 0;
+    BoxTracker tracker;
 
     void updateFps() {
         frames_since_update++;
@@ -173,7 +242,9 @@ struct DetectionPipeline::Impl {
         std::lock_guard<std::mutex> lock(stats_mutex);
         stats.frames_processed++;
         stats.total_detections += result.detections.size();
-        total_latency_us += result.timing.total_us;
+        const int64_t process_latency_us =
+            std::max<int64_t>(0, result.timing.total_us - result.timing.capture_us);
+        total_latency_us += process_latency_us;
         stats.avg_latency_ms = (total_latency_us / stats.frames_processed) / 1000.0;
 
         auto elapsed_s = std::chrono::duration_cast<std::chrono::seconds>(
@@ -191,6 +262,25 @@ struct DetectionPipeline::Impl {
     void recordReconnectAttempt() {
         std::lock_guard<std::mutex> lock(stats_mutex);
         stats.reconnect_count++;
+    }
+
+    void configureTracker() {
+        BoxTracker::Config tracker_config;
+        tracker_config.enable = config.tracking.enable;
+        tracker_config.match_iou = config.tracking.match_iou;
+        tracker_config.ema_alpha = config.tracking.ema_alpha;
+        tracker_config.confirm_hits = config.tracking.confirm_hits;
+        tracker_config.max_misses = config.tracking.max_misses;
+        tracker_config.keep_missing_tracks = config.tracking.keep_missing_tracks;
+        tracker_config.missing_conf_decay = config.tracking.missing_conf_decay;
+        tracker.configure(tracker_config);
+    }
+
+    void maybeStabilizeDetections(PipelineResult& result) {
+        if (!config.tracking.enable) {
+            return;
+        }
+        result.detections = tracker.update(result.detections);
     }
 };
 
@@ -223,13 +313,13 @@ bool DetectionPipeline::init(const PipelineConfig& config) {
     for (const auto& warning : normalize_warnings) {
         LOGW("DetectionPipeline: ", warning);
     }
-    impl_->rknn_engine = nullptr;
     impl_->calibration = {};
     impl_->calibration_loaded = false;
     impl_->undistort_map1.release();
     impl_->undistort_map2.release();
     impl_->undistort_size = {0, 0};
     impl_->preprocess_flags = resolveFeatureFlags(impl_->config);
+    impl_->configureTracker();
     impl_->frame_counter.store(0, std::memory_order_relaxed);
 
     if (impl_->config.preprocess.enable_undistort) {
@@ -259,21 +349,13 @@ bool DetectionPipeline::init(const PipelineConfig& config) {
         return false;
     }
 
-    // 创建推理引擎。
+    // 创建推理引擎。NPU 核心掩码等后端专有配置由引擎在 init 时
+    // 根据 ModelSpec 自行决定，管线不感知具体后端类型。
     impl_->engine = createEngine(impl_->config.model);
     if (!impl_->engine) {
         LOGE("DetectionPipeline: Failed to create inference engine");
         return false;
     }
-
-#if RKAPP_WITH_RKNN
-    impl_->rknn_engine = dynamic_cast<infer::RknnEngine*>(impl_->engine.get());
-    if (impl_->rknn_engine && impl_->config.model.use_npu_multicore) {
-        impl_->rknn_engine->setCoreMask(0x7);  // All 3 NPU cores (6 TOPS)
-    }
-#else
-    impl_->rknn_engine = nullptr;
-#endif
 
     // 初始化推理引擎。
     if (!impl_->engine->init(impl_->config.model)) {
@@ -290,13 +372,12 @@ bool DetectionPipeline::init(const PipelineConfig& config) {
     impl_->engine->setDecodeParams(decode_params);
 
     // 重置零拷贝状态，保证重初始化后状态一致。
-    impl_->buffer_pool.reset();
     impl_->stats.zero_copy_enabled = false;
 
-    // 仅 source 提供兼容 DMA 输入时才视为“零拷贝”。
-    if (impl_->config.model.use_zero_copy && impl_->rknn_engine && common::DmaBuf::isSupported()) {
-        LOGW("DetectionPipeline: Direct zero-copy is reserved for source-provided DMA frames; "
-             "cv::Mat-to-DMA staging is not treated as zero-copy and remains disabled");
+    // 仅 source 提供兼容 DMA 输入时才视为“零拷贝”；当前主线始终走常规拷贝路径。
+    if (impl_->config.model.use_zero_copy) {
+        LOGW("DetectionPipeline: use_zero_copy is configured but direct zero-copy is reserved "
+             "for source-provided DMA frames; running with the standard copy path");
     }
 
     // 预热模型，降低首帧延迟。
@@ -324,6 +405,7 @@ bool DetectionPipeline::init(const PipelineConfig& config) {
     LOGI("  - Zero-copy: ", (impl_->stats.zero_copy_enabled ? "enabled" : "disabled"));
     LOGI("  - Runtime warmup: ", impl_->config.runtime.warmup_iterations);
     LOGI("  - Runtime async: ", (impl_->config.runtime.async_mode ? "enabled" : "disabled"));
+    LOGI("  - Tracking: ", (impl_->config.tracking.enable ? "enabled" : "disabled"));
     LOGI("  - Undistort: ", (impl_->calibration_loaded ? "enabled" : "disabled"));
     LOGI("  - Preprocess profile: ", impl_->config.preprocess.profile);
     LOGI("  - ROI: ", (impl_->config.preprocess.roi_enable ? "enabled" : "disabled"));
@@ -382,7 +464,7 @@ std::optional<PipelineResult> DetectionPipeline::nextInternal(bool respect_runni
             }
 
             auto result = process(frame);
-            if (result.timing.total_us <= 0 && result.frame.empty() && result.detections.empty()) {
+            if (!result.ok) {
                 impl_->recordDroppedFrame();
                 impl_->consecutive_frame_errors++;
                 if (impl_->config.failure.frame_error_limit >= 0 &&
@@ -461,214 +543,154 @@ PipelineResult DetectionPipeline::process(const capture::CaptureFrame& frame) {
     PipelineResult result;
     auto total_start = Clock::now();
 
-    if (!impl_->initialized || frame.mat.empty()) {
+    if (!impl_->initialized || !impl_->engine || frame.mat.empty()) {
         return result;
     }
 
-    preprocess::AccelBackend backend = impl_->config.preprocess.use_rga_preprocess
+    const bool profiling = impl_->config.output.enable_profiling;
+    // AUTO 后端会在 RGA 可用且输入为 8UC3 时走硬件，其余情况静默使用 CPU；
+    // 因此该选择对所有路径（含灰度快速路径）一致生效。
+    const preprocess::AccelBackend backend = impl_->config.preprocess.use_rga_preprocess
         ? preprocess::AccelBackend::AUTO
         : preprocess::AccelBackend::OPENCV;
 
     auto preprocess_start = Clock::now();
 
-    capture::BgrFrameView bgr_view = capture::convertToBgr(frame, backend);
-    if (bgr_view.empty()) {
-        LOGW("DetectionPipeline: Failed to normalize frame to BGR8");
-        return result;
-    }
+    // ---- 输入归一化 ----
+    // GRAY8 快速路径：无需去畸变/增强时跳过全图 GRAY->BGR 转换，
+    // 在 letterbox 之后再扩展通道，缩放阶段的数据量降为 1/3。
+    const bool gray_fast_path =
+        frame.pixel_format == capture::PixelFormat::GRAY8 && frame.mat.type() == CV_8UC1 &&
+        !impl_->calibration_loaded && !impl_->preprocess_flags.denoise &&
+        !impl_->preprocess_flags.white_balance && !impl_->preprocess_flags.gamma;
 
-    cv::Mat working = bgr_view.image;
-    bool working_aliases_source = bgr_view.aliases_source;
-    if (impl_->calibration_loaded) {
-        if (impl_->undistort_size != bgr_view.image.size()) {
-            if (preprocess::Preprocess::buildUndistortMaps(
-                    impl_->calibration, bgr_view.image.size(), impl_->undistort_map1,
-                    impl_->undistort_map2)) {
-                impl_->undistort_size = bgr_view.image.size();
-            } else {
-                LOGW("DetectionPipeline: Failed to build undistort maps; bypassing undistort");
-                impl_->undistort_map1.release();
-                impl_->undistort_map2.release();
-                impl_->undistort_size = {0, 0};
-                impl_->calibration_loaded = false;
-            }
+    StagedFrame working;
+    if (gray_fast_path) {
+        working.mat = frame.mat;
+        working.aliases_source = true;
+    } else {
+        capture::BgrFrameView bgr_view = capture::convertToBgr(frame, backend);
+        if (bgr_view.empty()) {
+            LOGW("DetectionPipeline: Failed to normalize frame to BGR8");
+            return result;
         }
-        if (!impl_->undistort_map1.empty() && !impl_->undistort_map2.empty()) {
-            cv::Mat undistorted = preprocess::Preprocess::undistort(
-                bgr_view.image, impl_->undistort_map1, impl_->undistort_map2);
-            if (!undistorted.empty()) {
-                working = std::move(undistorted);
-                working_aliases_source = false;
-            }
-        }
-    }
+        working.mat = bgr_view.image;
+        working.aliases_source = bgr_view.aliases_source;
 
-    cv::Mat coord_frame = working;
-    bool coord_frame_aliases_source = working_aliases_source;
-    const cv::Size coord_space_size = working.size();
-    cv::Rect roi_rect(0, 0, working.cols, working.rows);
-    bool roi_applied = false;
-    if (impl_->config.preprocess.roi_enable) {
-        cv::Rect resolved_roi;
-        const cv::Rect2f normalized_roi(
-            impl_->config.preprocess.roi_normalized_xywh[0],
-            impl_->config.preprocess.roi_normalized_xywh[1],
-            impl_->config.preprocess.roi_normalized_xywh[2],
-            impl_->config.preprocess.roi_normalized_xywh[3]);
-        const cv::Rect pixel_roi(
-            impl_->config.preprocess.roi_pixel_xywh[0],
-            impl_->config.preprocess.roi_pixel_xywh[1],
-            impl_->config.preprocess.roi_pixel_xywh[2],
-            impl_->config.preprocess.roi_pixel_xywh[3]);
-        if (preprocess::Preprocess::resolveRoiRect(
-                working.size(), roiModeIsNormalized(impl_->config.preprocess.roi_mode),
-                normalized_roi, pixel_roi, impl_->config.preprocess.roi_clamp,
-                impl_->config.preprocess.roi_min_size,
-                resolved_roi)) {
-            roi_rect = resolved_roi;
-            if (roi_rect.x != 0 || roi_rect.y != 0 ||
-                roi_rect.width != working.cols || roi_rect.height != working.rows) {
-                cv::Mat cropped = preprocess::Preprocess::cropRoi(working, roi_rect);
-                if (!cropped.empty()) {
-                    working = std::move(cropped);
-                    working_aliases_source = false;
-                    roi_applied = true;
+        if (impl_->calibration_loaded) {
+            if (impl_->undistort_size != working.mat.size()) {
+                if (preprocess::Preprocess::buildUndistortMaps(
+                        impl_->calibration, working.mat.size(), impl_->undistort_map1,
+                        impl_->undistort_map2)) {
+                    impl_->undistort_size = working.mat.size();
                 } else {
-                    LOGW("DetectionPipeline: ROI crop failed, using full frame");
-                    roi_rect = cv::Rect(0, 0, working.cols, working.rows);
+                    LOGW("DetectionPipeline: Failed to build undistort maps; bypassing undistort");
+                    impl_->undistort_map1.release();
+                    impl_->undistort_map2.release();
+                    impl_->undistort_size = {0, 0};
+                    impl_->calibration_loaded = false;
                 }
             }
-        } else {
-            LOGW("DetectionPipeline: Invalid ROI config, using full frame");
-        }
-    }
-
-    if (impl_->preprocess_flags.denoise) {
-        if (rkapp::common::toLowerCopy(impl_->config.preprocess.denoise_method) != "bilateral") {
-            LOGW("DetectionPipeline: Unsupported denoise method '",
-                 impl_->config.preprocess.denoise_method, "', using bilateral");
-        }
-        cv::Mat denoised = preprocess::Preprocess::denoiseBilateral(
-            working, impl_->config.preprocess.denoise_d,
-            impl_->config.preprocess.denoise_sigma_color,
-            impl_->config.preprocess.denoise_sigma_space);
-        if (!denoised.empty()) {
-            working = std::move(denoised);
-            working_aliases_source = false;
-        }
-    }
-
-    if (impl_->preprocess_flags.white_balance) {
-        cv::Mat balanced = preprocess::Preprocess::whiteBalanceGrayWorld(
-            working, impl_->config.preprocess.white_balance_clip_percent);
-        if (!balanced.empty()) {
-            working = std::move(balanced);
-            working_aliases_source = false;
-        }
-    }
-
-    if (impl_->preprocess_flags.gamma) {
-        const float gamma_value = impl_->config.preprocess.gamma_value;
-        if (gamma_value > 0.0f) {
-            cv::Mat gamma_corrected =
-                preprocess::Preprocess::applyGammaLut(working, gamma_value);
-            if (!gamma_corrected.empty()) {
-                working = std::move(gamma_corrected);
-                working_aliases_source = false;
+            if (!impl_->undistort_map1.empty() && !impl_->undistort_map2.empty()) {
+                cv::Mat undistorted = preprocess::Preprocess::undistort(
+                    working.mat, impl_->undistort_map1, impl_->undistort_map2);
+                if (!undistorted.empty()) {
+                    working.assignDerived(std::move(undistorted));
+                }
             }
-        } else if (gamma_value <= 0.0f) {
-            LOGW("DetectionPipeline: Invalid gamma value ", gamma_value, ", skipping gamma correction");
         }
     }
-    coord_frame = working;
-    coord_frame_aliases_source = working_aliases_source;
 
-#if RKAPP_WITH_RKNN
-    if (impl_->rknn_engine) {
-        // 预处理（letterbox）。
-        preprocess::LetterboxInfo letterbox_info;
+    // ---- ROI 裁剪（检测坐标随后映射回裁剪前坐标系）----
+    const cv::Size coord_space_size = working.mat.size();
+    cv::Rect roi_rect;
+    const bool roi_applied = applyConfiguredRoi(impl_->config.preprocess, working, roi_rect);
 
-        cv::Mat preprocessed = preprocess::Preprocess::letterbox(
-            working, impl_->config.model.input_size, letterbox_info, backend);
+    // ---- 画质增强（灰度快速路径的前置条件已排除这些开关）----
+    if (!gray_fast_path) {
+        if (impl_->preprocess_flags.denoise) {
+            if (rkapp::common::toLowerCopy(impl_->config.preprocess.denoise_method) != "bilateral") {
+                LOGW("DetectionPipeline: Unsupported denoise method '",
+                     impl_->config.preprocess.denoise_method, "', using bilateral");
+            }
+            cv::Mat denoised = preprocess::Preprocess::denoiseBilateral(
+                working.mat, impl_->config.preprocess.denoise_d,
+                impl_->config.preprocess.denoise_sigma_color,
+                impl_->config.preprocess.denoise_sigma_space);
+            if (!denoised.empty()) {
+                working.assignDerived(std::move(denoised));
+            }
+        }
+
+        if (impl_->preprocess_flags.white_balance) {
+            cv::Mat balanced = preprocess::Preprocess::whiteBalanceGrayWorld(
+                working.mat, impl_->config.preprocess.white_balance_clip_percent);
+            if (!balanced.empty()) {
+                working.assignDerived(std::move(balanced));
+            }
+        }
+
+        if (impl_->preprocess_flags.gamma) {
+            const float gamma_value = impl_->config.preprocess.gamma_value;
+            if (gamma_value > 0.0f) {
+                cv::Mat gamma_corrected =
+                    preprocess::Preprocess::applyGammaLut(working.mat, gamma_value);
+                if (!gamma_corrected.empty()) {
+                    working.assignDerived(std::move(gamma_corrected));
+                }
+            } else {
+                LOGW("DetectionPipeline: Invalid gamma value ", gamma_value,
+                     ", skipping gamma correction");
+            }
+        }
+    }
+
+    // ---- letterbox 到模型输入尺寸 ----
+    preprocess::LetterboxInfo letterbox_info;
+    cv::Mat preprocessed;
+    if (gray_fast_path) {
+        cv::Mat letterboxed_gray = preprocess::Preprocess::letterbox(
+            working.mat, impl_->config.model.input_size, letterbox_info, backend);
+        if (letterboxed_gray.empty()) {
+            LOGW("DetectionPipeline: Letterbox preprocessing failed");
+            return result;
+        }
+        cv::cvtColor(letterboxed_gray, preprocessed, cv::COLOR_GRAY2BGR);
+    } else {
+        preprocessed = preprocess::Preprocess::letterbox(
+            working.mat, impl_->config.model.input_size, letterbox_info, backend);
         if (preprocessed.empty()) {
             LOGW("DetectionPipeline: Letterbox preprocessing failed");
             return result;
         }
-
-        if (impl_->config.output.enable_profiling) {
-            result.timing.preprocess_us = microsecondsSince(preprocess_start);
-        }
-
-        // 推理。
-        auto inference_start = Clock::now();
-        result.detections = impl_->rknn_engine->inferPreprocessed(
-            preprocessed, working.size(), letterbox_info);
-
-        if (roi_applied) {
-            applyRoiOffsetAndClip(result.detections, roi_rect, coord_space_size);
-        }
-
-        auto postprocess_start = Clock::now();
-        post::Postprocess::mapClassNames(result.detections, impl_->config.model.class_names);
-        if (impl_->config.model.min_box_size > 0.0f || impl_->config.model.max_box_size > 0.0f ||
-            impl_->config.model.min_aspect_ratio > 0.0f ||
-            impl_->config.model.max_aspect_ratio > 0.0f) {
-            post::NMSConfig filter_cfg;
-            filter_cfg.conf_thres = 0.0f;
-            filter_cfg.iou_thres = 1.0f;
-            filter_cfg.topk = 0;
-            filter_cfg.max_det = impl_->config.model.max_detections;
-            filter_cfg.min_box_size = impl_->config.model.min_box_size;
-            filter_cfg.max_box_size = impl_->config.model.max_box_size;
-            filter_cfg.min_aspect_ratio = impl_->config.model.min_aspect_ratio;
-            filter_cfg.max_aspect_ratio = impl_->config.model.max_aspect_ratio;
-            result.detections = post::Postprocess::nms(result.detections, filter_cfg);
-        }
-        result.frame = capture::detachFrameIfAliased(coord_frame, frame,
-                                                     coord_frame_aliases_source);
-
-        if (impl_->config.output.enable_profiling) {
-            result.timing.inference_us = microsecondsSince(inference_start);
-            result.timing.postprocess_us = microsecondsSince(postprocess_start);
-        }
-
-        // 总耗时统计。
-        result.timing.total_us = microsecondsSince(total_start);
-        return result;
     }
-#endif
-
-    if (impl_->config.output.enable_profiling) {
+    if (profiling) {
         result.timing.preprocess_us = microsecondsSince(preprocess_start);
     }
+
+    // ---- 推理（inference_us 仅覆盖引擎调用本身）----
     auto inference_start = Clock::now();
-    result.detections = impl_->engine->infer(working);
+    result.detections = impl_->engine->inferPreprocessed(
+        preprocessed, working.mat.size(), letterbox_info);
+    if (profiling) {
+        result.timing.inference_us = microsecondsSince(inference_start);
+    }
+
+    // ---- 后处理尾块：坐标回映、类别命名、框过滤、稳定化、帧脱钩 ----
+    auto postprocess_start = Clock::now();
     if (roi_applied) {
         applyRoiOffsetAndClip(result.detections, roi_rect, coord_space_size);
     }
-    auto postprocess_start = Clock::now();
     post::Postprocess::mapClassNames(result.detections, impl_->config.model.class_names);
-    if (impl_->config.model.min_box_size > 0.0f || impl_->config.model.max_box_size > 0.0f ||
-        impl_->config.model.min_aspect_ratio > 0.0f ||
-        impl_->config.model.max_aspect_ratio > 0.0f) {
-        post::NMSConfig filter_cfg;
-        filter_cfg.conf_thres = 0.0f;
-        filter_cfg.iou_thres = 1.0f;
-        filter_cfg.topk = 0;
-        filter_cfg.max_det = impl_->config.model.max_detections;
-        filter_cfg.min_box_size = impl_->config.model.min_box_size;
-        filter_cfg.max_box_size = impl_->config.model.max_box_size;
-        filter_cfg.min_aspect_ratio = impl_->config.model.min_aspect_ratio;
-        filter_cfg.max_aspect_ratio = impl_->config.model.max_aspect_ratio;
-        result.detections = post::Postprocess::nms(result.detections, filter_cfg);
-    }
-    result.frame = capture::detachFrameIfAliased(coord_frame, frame,
-                                                 coord_frame_aliases_source);
-    if (impl_->config.output.enable_profiling) {
-        result.timing.inference_us = microsecondsSince(inference_start);
+    applyBoxFilters(result.detections, impl_->config.model);
+    impl_->maybeStabilizeDetections(result);
+    result.frame = capture::detachFrameIfAliased(working.mat, frame, working.aliases_source);
+    if (profiling) {
         result.timing.postprocess_us = microsecondsSince(postprocess_start);
     }
+
     result.timing.total_us = microsecondsSince(total_start);
+    result.ok = true;
     return result;
 }
 
@@ -733,7 +755,6 @@ void DetectionPipeline::stop() {
         impl_->source.reset();
     }
 
-    impl_->buffer_pool.reset();
     impl_->initialized = false;
 }
 
@@ -758,6 +779,7 @@ void DetectionPipeline::resetStatistics() {
     impl_->stats.zero_copy_enabled = false;
     impl_->total_latency_us = 0;
     impl_->consecutive_frame_errors = 0;
+    impl_->tracker.reset();
     impl_->start_time = Clock::now();
     impl_->last_fps_update = impl_->start_time;
     impl_->frames_since_update = 0;

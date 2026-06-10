@@ -5,6 +5,8 @@ import hashlib
 import json
 from pathlib import Path
 
+import pytest
+
 from apps.utils.decode_meta import (
     load_decode_meta,
     normalize_decode_meta,
@@ -21,6 +23,8 @@ def test_normalize_decode_meta_alias_fields():
             "reg_max": "16",
             "classes": "80",
             "objectness": "false",
+            "score_is_probability": "true",
+            "coords_are_normalized": "true",
             "strides": [8, 16, 32],
         }
     )
@@ -28,6 +32,8 @@ def test_normalize_decode_meta_alias_fields():
     assert meta["reg_max"] == 16
     assert meta["num_classes"] == 80
     assert meta["has_objectness"] == 0
+    assert meta["score_is_probability"] == 1
+    assert meta["coords_are_normalized"] == 1
     assert meta["strides"] == (8, 16, 32)
 
 
@@ -56,6 +62,8 @@ def test_load_decode_meta_from_model_sidecar(tmp_path):
                 "head": "raw",
                 "num_classes": 1,
                 "has_objectness": 0,
+                "score_is_probability": 1,
+                "coords_are_normalized": 1,
             }
         )
     )
@@ -64,6 +72,8 @@ def test_load_decode_meta_from_model_sidecar(tmp_path):
     assert meta["head"] == "raw"
     assert meta["num_classes"] == 1
     assert meta["has_objectness"] == 0
+    assert meta["score_is_probability"] == 1
+    assert meta["coords_are_normalized"] == 1
 
 
 def test_load_decode_meta_does_not_fallback_to_project_default(tmp_path, monkeypatch):
@@ -102,11 +112,18 @@ def test_load_decode_meta_merges_adjacent_sidecars(tmp_path):
     assert meta["head"] == "raw"
     assert meta["num_classes"] == 3
     assert meta["has_objectness"] == 0
+    assert meta["score_is_probability"] is None
+    assert meta["coords_are_normalized"] is None
 
 
 def test_best_person_aug_int8_fixture_is_known_person_raw_model():
     repo_root = Path(__file__).resolve().parents[2]
     model_path = repo_root / "artifacts" / "models" / "best_person_aug_int8.rknn"
+    if not model_path.exists():
+        pytest.skip("deployment model binary is not available in this checkout")
+    if not Path(f"{model_path}.json").exists() and not Path(f"{model_path}.meta").exists():
+        pytest.skip("deployment model decode metadata sidecar is not available in this checkout")
+
     digest = hashlib.sha256(model_path.read_bytes()).hexdigest()
 
     # This pins the tracked deployment fixture to the validated person model binary.
@@ -117,3 +134,5 @@ def test_best_person_aug_int8_fixture_is_known_person_raw_model():
     assert meta["head"] == "raw"
     assert meta["num_classes"] == 1
     assert meta["has_objectness"] == 0
+    assert meta["score_is_probability"] == 1
+    assert meta["coords_are_normalized"] is None

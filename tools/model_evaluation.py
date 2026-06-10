@@ -5,7 +5,7 @@ YOLO模型评估脚本
 
 用法:
     python tools/model_evaluation.py --model runs/train/exp/weights/best.pt --data /path/to/data.yaml
-    python tools/model_evaluation.py --model runs/train/industrial_15cls_test5/weights/best.pt --data industrial_dataset/data.yaml
+    python tools/model_evaluation.py --model runs/train/person/weights/best.pt --data datasets/coco_person/data.yaml
 
 输出:
     1. 详细评估报告 (evaluation_report.txt)

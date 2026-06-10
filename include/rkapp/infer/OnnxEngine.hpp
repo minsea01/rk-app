@@ -18,6 +18,10 @@ public:
 
   bool init(const ModelSpec& model_spec) override;
   std::vector<Detection> infer(const cv::Mat& image) override;
+  std::vector<Detection> inferPreprocessed(
+      const cv::Mat& preprocessed_image,
+      const cv::Size& original_size,
+      const preprocess::LetterboxInfo& letterbox_info) override;
   void warmup() override;
   void release() override;
 

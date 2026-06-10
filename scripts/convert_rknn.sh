@@ -19,7 +19,7 @@ Usage:
   scripts/convert_rknn.sh --onnx <model.onnx> --out <model.rknn> [convert args...]
 
 Examples:
-  scripts/convert_rknn.sh --onnx artifacts/models/yolo11n.onnx --out /tmp/yolo11n.rknn --no-quant
+  scripts/convert_rknn.sh --onnx artifacts/models/yolo11n_coco80_416.onnx --out /tmp/yolo11n_coco80_416_int8.rknn --no-quant
   RKNN_ENV=/home/minsea/rknn_env scripts/convert_rknn.sh --onnx in.onnx --out out.rknn --calib datasets/calib.txt
 EOF
   exit 0

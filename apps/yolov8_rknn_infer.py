@@ -13,9 +13,13 @@
 
 import argparse
 import logging
+import sys
 import time
 from collections import deque
 from pathlib import Path
+
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import cv2
 import numpy as np
@@ -439,7 +443,10 @@ def main():
         if cap is not None:
             cap.release()
         rknn.release()
-        cv2.destroyAllWindows()
+        try:
+            cv2.destroyAllWindows()
+        except cv2.error:
+            pass
         if fps_hist:
             logger.info("Avg FPS: %.2f, P90: %.2f", np.mean(fps_hist), np.percentile(fps_hist, 90))
 

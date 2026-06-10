@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""HTTP receiver for MCP pipeline validation.
+"""HTTP receiver for local pipeline validation.
 
 This script runs a simple HTTP server to receive and log POST requests,
 used for testing data upload and network communication.
@@ -89,7 +89,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
-    ap = argparse.ArgumentParser(description="HTTP receiver for MCP pipeline testing")
+    ap = argparse.ArgumentParser(description="HTTP receiver for local pipeline testing")
     ap.add_argument("--port", type=int, default=8081, help="Port to listen on (0 for auto)")
     args = ap.parse_args()
 

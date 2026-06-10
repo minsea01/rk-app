@@ -1,1 +1,0 @@
-"""MCP utility package namespace."""

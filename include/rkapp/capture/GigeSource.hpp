@@ -13,7 +13,9 @@ class GigeSource : public GstSourceBase {
  public:
   // URI 配置键值解析结果（如 camera-name/format/pull-timeout-ms）。
   struct UriConfig {
-    std::string camera_name = "Aravis-Fake-GV01";
+    std::string camera_name;
+    bool camera_name_explicit = false;
+    std::vector<std::string> source_properties;
     std::vector<std::string> caps_kv;
     std::string desired_format = "GRAY8";
     bool use_videoconvert = false;
@@ -35,6 +37,7 @@ class GigeSource : public GstSourceBase {
  private:
   static std::string sanitizeCameraName(const std::string& name);
   static std::string sanitizeCaps(const std::string& caps);
+  static std::string sanitizePropertyValue(const std::string& value);
 };
 
 }  // namespace rkapp::capture

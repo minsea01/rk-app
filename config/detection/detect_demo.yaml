@@ -4,8 +4,8 @@ source:
 
 engine:
   type: onnx                 # onnx|rknn
-  model: "artifacts/models/best.onnx"
-  input_size: [640, 640]
+  model: "artifacts/models/best_person_aug_416_norm.onnx"
+  input_size: [416, 416]
 
 postprocess:
   conf_threshold: 0.25

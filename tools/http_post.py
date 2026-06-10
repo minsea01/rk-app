@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""HTTP POST utility for MCP pipeline validation.
+"""HTTP POST utility for local pipeline validation.
 
 This script sends JSON payloads to HTTP endpoints for testing
 data ingestion and network communication.

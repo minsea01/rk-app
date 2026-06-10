@@ -170,7 +170,7 @@ python3 scripts/compare_onnx_rknn.py \
 cd artifacts/models
 ln -sf ../../runs/detect/person_yolo11s_416/weights/best.pt best.pt
 ln -sf ../../runs/detect/person_yolo11s_416/weights/best.onnx best.onnx
-ln -sf person_yolo11s_416.rknn best.rknn
+ln -sf person_yolo11s_416.rknn best_person_aug_416_norm_int8.rknn
 ```
 
 ### 2. 更新配置文件

@@ -10,36 +10,48 @@ set -euo pipefail
 
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 
-# Detect if running from deployment directory or source tree
-if [[ -x "$SCRIPT_DIR/../../bin/detect_cli" ]]; then
-  # Deployment mode: script is in $DEST/scripts/ or similar
-  ROOT_DIR=$(cd -- "$SCRIPT_DIR/../.." && pwd)
+SOURCE_ROOT=$(cd -- "$SCRIPT_DIR/../.." 2>/dev/null && pwd || true)
+DEPLOY_ROOT=$(cd -- "$SCRIPT_DIR/.." 2>/dev/null && pwd || true)
+PWD_ROOT=$(pwd)
+
+use_deploy_layout() {
+  ROOT_DIR="$1"
   OUT_BIN="$ROOT_DIR/bin/detect_cli"
   OUT_LIB="$ROOT_DIR/lib"
-  CFG="$ROOT_DIR/config/detect_rknn.yaml"
-  MODEL_DEFAULT="$ROOT_DIR/models/best_person_aug_int8.rknn"
-  NAMES_DEFAULT="$ROOT_DIR/config/person_classes.txt"
-elif [[ -d "$SCRIPT_DIR/../../out/arm64/bin" ]]; then
-  # Development mode: running from source tree
-  ROOT_DIR=$(cd -- "$SCRIPT_DIR/../.." && pwd)
-  OUT_BIN="$ROOT_DIR/out/arm64/bin/detect_cli"
-  OUT_LIB="$ROOT_DIR/out/arm64/lib"
   CFG="$ROOT_DIR/config/detection/detect_rknn.yaml"
-  MODEL_DEFAULT="$ROOT_DIR/artifacts/models/best_person_aug_int8.rknn"
+  MODEL_DEFAULT="$ROOT_DIR/models/best_person_aug_416_norm_int8.rknn"
   NAMES_DEFAULT="$ROOT_DIR/config/person_classes.txt"
+}
+
+use_source_layout() {
+  ROOT_DIR="$1"
+  OUT_BIN="$2"
+  OUT_LIB=$(dirname -- "$OUT_BIN")
+  CFG="$ROOT_DIR/config/detection/detect_rknn.yaml"
+  MODEL_DEFAULT="$ROOT_DIR/artifacts/models/best_person_aug_416_norm_int8.rknn"
+  NAMES_DEFAULT="$ROOT_DIR/config/person_classes.txt"
+}
+
+# Detect if running from a deployed $DEST/scripts directory, a source tree on
+# the board, or a manually selected working directory.
+if [[ -n "$DEPLOY_ROOT" && -x "$DEPLOY_ROOT/bin/detect_cli" ]]; then
+  use_deploy_layout "$DEPLOY_ROOT"
+elif [[ -n "$SOURCE_ROOT" && -x "$SOURCE_ROOT/build/board/detect_cli" ]]; then
+  use_source_layout "$SOURCE_ROOT" "$SOURCE_ROOT/build/board/detect_cli"
+elif [[ -n "$SOURCE_ROOT" && -x "$SOURCE_ROOT/out/arm64/bin/detect_cli" ]]; then
+  use_source_layout "$SOURCE_ROOT" "$SOURCE_ROOT/out/arm64/bin/detect_cli"
+elif [[ -x "$PWD_ROOT/build/board/detect_cli" ]]; then
+  use_source_layout "$PWD_ROOT" "$PWD_ROOT/build/board/detect_cli"
+elif [[ -x "$PWD_ROOT/out/arm64/bin/detect_cli" ]]; then
+  use_source_layout "$PWD_ROOT" "$PWD_ROOT/out/arm64/bin/detect_cli"
 else
-  # Fallback: assume we're in deployment root
-  ROOT_DIR=$(pwd)
-  OUT_BIN="$ROOT_DIR/bin/detect_cli"
-  OUT_LIB="$ROOT_DIR/lib"
-  CFG="$ROOT_DIR/config/detect_rknn.yaml"
-  MODEL_DEFAULT="$ROOT_DIR/models/best_person_aug_int8.rknn"
-  NAMES_DEFAULT="$ROOT_DIR/config/person_classes.txt"
+  # Fallback: assume the current directory is a deployment root.
+  use_deploy_layout "$PWD_ROOT"
 fi
 
 usage() {
   echo "Usage: $0 [--cfg <yaml>] [--model <rknn>] [--runner cli|python] [-- core args...]"
-  echo "- Defaults: --cfg config/detection/detect_rknn.yaml, --model artifacts/models/best_person_aug_int8.rknn"
+  echo "- Defaults: --cfg config/detection/detect_rknn.yaml, --model artifacts/models/best_person_aug_416_norm_int8.rknn"
 }
 
 RUNNER="cli"
@@ -94,7 +106,7 @@ run_py() {
   if [[ $HAS_SOURCE -eq 0 && -f "$ROOT_DIR/assets/test.jpg" ]]; then
     set -- --source "$ROOT_DIR/assets/test.jpg" "$@"
   fi
-  exec python3 "$PY" --model "$MODEL" --names "$NAMES_DEFAULT" "$@"
+  exec python3 "$PY" --cfg "$CFG" --model "$MODEL" --names "$NAMES_DEFAULT" "$@"
 }
 
 cd "$ROOT_DIR"

@@ -412,6 +412,21 @@ DecodeMeta parseDecodeMetaFromText(const std::string& content) {
     meta.has_objectness = bv;
   }
 
+  if (parseBoolField(content, "score_is_probability", bv)) {
+    meta.score_is_probability = bv;
+  } else if (parseBoolField(content, "scores_are_probabilities", bv)) {
+    meta.score_is_probability = bv;
+  } else if (parseBoolField(content, "score_is_prob", bv)) {
+    meta.score_is_probability = bv;
+  }
+  if (parseBoolField(content, "coords_are_normalized", bv)) {
+    meta.coords_are_normalized = bv;
+  } else if (parseBoolField(content, "normalized_coords", bv)) {
+    meta.coords_are_normalized = bv;
+  } else if (parseBoolField(content, "coords_normalized", bv)) {
+    meta.coords_are_normalized = bv;
+  }
+
   std::vector<int> strides;
   if (parseIntListField(content, "strides", strides) && !strides.empty()) {
     meta.strides = std::move(strides);
@@ -436,6 +451,12 @@ void mergeDecodeMetaMissingFields(DecodeMeta& dst, const DecodeMeta& src) {
   }
   if (dst.has_objectness < 0 && src.has_objectness >= 0) {
     dst.has_objectness = src.has_objectness;
+  }
+  if (dst.score_is_probability < 0 && src.score_is_probability >= 0) {
+    dst.score_is_probability = src.score_is_probability;
+  }
+  if (dst.coords_are_normalized < 0 && src.coords_are_normalized >= 0) {
+    dst.coords_are_normalized = src.coords_are_normalized;
   }
 }
 
@@ -802,6 +823,11 @@ std::vector<Detection> parseOutput(Ort::Value& output,
     }
   } else {
     // RAW 路径：直接使用 cx,cy,w,h + (可选)objectness 解码。
+    const bool score_is_probability = decode_meta.score_is_probability == 1;
+    const bool coords_are_normalized = decode_meta.coords_are_normalized == 1;
+    auto activate_score = [&](float value) {
+      return score_is_probability ? std::clamp(value, 0.0f, 1.0f) : sigmoid(value);
+    };
     bool has_objness = false;
     if (decode_meta.has_objectness >= 0) {
       has_objness = decode_meta.has_objectness == 1;
@@ -842,10 +868,16 @@ std::vector<Detection> parseOutput(Ort::Value& output,
       const float cy = at(1, i);
       const float w = at(2, i);
       const float h = at(3, i);
+      const float model_w = static_cast<float>(input_size);
+      const float model_h = static_cast<float>(input_size);
+      const float cx_scaled = coords_are_normalized ? cx * model_w : cx;
+      const float cy_scaled = coords_are_normalized ? cy * model_h : cy;
+      const float w_scaled = coords_are_normalized ? w * model_w : w;
+      const float h_scaled = coords_are_normalized ? h * model_h : h;
 
       float obj = 1.0f;
       if (has_objness) {
-        obj = sigmoid(at(4, i));
+        obj = activate_score(at(4, i));
       }
 
       float best_conf = 1.0f;
@@ -853,7 +885,7 @@ std::vector<Detection> parseOutput(Ort::Value& output,
       if (num_classes > 0) {
         best_conf = 0.0f;
         for (int c = 0; c < num_classes; ++c) {
-          float conf = sigmoid(at(cls_offset + c, i));
+          float conf = activate_score(at(cls_offset + c, i));
           if (conf > best_conf) {
             best_conf = conf;
             best_cls = c;
@@ -870,10 +902,10 @@ std::vector<Detection> parseOutput(Ort::Value& output,
       const float scale = letterbox_info.scale;
       const float dx = letterbox_info.dx;
       const float dy = letterbox_info.dy;
-      det.x = (cx - w / 2.0f - dx) / scale;
-      det.y = (cy - h / 2.0f - dy) / scale;
-      det.w = w / scale;
-      det.h = h / scale;
+      det.x = (cx_scaled - w_scaled / 2.0f - dx) / scale;
+      det.y = (cy_scaled - h_scaled / 2.0f - dy) / scale;
+      det.w = w_scaled / scale;
+      det.h = h_scaled / scale;
       det.x = std::max(0.0f, std::min(det.x, static_cast<float>(original_size.width)));
       det.y = std::max(0.0f, std::min(det.y, static_cast<float>(original_size.height)));
       det.w =

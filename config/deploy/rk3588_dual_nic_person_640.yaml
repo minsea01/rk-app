@@ -1,15 +1,17 @@
 # RK3588 双网口行人检测最终验收配置
-# eth0: GigE Vision 相机输入
-# eth1: 检测结果上传
+# 说明：文件名保留历史 640 口径，但当前默认主线已切到 416 INT8。
+# eth1: GigE Vision 相机输入
+# eth0: 检测结果上传 / SSH: 192.168.137.226/24
+# PC 接收端: 192.168.137.1:9000
 
 source:
   type: gige
-  uri: "camera-name=IndustrialCamera-01,width=1920,height=1080,framerate=30/1,format=BGR"
+  uri: "width=1920,height=1200,framerate=30/1,format=GRAY8,pull-timeout-ms=1000,max-failures=10"
 
 engine:
   type: rknn
-  model: "artifacts/models/best_person_aug_int8.rknn"
-  input_size: [640, 640]
+  model: "artifacts/models/best_person_aug_416_norm_int8.rknn"
+  input_size: [416, 416]
   use_npu_multicore: true
   use_zero_copy: false
 
@@ -18,9 +20,18 @@ preprocess:
   use_rga_preprocess: true
 
 postprocess:
-  conf_threshold: 0.50
-  nms_threshold: 0.50
+  conf_threshold: 0.40
+  nms_threshold: 0.35
   max_detections: 300
+
+tracking:
+  enable: true
+  match_iou: 0.30
+  ema_alpha: 0.65
+  confirm_hits: 2
+  max_misses: 4
+  keep_missing_tracks: true
+  missing_conf_decay: 0.08
 
 runtime:
   warmup: 10
@@ -29,26 +40,40 @@ runtime:
 output:
   type: tcp
   tcp:
-    host: "192.168.2.100"
+    host: "192.168.137.1"
     port: 9000
     queue_size: 32
+    bind_ip: "192.168.137.226"
+    bind_interface: "eth0"
+    include_image: true
+    image_quality: 88
+    image_interval: 1
+    draw_detections: true
+    image_roi:
+      enable: false
+      mode: normalized
+      # Optional far-field digital zoom for live viewing, e.g. [0.20, 0.00, 0.60, 0.70].
+      normalized_xywh: [0.0, 0.0, 1.0, 1.0]
+      pixel_xywh: [0, 0, 0, 0]
+      clamp: true
+      min_size: 64
 
 logging:
   level: "INFO"
 
 camera_interface:
-  device: eth0
+  device: eth1
   ip: 192.168.1.10
   netmask: 255.255.255.0
   mtu: 9000
 
 upload_interface:
-  device: eth1
-  ip: 192.168.2.10
+  device: eth0
+  ip: 192.168.137.226
   netmask: 255.255.255.0
 
 expected_performance:
-  input_size: "640x640"
+  input_size: "416x416"
   fps: ">=30"
   latency_p95: "<=45ms"
   throughput: ">=900Mbps"

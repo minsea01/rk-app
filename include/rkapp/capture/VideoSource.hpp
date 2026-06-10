@@ -11,7 +11,8 @@ public:
   ~VideoSource() override;
 
   bool open(const std::string& video_path) override;
-  bool read(cv::Mat& frame) override;
+  // 便捷方法（非接口）：读取一帧 BGR 图像；多态调用方使用 readFrameEx。
+  bool read(cv::Mat& frame);
   ReadStatus readFrameEx(CaptureFrame& frame) override;
   void release() override;
   bool isOpened() const override;

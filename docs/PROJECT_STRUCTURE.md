@@ -1,6 +1,6 @@
 # Project Structure Documentation
 
-This document contains detailed project structure information that was extracted from CLAUDE.md for performance optimization.
+This document contains detailed project structure information for source delivery and maintenance.
 
 ## Runtime Notes
 
@@ -13,19 +13,6 @@ This document contains detailed project structure information that was extracted
 
 ```
 rk-app/
-├── .claude/                       # Claude Code automation
-│   ├── commands/                  # Slash commands (5 commands)
-│   │   ├── full-pipeline.md
-│   │   ├── thesis-report.md
-│   │   ├── performance-test.md
-│   │   ├── board-ready.md
-│   │   └── model-validate.md
-│   └── skills/                    # Workflow definitions (5 skills)
-│       ├── full-pipeline.md
-│       ├── thesis-report.md
-│       ├── performance-test.md
-│       ├── board-ready.md
-│       └── model-validate.md
 ├── docs/                          # Comprehensive documentation
 │   ├── thesis/                    # Thesis documentation subdirectory
 │   │   ├── thesis_opening_report.md      # 开题报告
@@ -63,28 +50,22 @@ rk-app/
 ├── tools/                         # Conversion/export/data-processing helpers
 │   ├── export_yolov8_to_onnx.py   # PyTorch → ONNX export
 │   ├── convert_onnx_to_rknn.py    # ONNX → RKNN conversion
-│   ├── export_rknn.py             # Alternative RKNN export tool
 │   ├── model_evaluation.py        # Model performance evaluation
 │   ├── eval_yolo_jsonl.py         # YOLO JSONL format evaluation
 │   ├── bench_onnx_latency.py      # ONNX latency benchmark tool
 │   ├── onnx_bench.py              # ONNX benchmarking utilities
-│   ├── pc_compare.py              # PC-level model comparison
+│   ├── compare.py                 # ONNX/RKNN output comparison
 │   ├── visualize_inference.py     # Inference result visualization
-│   ├── aggregate.py, http_receiver.py, http_post.py  # MCP tools
+│   ├── aggregate.py, http_receiver.py, http_post.py  # Result aggregation and HTTP utilities
 │   ├── make_calib_set.py          # Calibration dataset creation
 │   ├── prepare_quant_dataset.py   # Quantization dataset preparation
 │   ├── dataset_health_check.py    # Dataset validation
 │   ├── yolo_data_audit.py         # YOLO dataset auditing
 │   ├── find_worst_images.py       # Find problematic images
 │   ├── prepare_coco_person.py     # COCO person subset preparation
-│   ├── prepare_datasets.py        # General dataset preparation
-│   ├── convert_neu_to_yolo.py     # NEU dataset conversion
-│   ├── create_industrial_15cls.py # Industrial dataset creation
-│   ├── balance_industrial_dataset.py  # Dataset balancing
-│   ├── train_yolov8.py            # YOLOv8 training script
 │   └── run_val_with_json.py       # Validation with JSON output
 ├── scripts/                       # Automation scripts and Python utilities
-│   ├── run_bench.sh               # MCP benchmark pipeline
+│   ├── run_bench.sh               # Local benchmark pipeline
 │   ├── run_rknn_sim.py            # PC simulator inference
 │   ├── compare_onnx_rknn.py       # Accuracy comparison
 │   ├── evaluate_map.py            # Quick mAP evaluation entry point
@@ -100,13 +81,11 @@ rk-app/
 │   ├── benchmark/                 # Performance benchmarks
 │   ├── demo/                      # Demo scripts
 │   ├── reports/                   # Report generators
-│   │   ├── generate_achievement_report.py
 │   │   └── charts/                # Report chart assets
 │   │       ├── gen_chart.py
 │   │       ├── gen_code_charts.py
 │   │       └── gen_more_charts.py
-│   ├── train/                     # Training scripts (4 scripts)
-│   │   ├── START_TRAINING.sh      # Quick start training wrapper
+│   ├── train/                     # Training wrappers
 │   │   ├── train_citypersons.sh   # CityPersons fine-tuning
 │   │   └── train_pedestrian.sh    # General pedestrian training
 │   ├── datasets/                  # Dataset preparation scripts
@@ -126,7 +105,6 @@ rk-app/
 │   ├── calib_images/              # Calibration dataset (300 images)
 │   └── calib_images/calib.txt     # Absolute paths list
 ├── config/                        # YAML configs for detection/network
-├── configs/mcp_servers.yaml       # MCP server declarations
 └── pytest.ini, requirements*.txt  # Configuration files
 ```
 
@@ -276,13 +254,13 @@ apps/config.py
 - **Languages:** Python 3.10, C++17, Bash
 - **Frameworks:** Ultralytics YOLO, RKNN-Toolkit2, ONNX Runtime
 - **Build System:** CMake 3.22, pytest
-- **Automation:** Claude Code slash commands & skills
+- **Automation:** shell/Python scripts under `scripts/`
 - **CI/CD:** GitHub Actions with automated testing
 - **Quality Tools:** black, flake8, pylint, mypy, shellcheck
 
 ## Additional Technical Details
 
-### MCP Benchmark Pipeline
+### Benchmark Pipeline
 
 **Purpose:** Validate "build → deploy → observe → archive" loop without hardware.
 
@@ -339,7 +317,7 @@ The project includes a comprehensive CI/CD pipeline with 7 automated jobs:
 7. **ci-success**: Pipeline completion summary
 
 **Triggers:**
-- Push to `main`, `develop`, or `claude/**` branches
+- Push to `main`, `develop`, or `feature/**` branches
 - Pull requests to `main` or `develop`
 
 **Key Features:**

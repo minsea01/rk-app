@@ -1,17 +1,17 @@
-# Pipeline integrity test configuration (ONNX opset 12)
+# Pipeline integrity test configuration.
+# The previous yolo11n_opset12_416.onnx artifact is not shipped in this
+# workspace; use the current exported person ONNX model for runnable smoke tests.
 
 # Inference engine configuration
 engine:
   type: onnx
-  model: artifacts/models/yolo11n_opset12_416.onnx
+  model: artifacts/models/best_person_aug_416_norm.onnx
   input_size: [416, 416]
 
 # Classes configuration
 classes:
   names:
     - person
-    - bicycle
-    - car
 
 # Postprocessing configuration
 postprocess:

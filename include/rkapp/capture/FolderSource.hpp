@@ -12,7 +12,9 @@ public:
   ~FolderSource() override;
 
   bool open(const std::string& folder_path) override;
-  bool read(cv::Mat& frame) override;
+  ReadStatus readFrameEx(CaptureFrame& frame) override;
+  // 便捷方法（非接口）：读取下一张可解码的图片，列表耗尽时返回 false。
+  bool read(cv::Mat& frame);
   void release() override;
   bool isOpened() const override;
 

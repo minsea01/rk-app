@@ -1,11 +1,14 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # 板端原生编译C++项目（RK3588）
 #
 # 使用方法（在板端SSH执行）：
 #   cd ~/rk-app
 #   bash scripts/build_cpp_board.sh
 
-set -e
+set -euo pipefail
+
+ROOT="$(cd -- "$(dirname "${BASH_SOURCE[0]}")"/.. && pwd)"
+cd "$ROOT"
 
 echo "=================================================="
 echo "RK3588板端原生编译"
@@ -24,7 +27,8 @@ echo "✓ 架构检查: $ARCH"
 echo ""
 echo "检查编译工具..."
 USE_NINJA="OFF"
-for tool in cmake g++; do
+MISSING_TOOLS=0
+for tool in cmake g++ pkg-config; do
     if command -v $tool &> /dev/null; then
         echo "  ✓ $tool"
     else
@@ -41,24 +45,74 @@ else
     USE_NINJA="OFF"
 fi
 
-if [ ! -z "$MISSING_TOOLS" ]; then
+if [[ "$MISSING_TOOLS" -ne 0 ]]; then
     echo ""
     echo "请安装缺失的工具:"
-    echo "  sudo apt-get install cmake g++"
+    echo "  sudo apt-get install cmake g++ pkg-config"
     exit 1
 fi
 
+find_rknn_sdk() {
+    local candidate found
+    for candidate in \
+        "${RKNN_HOME:-}" \
+        /opt/rknpu2 \
+        /home/RKnpuProjects/rknn-toolkit2/rknpu2/runtime/Linux/librknn_api \
+        /root/rk3588_linux_aarch64 \
+        "$HOME/rk3588_linux_aarch64"; do
+        [[ -n "${candidate}" && -d "${candidate}" ]] || continue
+        if [[ -f "${candidate}/include/rknn_api.h" && ( -d "${candidate}/lib" || -d "${candidate}/aarch64" ) ]]; then
+            printf '%s\n' "${candidate}"
+            return 0
+        fi
+        found="$(find "${candidate}" -maxdepth 5 -type f -name rknn_api.h 2>/dev/null | head -n 1 || true)"
+        if [[ -n "${found}" ]]; then
+            found="$(cd "$(dirname "${found}")"/.. && pwd)"
+            if [[ -d "${found}/lib" || -d "${found}/aarch64" ]]; then
+                printf '%s\n' "${found}"
+                return 0
+            fi
+        fi
+    done
+    return 1
+}
+
 # 检查RKNN SDK
-RKNN_HOME="/opt/rknpu2"
-if [ ! -d "$RKNN_HOME" ]; then
+RKNN_HOME_DETECTED="$(find_rknn_sdk || true)"
+if [[ -z "${RKNN_HOME_DETECTED}" ]]; then
     echo ""
-    echo "⚠️  警告: RKNN SDK 未找到 ($RKNN_HOME)"
+    echo "⚠️  警告: RKNN SDK 未找到（未发现 include/rknn_api.h + lib/）"
     echo "   项目将以RKNN禁用模式编译（仅ONNX）"
     echo ""
     ENABLE_RKNN="OFF"
 else
+    RKNN_HOME="${RKNN_HOME_DETECTED}"
     echo "  ✓ RKNN SDK: $RKNN_HOME"
     ENABLE_RKNN="ON"
+fi
+
+if pkg-config --exists gstreamer-1.0 gstreamer-app-1.0; then
+    ENABLE_GIGE="${ENABLE_GIGE:-ON}"
+    ENABLE_CSI="${ENABLE_CSI:-ON}"
+    echo "  ✓ GStreamer开发包"
+else
+    ENABLE_GIGE="${ENABLE_GIGE:-OFF}"
+    ENABLE_CSI="${ENABLE_CSI:-OFF}"
+    echo "  ⚠️  GStreamer开发包未找到，GigE/CSI source 将被禁用"
+fi
+
+if pkg-config --exists yaml-cpp; then
+    echo "  ✓ yaml-cpp开发包"
+else
+    echo "  ❌ yaml-cpp 开发包未安装（需要 libyaml-cpp-dev）"
+    exit 1
+fi
+
+if pkg-config --exists opencv4 || pkg-config --exists opencv; then
+    echo "  ✓ OpenCV开发包"
+else
+    echo "  ❌ OpenCV 开发包未安装（需要 libopencv-dev）"
+    exit 1
 fi
 
 # 配置CMake
@@ -70,6 +124,11 @@ echo "=================================================="
 rm -rf build/board
 mkdir -p build/board
 
+CMAKE_EXTRA_FLAGS=()
+if [[ -d /usr/include/rga ]]; then
+    CMAKE_EXTRA_FLAGS+=("-DCMAKE_CXX_FLAGS=-I/usr/include/rga")
+fi
+
 if [ "$USE_NINJA" = "ON" ]; then
     CMAKE_GENERATOR="Ninja"
 else
@@ -77,14 +136,19 @@ else
 fi
 
 echo "使用生成器: ${CMAKE_GENERATOR}"
+echo "ENABLE_RKNN=${ENABLE_RKNN} ENABLE_GIGE=${ENABLE_GIGE} ENABLE_CSI=${ENABLE_CSI}"
 
 cmake -B build/board \
     -G "${CMAKE_GENERATOR}" \
     -DCMAKE_BUILD_TYPE=Release \
+    -DBUILD_TESTING=OFF \
     -DENABLE_RKNN=${ENABLE_RKNN} \
     -DENABLE_ONNX=OFF \
+    -DENABLE_GIGE=${ENABLE_GIGE} \
+    -DENABLE_CSI=${ENABLE_CSI} \
     -DRKNN_HOME=${RKNN_HOME} \
-    -DCMAKE_INSTALL_PREFIX=out/board
+    -DCMAKE_INSTALL_PREFIX=out/board \
+    "${CMAKE_EXTRA_FLAGS[@]}"
 
 if [ $? -ne 0 ]; then
     echo ""
@@ -118,10 +182,10 @@ ls -lh build/board/detect_rknn_multicore 2>/dev/null || echo "  ⚠️  detect_r
 
 echo ""
 echo "下一步："
-echo "  1. 测试推理性能:"
-echo "     ./build/board/detect_cli --cfg config/detect.yaml --source assets/test.jpg"
+echo "  1. 无相机 smoke 测试:"
+echo "     ./build/board/detect_cli --cfg config/detection/detect_fake_camera.yaml --warmup 0"
 echo ""
-echo "  2. 或运行基准测试:"
-echo "     ./build/board/detect_cli --cfg config/detect.yaml --source assets/test.jpg --warmup 10"
+echo "  2. 真实 GigE 双网口链路:"
+echo "     ./build/board/detect_cli --cfg config/detection/detect_rknn.yaml"
 echo ""
 echo "=================================================="

@@ -1,8 +1,8 @@
-# rk-app（RK3588 工业目标检测流水线）
+# rk-app（RK3588 行人检测流水线）
 
 简洁、模块化的 RK3588 目标检测工程：C++ 实现采集→预处理→推理（ONNX/RKNN）→后处理→输出全链路；配套 C++ CLI 与板端 Python Runner，训练/导出/压测工具链完整可复现。
 
-本仓库遵循 `AGENTS.md` 的目录与命名规范（src/include/examples/apps/tools/scripts/artifacts/configs/docker 等）。
+本仓库按 `src/include/examples/apps/tools/scripts/config/docker` 分层组织，生成结果默认放入 ignored 的 `artifacts/`。
 
 ## 快速开始
 - 本机构建（x86 调试）
@@ -12,9 +12,9 @@
   - `cmake --preset arm64-release -DENABLE_RKNN=ON && cmake --build --preset arm64`
   - 安装产物：`cmake --install build/arm64`
 - 板端 Python Runner（RKNN 推理）
-  - `python apps/yolov8_rknn_infer.py --model artifacts/models/best.rknn --names config/classes.txt --source assets/test.jpg --save artifacts/vis.jpg`
+  - `python apps/yolov8_rknn_infer.py --model artifacts/models/best_person_aug_416_norm_int8.rknn --names config/person_classes.txt --source assets/test.jpg --save artifacts/vis.jpg`
 
-更多演示与环境变量示例见 `docs/guides/QUICK_START_GUIDE.md` 与 `docs/QUICKSTART.md`。
+更多演示与环境变量示例见 `docs/guides/QUICK_START_GUIDE.md`。
 
 ## detect_cli 配置（阶段 3）
 
@@ -36,7 +36,7 @@ postprocess:
   max_detections: 100
 
 classes:
-  path: config/classes.txt
+  path: config/person_classes.txt
 
 output:
   type: tcp
@@ -72,9 +72,10 @@ logging:
 - 手动导出 INT8 RKNN：
   - `python tools/convert_onnx_to_rknn.py --onnx artifacts/models/yolo11n.onnx --out artifacts/models/yolo11n_int8.rknn --calib datasets/calib`
 - PC/RKNN 结果对齐与基准：
-  - `python tools/pc_compare.py ...`，`scripts/run_bench.sh` 聚合 iperf3/ffprobe 指标到 `artifacts/bench_summary.*`
+  - `python tools/compare.py ...`，`scripts/run_bench.sh` 聚合 iperf3/ffprobe 指标到 `artifacts/bench_summary.*`
 
-模型与命名约定见 `artifacts/models/README.md`（例如：`<model>[_variant].onnx` 与 `_int8.rknn`）。
+模型命名约定为 `<model>[_variant].onnx` 与 `<model>[_variant]_int8.rknn`；
+当前主演示模型为 `best_person_aug_416_norm_int8.rknn`。
 
 ## 测试与基准
 - 单元测试（GoogleTest）：`ctest --preset x86-debug`
@@ -102,7 +103,7 @@ logging:
 - 主机调试：`cmake --preset x86-debug && cmake --build --preset x86-debug`
 - 交叉编译：`cmake --build --preset arm64 -DENABLE_RKNN=ON`
 - 运行 CLI：`./build/x86-debug/detect_cli --cfg config/detection/detect.yaml`
-- 运行板端：`python apps/yolov8_rknn_infer.py --model artifacts/models/best.rknn`
+- 运行板端：`python apps/yolov8_rknn_infer.py --model artifacts/models/best_person_aug_416_norm_int8.rknn`
 - 板端一键跑：`scripts/deploy/rk3588_run.sh`（自动设置库路径并运行 CLI，缺少二进制时回退 Python Runner）
 - 单元测试：`ctest --preset x86-debug`
 - 压测汇总：`scripts/run_bench.sh`
@@ -113,6 +114,5 @@ logging:
 - 硬件集成：`docs/guides/HARDWARE_INTEGRATION_MANUAL.md`
 - 部署清单：`docs/RK3588_VALIDATION_CHECKLIST.md`
 - 性能分析：`docs/PERFORMANCE_ANALYSIS.md`
-- 项目报告：`docs/reports/` (状态报告、成果总结等)
 - 毕业论文：`docs/thesis/` (开题报告、论文章节等)
-- 代码与提交规范：`AGENTS.md`
+- 代码与提交规范：`.clang-format`、`.editorconfig`、`pyproject.toml`

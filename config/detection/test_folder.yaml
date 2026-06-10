@@ -4,7 +4,7 @@ source:
 
 engine:
   type: onnx
-  model: "artifacts/models/best.onnx"
+  model: "artifacts/models/best_person_aug_416_norm.onnx"
   input_size: [416, 416]
 
 postprocess:

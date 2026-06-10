@@ -1,7 +1,7 @@
 # Unified experiment configuration (override via env or CLI)
 
-# Dataset (>=10 classes) - Industrial defect detection
-dataset_yaml: datasets/coco4cls_industrial/data.yaml
+# Dataset for the graduation project main path.
+dataset_yaml: datasets/coco_person/data.yaml
 
 # Training
 imgsz: 640
@@ -9,7 +9,7 @@ epochs: 100
 batch: auto
 device: "0"
 workers: 8
-run_name: industrial_10cls_y11s
+run_name: yolo11n_person
 
 # Export
 opset: 12
@@ -24,4 +24,3 @@ reorder: "2 1 0"  # BGR->RGB
 
 # Device inference
 core_mask: 0x7
-

@@ -218,6 +218,23 @@ set_tests_properties(DetectionPipelineFactoryTests PROPERTIES
     LABELS "unit"
 )
 
+# Test executable for lightweight temporal stabilization
+add_executable(test_box_tracker test_box_tracker.cpp)
+
+target_link_libraries(test_box_tracker
+    PRIVATE
+        GTest::gtest
+        GTest::gtest_main
+        rkapp_pipeline
+)
+
+add_test(NAME BoxTrackerTests COMMAND test_box_tracker)
+
+set_tests_properties(BoxTrackerTests PROPERTIES
+    TIMEOUT 30
+    LABELS "unit"
+)
+
 if(ENABLE_COVERAGE)
     target_compile_options(test_pipeline_factory PRIVATE --coverage)
     target_link_options(test_pipeline_factory PRIVATE --coverage)

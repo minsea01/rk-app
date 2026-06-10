@@ -372,7 +372,7 @@ for conf in 0.25 0.35 0.5 0.6; do
 done
 ```
 
-**关键发现**（参考 CLAUDE.md）：
+**关键发现**（来自本项目实测）：
 - conf=0.25（默认）：后处理 3135ms → 0.3 FPS（NMS 瓶颈）
 - conf=0.5（优化）：后处理 5.2ms → 60+ FPS
 
@@ -506,7 +506,7 @@ python scripts/evaluate_map.py \
 
 ## 11. 相关文档
 
-- [CLAUDE.md](../CLAUDE.md) - 项目总览与架构
+- [README.md](../README.md) - 项目总览与架构
 - [PERSON_TRAINING_GUIDE.md](PERSON_TRAINING_GUIDE.md) - 行人检测专用训练指南
 - [Ultralytics 官方文档](https://docs.ultralytics.com/)
 - [RKNN-Toolkit2 文档](https://github.com/rockchip-linux/rknn-toolkit2)
@@ -514,5 +514,5 @@ python scripts/evaluate_map.py \
 ---
 
 **最后更新**：2025-10-30
-**作者**：Claude Code
+**作者**：项目组
 **版本**：v1.0

@@ -391,7 +391,7 @@ source:
 
 engine:
   type: onnx
-  model: artifacts/models/best.onnx
+  model: artifacts/models/best_person_aug_416_norm.onnx
   input_size: [416, 416]
 
 postprocess:
@@ -424,7 +424,7 @@ source:
 
 engine:
   type: rknn
-  model: artifacts/models/best.rknn
+  model: artifacts/models/best_person_aug_416_norm_int8.rknn
   input_size: [416, 416]
 
 postprocess:

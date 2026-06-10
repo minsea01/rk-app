@@ -28,6 +28,29 @@ std::string trimCopy(std::string value) {
   return value;
 }
 
+std::filesystem::path findRepoRoot(const std::filesystem::path& start_dir) {
+  std::error_code ec;
+  auto current = start_dir;
+  while (!current.empty()) {
+    const bool source_tree =
+        std::filesystem::exists(current / "CMakeLists.txt", ec) &&
+        std::filesystem::exists(current / "CMakePresets.json", ec);
+    const bool deploy_tree =
+        std::filesystem::exists(current / ".rkapp-root", ec) ||
+        (std::filesystem::exists(current / "config/person_classes.txt", ec) &&
+         std::filesystem::exists(current / "artifacts/models", ec));
+    if (source_tree || deploy_tree) {
+      return current;
+    }
+    const auto parent = current.parent_path();
+    if (parent == current) {
+      break;
+    }
+    current = parent;
+  }
+  return {};
+}
+
 std::filesystem::path resolveConfigPath(const std::filesystem::path& base_dir,
                                         const std::string& raw_path) {
   if (raw_path.empty()) {
@@ -37,6 +60,16 @@ std::filesystem::path resolveConfigPath(const std::filesystem::path& base_dir,
   if (path.is_absolute()) {
     return path.lexically_normal();
   }
+
+  std::error_code ec;
+  const auto repo_root = findRepoRoot(base_dir);
+  if (!repo_root.empty()) {
+    const auto repo_candidate = std::filesystem::absolute(repo_root / path).lexically_normal();
+    if (std::filesystem::exists(repo_candidate, ec)) {
+      return repo_candidate;
+    }
+  }
+
   return std::filesystem::absolute(base_dir / path).lexically_normal();
 }
 
@@ -274,6 +307,34 @@ void parsePreprocessNode(const YAML::Node& preprocess,
   }
 }
 
+void parseTrackingNode(const YAML::Node& tracking, PipelineConfig::TrackingSpec& spec) {
+  if (!tracking || !tracking.IsMap()) {
+    return;
+  }
+  if (tracking["enable"]) {
+    spec.enable = tracking["enable"].as<bool>(spec.enable);
+  }
+  if (tracking["match_iou"]) {
+    spec.match_iou = tracking["match_iou"].as<float>(spec.match_iou);
+  }
+  if (tracking["ema_alpha"]) {
+    spec.ema_alpha = tracking["ema_alpha"].as<float>(spec.ema_alpha);
+  }
+  if (tracking["confirm_hits"]) {
+    spec.confirm_hits = tracking["confirm_hits"].as<int>(spec.confirm_hits);
+  }
+  if (tracking["max_misses"]) {
+    spec.max_misses = tracking["max_misses"].as<int>(spec.max_misses);
+  }
+  if (tracking["keep_missing_tracks"]) {
+    spec.keep_missing_tracks = tracking["keep_missing_tracks"].as<bool>(spec.keep_missing_tracks);
+  }
+  if (tracking["missing_conf_decay"]) {
+    spec.missing_conf_decay =
+        tracking["missing_conf_decay"].as<float>(spec.missing_conf_decay);
+  }
+}
+
 void resolveModelMetadata(PipelineConfig::ModelSpec& model, std::vector<std::string>* warnings) {
   if (model.model_path.empty()) {
     return;
@@ -295,6 +356,38 @@ void resolveModelMetadata(PipelineConfig::ModelSpec& model, std::vector<std::str
   model.decode_meta_path = load_result.source_path;
   if (!modelMetaHasAny(model.decode_meta)) {
     appendWarning(warnings, "No model-local decode metadata found for " + model.model_path);
+  }
+}
+
+void parseImageRoiNode(const YAML::Node& image_roi, PipelineConfig::OutputSpec& spec) {
+  if (!image_roi || !image_roi.IsMap()) {
+    return;
+  }
+  if (image_roi["enable"]) {
+    spec.image_roi_enable = image_roi["enable"].as<bool>(spec.image_roi_enable);
+  }
+  if (image_roi["mode"]) {
+    spec.image_roi_mode = image_roi["mode"].as<std::string>(spec.image_roi_mode);
+  }
+  if (image_roi["normalized_xywh"] && image_roi["normalized_xywh"].IsSequence() &&
+      image_roi["normalized_xywh"].size() == 4) {
+    for (size_t i = 0; i < 4; ++i) {
+      spec.image_roi_normalized_xywh[i] =
+          image_roi["normalized_xywh"][i].as<float>(spec.image_roi_normalized_xywh[i]);
+    }
+  }
+  if (image_roi["pixel_xywh"] && image_roi["pixel_xywh"].IsSequence() &&
+      image_roi["pixel_xywh"].size() == 4) {
+    for (size_t i = 0; i < 4; ++i) {
+      spec.image_roi_pixel_xywh[i] =
+          image_roi["pixel_xywh"][i].as<int>(spec.image_roi_pixel_xywh[i]);
+    }
+  }
+  if (image_roi["clamp"]) {
+    spec.image_roi_clamp = image_roi["clamp"].as<bool>(spec.image_roi_clamp);
+  }
+  if (image_roi["min_size"]) {
+    spec.image_roi_min_size = image_roi["min_size"].as<int>(spec.image_roi_min_size);
   }
 }
 
@@ -396,6 +489,7 @@ PipelineConfigLoadResult loadPipelineConfigFile(const std::string& config_path) 
 
   parseClassesNode(yaml["classes"], base_dir, result.config.model);
   parsePreprocessNode(yaml["preprocess"], base_dir, result.config.preprocess);
+  parseTrackingNode(yaml["tracking"], result.config.tracking);
 
   if (yaml["output"]) {
     const auto& output = yaml["output"];
@@ -418,6 +512,40 @@ PipelineConfigLoadResult loadPipelineConfigFile(const std::string& config_path) 
         result.config.output.queue_size =
             tcp["queue_size"].as<int>(result.config.output.queue_size);
       }
+      if (tcp["bind_ip"]) {
+        result.config.output.bind_ip =
+            tcp["bind_ip"].as<std::string>(result.config.output.bind_ip);
+      }
+      if (tcp["bind_interface"]) {
+        result.config.output.bind_interface =
+            tcp["bind_interface"].as<std::string>(result.config.output.bind_interface);
+      } else if (tcp["iface"]) {
+        result.config.output.bind_interface =
+            tcp["iface"].as<std::string>(result.config.output.bind_interface);
+      }
+      if (tcp["include_image"]) {
+        result.config.output.include_image =
+            tcp["include_image"].as<bool>(result.config.output.include_image);
+      } else if (tcp["send_image"]) {
+        result.config.output.include_image =
+            tcp["send_image"].as<bool>(result.config.output.include_image);
+      }
+      if (tcp["image_quality"]) {
+        result.config.output.image_quality =
+            tcp["image_quality"].as<int>(result.config.output.image_quality);
+      } else if (tcp["jpeg_quality"]) {
+        result.config.output.image_quality =
+            tcp["jpeg_quality"].as<int>(result.config.output.image_quality);
+      }
+      if (tcp["image_interval"]) {
+        result.config.output.image_interval =
+            tcp["image_interval"].as<int>(result.config.output.image_interval);
+      }
+      if (tcp["draw_detections"]) {
+        result.config.output.draw_detections =
+            tcp["draw_detections"].as<bool>(result.config.output.draw_detections);
+      }
+      parseImageRoiNode(tcp["image_roi"], result.config.output);
     }
   }
 

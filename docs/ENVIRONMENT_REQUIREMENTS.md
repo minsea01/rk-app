@@ -49,14 +49,14 @@ pip install numpy
 | **PC Validation** |
 | `scripts/run_rknn_sim.py` | ✅ | ❌ | rknn-toolkit2 | PC simulator inference |
 | `scripts/compare_onnx_rknn.py` | ✅ | ❌ | rknn-toolkit2, onnxruntime | Accuracy comparison |
-| `scripts/validate_models.py` | ✅ | ❌ | onnxruntime | Model validation |
+| `tools/compare.py` | ✅ | ❌ | onnxruntime, numpy | Model output comparison |
 | **Board Deployment** |
 | `apps/yolov8_rknn_infer.py` | ❌ | ✅ | rknnlite | On-device inference |
 | `apps/yolov8_stream.py` | ❌ | ✅ | rknnlite | Video stream inference |
 | `scripts/deploy/deploy_to_board.sh` | ✅ | N/A | ssh, scp | Deploy to board via SSH |
 | **Testing & Utilities** |
 | `tests/unit/*.py` | ✅ | ✅ | pytest | Unit tests |
-| `tools/aggregate.py` | ✅ | ✅ | - | MCP benchmark aggregation |
+| `tools/aggregate.py` | ✅ | ✅ | - | Benchmark aggregation |
 | `scripts/run_bench.sh` | ✅ | ✅ | iperf3, ffprobe | Benchmark pipeline |
 
 **Legend:**
@@ -94,8 +94,8 @@ python3 tools/export_yolov8_to_onnx.py \
 
 # Step 2: Convert ONNX to RKNN
 python3 tools/convert_onnx_to_rknn.py \
-  --onnx artifacts/models/yolo11n_416.onnx \
-  --out artifacts/models/yolo11n_416.rknn \
+  --onnx artifacts/models/best_person_aug_416_norm.onnx \
+  --out artifacts/models/best_person_aug_416_norm_int8.rknn \
   --calib datasets/coco/calib_images/calib.txt \
   --target rk3588 \
   --do-quant
@@ -106,7 +106,7 @@ python3 tools/convert_onnx_to_rknn.py \
 ```bash
 # Test RKNN inference on PC (no hardware needed)
 python3 scripts/run_rknn_sim.py \
-  --model artifacts/models/yolo11n_416.onnx \
+  --model artifacts/models/best_person_aug_416_norm.onnx \
   --image assets/test.jpg \
   --imgsz 416
 
@@ -165,10 +165,7 @@ pip install rknn-toolkit2>=2.3.2
 
 **Solution:**
 ```bash
-# Run the auto-fix script
-./scripts/fix_hardcoded_paths.sh
-
-# Or manually regenerate
+# Manually regenerate
 cd datasets/coco/calib_images
 find $(pwd) -name "*.jpg" | sort > calib.txt
 ```
@@ -193,7 +190,7 @@ find $(pwd) -name "*.jpg" | sort > calib.txt
 - [x] Code quality (linting, formatting)
 - [x] Preprocessing pipeline
 - [x] Post-processing (NMS, decoding)
-- [x] MCP benchmark utilities
+- [x] Benchmark utilities
 
 ### ⚠️ Partially Testable
 
@@ -228,10 +225,10 @@ pytest tests/unit -v
 python3 tools/export_yolov8_to_onnx.py --weights yolo11n.pt --imgsz 416
 
 # 4. ONNX validation succeeds
-python3 scripts/validate_models.py
+python3 tools/onnx_bench.py --model artifacts/models/best_person_aug_416_norm.onnx
 
 # 5. RKNN conversion completes
-python3 tools/convert_onnx_to_rknn.py --onnx artifacts/models/yolo11n_416.onnx --calib datasets/coco/calib_images/calib.txt
+python3 tools/convert_onnx_to_rknn.py --onnx artifacts/models/best_person_aug_416_norm.onnx --calib datasets/coco/calib_images/calib.txt
 
 # 6. PC simulator runs
 python3 scripts/run_rknn_sim.py
@@ -245,7 +242,7 @@ python3 scripts/compare_onnx_rknn.py
 
 ## 📚 Additional Resources
 
-- **CLAUDE.md** - Complete project guide and workflow
+- **README.md** - Complete project guide and workflow
 - **QUICK_START_GUIDE.md** - Quick start commands
 - **RK3588_VALIDATION_CHECKLIST.md** - On-device validation steps
 - **README.md** - Project overview

@@ -77,7 +77,7 @@ repos:
     hooks:
       - id: markdownlint
         args: ["--fix"]
-        exclude: ^(archive/|CLAUDE\.md)
+        exclude: ^archive/
 
   # Shell script linting
   - repo: https://github.com/shellcheck-py/shellcheck-py

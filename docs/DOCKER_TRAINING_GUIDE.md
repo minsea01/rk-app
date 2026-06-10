@@ -418,4 +418,4 @@ python tools/convert_onnx_to_rknn.py \
 
 **创建日期：** 2025-11-21
 **最后更新：** 2025-11-21
-**维护者：** Claude Code (AI Agent)
+**维护者：** 项目组

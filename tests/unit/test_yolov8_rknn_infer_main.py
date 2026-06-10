@@ -499,10 +499,16 @@ class TestMainRobustness:
                                         side_effect=lambda boxes, _meta: boxes,
                                     ):
                                         with patch.object(
-                                            infer_app, "draw_boxes", side_effect=lambda img, *_args, **_kwargs: img
+                                            infer_app,
+                                            "draw_boxes",
+                                            side_effect=lambda img, *_args, **_kwargs: img,
                                         ):
-                                            with patch.object(infer_app, "safe_imshow", return_value=True):
-                                                with patch.object(infer_app, "safe_waitKey", return_value=27):
+                                            with patch.object(
+                                                infer_app, "safe_imshow", return_value=True
+                                            ):
+                                                with patch.object(
+                                                    infer_app, "safe_waitKey", return_value=27
+                                                ):
                                                     infer_app.main()
 
         assert decode_calls["count"] >= 2

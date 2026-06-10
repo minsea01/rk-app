@@ -119,7 +119,7 @@ file out/arm64/bin/detect_cli
 ls -lh artifacts/models/*.rknn
 
 # 2. 验证模型大小 (<5MB)
-du -h artifacts/models/best.rknn
+du -h artifacts/models/best_person_aug_416_norm_int8.rknn
 # Expected: 4.7M
 
 # 3. 验证配置文件
@@ -292,7 +292,7 @@ source:
 
 engine:
   type: rknn
-  model: artifacts/models/best.rknn
+  model: artifacts/models/best_person_aug_416_norm_int8.rknn
   input_size: [416, 416]
 
 postprocess:
@@ -367,12 +367,13 @@ ls -l artifacts/detection_results/
 ### 4.1 单帧延迟测试
 
 ```bash
-# 运行性能测试
-python scripts/generate_performance_report.py \
-    --model artifacts/models/best.rknn \
+# 运行板端端到端延迟测试
+python scripts/profiling/end_to_end_latency.py \
+    --model artifacts/models/best_person_aug_416_norm_int8.rknn \
+    --source assets/bus.jpg \
     --imgsz 416 \
     --runs 50 \
-    --output artifacts/hardware_performance.md
+    --output artifacts/hardware_performance.json
 
 # 预期结果:
 # 单帧延迟: 20-30 ms (vs PC 60ms)
@@ -443,7 +444,7 @@ export DATASET_PATH=/path/to/pedestrian_dataset
 ```bash
 # 运行精度评估
 python scripts/evaluate_map.py \
-    --rknn artifacts/models/best.rknn \
+    --rknn artifacts/models/best_person_aug_416_norm_int8.rknn \
     --dataset $DATASET_PATH \
     --annotations instances.json \
     --output artifacts/hardware_mAP.json
@@ -461,8 +462,8 @@ python scripts/evaluate_map.py \
 ```bash
 # 生成完整对比报告
 python scripts/compare_onnx_rknn.py \
-    --onnx artifacts/models/best.onnx \
-    --rknn artifacts/models/best.rknn \
+    --onnx artifacts/models/best_person_aug_416_norm.onnx \
+    --rknn artifacts/models/best_person_aug_416_norm_int8.rknn \
     --dataset $DATASET_PATH \
     --output artifacts/onnx_vs_rknn_hardware.json
 
@@ -593,7 +594,7 @@ monitoring:
 **排查:**
 ```bash
 # 1. 检查模型是否为416×416
-file artifacts/models/best.rknn
+file artifacts/models/best_person_aug_416_norm_int8.rknn
 # 如果使用640×640, 会有Transpose CPU fallback
 
 # 2. 检查CPU利用率
@@ -601,9 +602,9 @@ top -p $(pgrep detect_cli)
 # 如果CPU占用高, 说明有CPU fallback
 
 # 解决方案:
-# 使用 yolo11n_416.rknn 替代 best.rknn
+# 使用 416x416 INT8 RKNN 主模型
 # 编辑 config/detection/detect_board.yaml:
-# engine.model: artifacts/models/yolo11n_416.rknn
+# engine.model: artifacts/models/best_person_aug_416_norm_int8.rknn
 # engine.input_size: [416, 416]
 ```
 
@@ -659,9 +660,9 @@ tcpdump -i eth0 -c 100 | grep -E "error|drop"
 | 文档 | 说明 |
 |------|------|
 | OFFLINE_PIPELINE_INTEGRATION.md | 流水线架构设计 |
-| QUICK_START_PHASE2.md | 快速开始指南 |
-| CLAUDE.md | 开发指南 |
-| artifacts/board_ready_report.md | 部署就绪报告 |
+| BOARD_QUICKSTART.md | 板端快速部署 |
+| README.md | 项目主文档 |
+| docs/RK3588_ACCEPTANCE_EVIDENCE.md | 验收证据 |
 
 ---
 

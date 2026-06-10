@@ -33,7 +33,7 @@ services:
 
     environment:
       # Detection config
-      - MODEL_PATH=/app/artifacts/models/best.rknn
+      - MODEL_PATH=/app/artifacts/models/best_person_aug_416_norm_int8.rknn
       - CONF_THRESHOLD=0.5
       - IOU_THRESHOLD=0.5
       - INPUT_SIZE=416

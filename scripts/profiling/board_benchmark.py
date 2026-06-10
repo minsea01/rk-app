@@ -30,8 +30,12 @@ def parse_args():
                         help="Number of iterations (default: 100)")
     parser.add_argument("--warmup", type=int, default=10,
                         help="Warmup iterations (default: 10)")
-    parser.add_argument("--core-mask", type=int, default=0x7,
-                        help="NPU core mask (default: 0x7 for 3 cores)")
+    parser.add_argument(
+        "--core-mask",
+        type=lambda x: int(x, 0),
+        default=0x7,
+        help="NPU core mask, decimal or hex (default: 0x7 for 3 cores)",
+    )
     parser.add_argument("--output", type=str, default=None,
                         help="Output JSON file for results")
     parser.add_argument("--verbose", action="store_true",
@@ -64,14 +68,17 @@ def benchmark_rknn(model_path, imgsz, iterations, warmup, core_mask, verbose):
         logger.error(f"Init runtime failed! ret={ret}")
         sys.exit(1)
 
-    # Create dummy input
-    logger.info(f"Creating dummy input: ({imgsz}x{imgsz}x3)")
-    dummy_input = np.random.randint(0, 256, (imgsz, imgsz, 3), dtype=np.uint8)
+    # RKNNLite expects NHWC with an explicit batch dimension for this model.
+    logger.info(f"Creating dummy input: (1x{imgsz}x{imgsz}x3)")
+    dummy_input = np.random.randint(0, 256, (1, imgsz, imgsz, 3), dtype=np.uint8)
 
     # Warmup
     logger.info(f"Warmup: {warmup} iterations...")
     for i in range(warmup):
-        rknn.inference(inputs=[dummy_input])
+        outputs = rknn.inference(inputs=[dummy_input])
+        if outputs is None:
+            rknn.release()
+            raise RuntimeError("RKNN warmup inference failed")
         if verbose and (i + 1) % 5 == 0:
             logger.info(f"  Warmup {i+1}/{warmup}")
 
@@ -83,6 +90,9 @@ def benchmark_rknn(model_path, imgsz, iterations, warmup, core_mask, verbose):
         start = time.perf_counter()
         outputs = rknn.inference(inputs=[dummy_input])
         end = time.perf_counter()
+        if outputs is None:
+            rknn.release()
+            raise RuntimeError("RKNN benchmark inference failed")
 
         latency_ms = (end - start) * 1000
         latencies.append(latency_ms)

@@ -3,7 +3,7 @@
 # 推理引擎配置
 engine:
   type: rknn  # 或 onnx（PC测试用）
-  model: artifacts/models/pedestrian_416.rknn
+  model: artifacts/models/best_person_aug_416_norm_int8.rknn
   input_size: [416, 416]
 
 # 类别配置
@@ -31,9 +31,11 @@ source:
 output:
   type: tcp
   tcp:
-    host: "192.168.2.100"
-    port: 5000
+    host: "192.168.137.1"
+    port: 9000
     queue_size: 64        # 本地发送队列深度
+    bind_ip: "192.168.137.226"
+    bind_interface: "eth0"
 
 runtime:
   warmup: 5

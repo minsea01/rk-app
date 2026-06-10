@@ -36,10 +36,19 @@ class TestGetProjectRoot:
         # Project name may vary depending on workspace configuration
         assert root.name in ("rk-app", "workspace"), f"Unexpected project root name: {root.name}"
 
-    def test_finds_project_root_from_claude_md(self):
-        """Test that CLAUDE.md marker is recognized."""
-        root = get_project_root()
-        assert (root / "CLAUDE.md").exists(), "Project should have CLAUDE.md"
+    def test_finds_project_root_from_pyproject_marker(self, tmp_path, monkeypatch):
+        """Test that pyproject.toml marker is recognized."""
+        import apps.utils.paths as paths_module
+
+        marker_root = tmp_path / "project"
+        module_dir = marker_root / "apps" / "utils"
+        module_dir.mkdir(parents=True)
+        (marker_root / "pyproject.toml").write_text("", encoding="utf-8")
+
+        monkeypatch.setattr(paths_module, "_project_root", None)
+        monkeypatch.setattr(paths_module, "__file__", str(module_dir / "paths.py"))
+
+        assert get_project_root() == marker_root
 
     def test_returns_cached_result_on_subsequent_calls(self):
         """Test that project root is cached after first call."""
@@ -67,11 +76,11 @@ class TestResolvePath:
 
     def test_resolves_relative_path_to_absolute(self):
         """Test that relative paths are resolved to absolute."""
-        path = resolve_path("artifacts/models/best.onnx")
+        path = resolve_path("artifacts/models/best_person_aug_416_norm.onnx")
         assert path.is_absolute()
         # Project name may vary depending on workspace configuration
         assert "rk-app" in str(path) or "workspace" in str(path)
-        assert str(path).endswith("artifacts/models/best.onnx")
+        assert str(path).endswith("artifacts/models/best_person_aug_416_norm.onnx")
 
     def test_returns_absolute_path_unchanged(self):
         """Test that absolute paths are returned as-is."""
@@ -162,7 +171,7 @@ class TestGetModelPath:
         assert isinstance(result, Path)
         assert result.is_absolute()
         # Should contain default ONNX model from PathConfig
-        assert "yolo11n_416.onnx" in str(result)
+        assert "best_person_aug_416_norm.onnx" in str(result)
 
     def test_looks_in_models_dir_for_filename_only(self):
         """Test that bare filenames are looked up in MODELS_DIR."""
@@ -230,11 +239,11 @@ class TestRelativeToProject:
     def test_converts_absolute_to_relative(self):
         """Test that absolute paths are converted to relative."""
         root = get_project_root()
-        abs_path = root / "artifacts" / "models" / "best.onnx"
+        abs_path = root / "artifacts" / "models" / "best_person_aug_416_norm.onnx"
         result = relative_to_project(abs_path)
 
         assert not result.is_absolute()
-        assert str(result) == "artifacts/models/best.onnx"
+        assert str(result) == "artifacts/models/best_person_aug_416_norm.onnx"
 
     def test_handles_paths_outside_project(self):
         """Test that paths outside project are returned as-is."""

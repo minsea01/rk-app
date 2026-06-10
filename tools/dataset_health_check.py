@@ -4,7 +4,7 @@
 诊断"召回爆表、精度偏低"问题的数据源头。
 
 Usage:
-    python tools/dataset_health_check.py --data industrial_dataset/data.yaml
+    python tools/dataset_health_check.py --data datasets/coco_person/data.yaml
     python tools/dataset_health_check.py --data data.yaml --visualize --samples 10
 """
 

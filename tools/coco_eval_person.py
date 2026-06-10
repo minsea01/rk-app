@@ -1,4 +1,5 @@
 """Evaluate a single-class person YOLO model on COCO val2017 using pycocotools."""
+
 import json
 import sys
 from pathlib import Path
@@ -41,12 +42,14 @@ for r in results:
         continue
     for box, conf, cls in zip(r.boxes.xyxy.tolist(), r.boxes.conf.tolist(), r.boxes.cls.tolist()):
         x1, y1, x2, y2 = box
-        predictions.append({
-            "image_id": img_id,
-            "category_id": 1,
-            "bbox": [x1, y1, x2 - x1, y2 - y1],
-            "score": conf,
-        })
+        predictions.append(
+            {
+                "image_id": img_id,
+                "category_id": 1,
+                "bbox": [x1, y1, x2 - x1, y2 - y1],
+                "score": conf,
+            }
+        )
     n += 1
     if n % 500 == 0:
         print(f"  processed {n}/5000 ({len(predictions)} detections)")

@@ -263,7 +263,7 @@ case "$ACTION" in
     echo "✅ 部署完成：$REMOTE:$DEST/{bin,config,models,lib,scripts,assets}"
     echo ""
     echo "📋 板子上运行方式："
-    echo "   cd $DEST && LD_LIBRARY_PATH=./lib ./bin/detect_cli --cfg ./config/detect_rknn.yaml"
+    echo "   cd $DEST && LD_LIBRARY_PATH=./lib ./bin/detect_cli --cfg ./config/detection/detect_rknn.yaml"
     echo "   或: $DEST/scripts/rk3588_run.sh"
     ;;
   run)
@@ -274,7 +274,7 @@ case "$ACTION" in
       LD_REMOTE="${LD_REMOTE}:${LD_LIBRARY_PATH_REMOTE}"
     fi
     LD_PATH_ESCAPED=$(printf %q "$LD_REMOTE")
-    ssh -p "$PORT" "$REMOTE" "cd ${DEST_ESCAPED} && chmod +x bin/detect_cli && LD_LIBRARY_PATH=${LD_PATH_ESCAPED} ./bin/detect_cli --cfg ./config/detect_rknn.yaml"
+    ssh -p "$PORT" "$REMOTE" "cd ${DEST_ESCAPED} && chmod +x bin/detect_cli && LD_LIBRARY_PATH=${LD_PATH_ESCAPED} ./bin/detect_cli --cfg ./config/detection/detect_rknn.yaml"
     ;;
   gdb)
     echo "🐞 在板子上启动 gdbserver :$GDB_PORT"
@@ -286,7 +286,7 @@ case "$ACTION" in
     fi
     LD_PATH_ESCAPED=$(printf %q "$LD_REMOTE")
     GDB_PORT_ESCAPED=$(printf %q "$GDB_PORT")
-    ssh -p "$PORT" "$REMOTE" "cd ${DEST_ESCAPED} && chmod +x bin/detect_cli && exec env LD_LIBRARY_PATH=${LD_PATH_ESCAPED} gdbserver :${GDB_PORT_ESCAPED} ./bin/detect_cli --cfg ./config/detect_rknn.yaml"
+    ssh -p "$PORT" "$REMOTE" "cd ${DEST_ESCAPED} && chmod +x bin/detect_cli && exec env LD_LIBRARY_PATH=${LD_PATH_ESCAPED} gdbserver :${GDB_PORT_ESCAPED} ./bin/detect_cli --cfg ./config/detection/detect_rknn.yaml"
     ;;
   kill)
     echo "🧹 结束远端 gdbserver (best-effort)"

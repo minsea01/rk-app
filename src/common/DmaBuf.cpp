@@ -40,8 +40,9 @@ struct drm_rockchip_gem_map_offset {
 #endif
 #endif
 
-// RGA headers for handle import
-#if defined(__aarch64__) || defined(__arm__)
+// RGA headers for handle import. Some board images ship librga.so without
+// development headers; keep DMA-BUF usable when ENABLE_RGA=OFF.
+#if RKNN_USE_RGA && (defined(__aarch64__) || defined(__arm__))
 #define RKAPP_HAS_RGA 1
 #include <im2d.h>
 #include <rga.h>
@@ -95,6 +96,45 @@ int openDrmDevice() {
     LOGE("DmaBuf: Failed to open any DRM device");
     return -1;
 }
+
+#if RKAPP_HAS_RGA
+int toRgaFormat(DmaBuf::PixelFormat format) {
+    switch (format) {
+        case DmaBuf::PixelFormat::BGR888:
+            return RK_FORMAT_BGR_888;
+        case DmaBuf::PixelFormat::RGB888:
+            return RK_FORMAT_RGB_888;
+        case DmaBuf::PixelFormat::RGBA8888:
+            return RK_FORMAT_RGBA_8888;
+        case DmaBuf::PixelFormat::BGRA8888:
+            return RK_FORMAT_BGRA_8888;
+        case DmaBuf::PixelFormat::NV12:
+            return RK_FORMAT_YCbCr_420_SP;
+        case DmaBuf::PixelFormat::NV21:
+            return RK_FORMAT_YCrCb_420_SP;
+        default:
+            return RK_FORMAT_RGB_888;
+    }
+}
+
+rga_buffer_handle_t importbufferFdCompat(int fd,
+                                         size_t size,
+                                         int width,
+                                         int height,
+                                         DmaBuf::PixelFormat format) {
+#if defined(RGA_API_MAJOR_VERSION) && \
+    ((RGA_API_MAJOR_VERSION > 1) || (RGA_API_MAJOR_VERSION == 1 && RGA_API_MINOR_VERSION >= 8))
+    im_handle_param_t param = {};
+    param.width = width > 0 ? static_cast<uint32_t>(width) : 1U;
+    param.height = height > 0 ? static_cast<uint32_t>(height) : 1U;
+    param.format = static_cast<uint32_t>(toRgaFormat(format));
+    (void)size;
+    return importbuffer_fd(fd, &param);
+#else
+    return importbuffer_fd(fd, size);
+#endif
+}
+#endif
 
 } // namespace
 
@@ -391,7 +431,7 @@ uint64_t DmaBuf::getRgaHandle() const {
     // Double-check：另一个线程可能已完成初始化。
     if (rga_handle_ != 0) return rga_handle_;
 
-    rga_buffer_handle_t handle = importbuffer_fd(fd_, size_);
+    rga_buffer_handle_t handle = importbufferFdCompat(fd_, size_, width_, height_, format_);
     if (handle == 0) {
         LOGE("DmaBuf::getRgaHandle: importbuffer_fd failed");
         return 0;

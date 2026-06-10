@@ -244,10 +244,10 @@ def _write_detect_cli_config(config_path: Path, model_path: Path, video_path: Pa
         (
             "source:\n"
             "  type: video\n"
-            f"  uri: \"{video_path}\"\n"
+            f'  uri: "{video_path}"\n'
             "engine:\n"
             "  type: onnx\n"
-            f"  model: \"{model_path}\"\n"
+            f'  model: "{model_path}"\n'
             "  input_size: [640, 640]\n"
             "postprocess:\n"
             "  conf_threshold: 0.25\n"
@@ -258,9 +258,13 @@ def _write_detect_cli_config(config_path: Path, model_path: Path, video_path: Pa
             "output:\n"
             "  type: tcp\n"
             "  tcp:\n"
-            "    host: \"127.0.0.1\"\n"
+            '    host: "127.0.0.1"\n'
             "    port: 9000\n"
             "    queue_size: 8\n"
+            "    include_image: true\n"
+            "    image_quality: 70\n"
+            "    image_interval: 1\n"
+            "    draw_detections: true\n"
             "logging:\n"
             "  level: info\n"
             "runtime:\n"
@@ -353,3 +357,6 @@ def test_detect_cli_no_hardware_smoke(tmp_path: Path) -> None:
     payload = json.loads(json_path.read_text(encoding="utf-8").strip().splitlines()[-1])
     assert payload["source_uri"] == str(video_path)
     assert payload["detections"]
+    assert payload["image"]["encoding"] == "jpeg"
+    assert payload["image"]["contains_overlays"] is True
+    assert payload["image"]["data_base64"]
