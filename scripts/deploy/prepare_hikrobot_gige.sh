@@ -268,6 +268,7 @@ runtime:
 
 output:
   type: tcp
+  enable_profiling: true
   tcp:
     host: "${PC_HOST}"
     port: ${PC_PORT}

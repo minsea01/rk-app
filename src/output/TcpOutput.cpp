@@ -30,6 +30,10 @@ TcpOutput::~TcpOutput() { close(); }
 
 namespace {
 
+// NDJSON 协议版本：接收端可据此做兼容处理；字段新增时保持向后兼容，
+// 字段语义变化时递增版本号。
+constexpr int kProtocolVersion = 1;
+
 std::string escape_json(const std::string& value) {
         std::string escaped;
         escaped.reserve(value.size() + 8);
@@ -99,6 +103,74 @@ std::string base64_encode(const std::vector<uint8_t>& bytes) {
         return out;
 }
 
+// 把单帧结果序列化为一行 NDJSON。仅在发送线程调用。
+std::string serializePayload(const FrameResult& result) {
+        std::ostringstream json;
+        const auto us_to_ms = [](int64_t us) -> double {
+            return static_cast<double>(us) / 1000.0;
+        };
+
+        const int64_t process_us = result.timing.processUs();
+        json << '{'
+             << "\"v\":" << kProtocolVersion << ','
+             << "\"frame_id\":" << result.frame_id << ','
+             << "\"timestamp\":" << result.timestamp << ','
+             << "\"width\":" << result.width << ','
+             << "\"height\":" << result.height << ','
+             << "\"source_uri\":\"" << escape_json(result.source_uri) << "\","
+             << "\"latency_ms\":" << us_to_ms(process_us) << ',';
+
+        json << "\"timing\":{"
+             << "\"capture_wait_ms\":" << us_to_ms(result.timing.capture_us) << ','
+             << "\"preprocess_ms\":" << us_to_ms(result.timing.preprocess_us) << ','
+             << "\"inference_ms\":" << us_to_ms(result.timing.inference_us) << ','
+             << "\"postprocess_ms\":" << us_to_ms(result.timing.postprocess_us) << ','
+             << "\"process_ms\":" << us_to_ms(process_us) << ','
+             << "\"total_with_capture_wait_ms\":" << us_to_ms(result.timing.total_us)
+             << "},";
+
+        json << "\"detections\":[";
+        for (size_t i = 0; i < result.detections.size(); ++i) {
+            const auto& det = result.detections[i];
+            if (i > 0) json << ',';
+            json << '{'
+                 << "\"x\":" << det.x << ','
+                 << "\"y\":" << det.y << ','
+                 << "\"w\":" << det.w << ','
+                 << "\"h\":" << det.h << ','
+                 << "\"confidence\":" << det.confidence << ','
+                 << "\"class_id\":" << det.class_id << ','
+                 << "\"class_name\":\"" << escape_json(det.class_name) << "\"";
+            json << '}';
+        }
+        json << ']';
+
+        if (!result.image_bytes.empty()) {
+            json << ",\"image\":{"
+                 << "\"encoding\":\"" << escape_json(result.image_encoding.empty()
+                                                        ? std::string("jpeg")
+                                                        : result.image_encoding)
+                 << "\","
+                 << "\"contains_overlays\":"
+                 << (result.image_contains_overlays ? "true" : "false") << ','
+                 << "\"width\":" << result.image_width << ','
+                 << "\"height\":" << result.image_height << ','
+                 << "\"roi_applied\":"
+                 << (result.image_roi_applied ? "true" : "false") << ','
+                 << "\"roi\":{"
+                 << "\"x\":" << result.image_roi.x << ','
+                 << "\"y\":" << result.image_roi.y << ','
+                 << "\"w\":" << result.image_roi.width << ','
+                 << "\"h\":" << result.image_roi.height
+                 << "},"
+                 << "\"data_base64\":\"" << base64_encode(result.image_bytes) << "\""
+                 << '}';
+        }
+
+        json << "}\n";
+        return json.str();
+}
+
 }  // namespace
 
 bool TcpOutput::open(const std::string& config) {
@@ -106,8 +178,8 @@ bool TcpOutput::open(const std::string& config) {
 
         enable_file_output_ = false;
         {
-            std::lock_guard<std::mutex> lock(backlog_mtx_);
-            backlog_.clear();
+            std::lock_guard<std::mutex> lock(queue_mtx_);
+            pending_.clear();
         }
         dropped_frames_.store(0, std::memory_order_relaxed);
         total_sent_.store(0, std::memory_order_relaxed);
@@ -219,8 +291,16 @@ bool TcpOutput::open(const std::string& config) {
 
         is_opened_.store(endpoint_configured_ || enable_file_output_);
         if (is_opened_.load()) {
-            std::lock_guard<std::mutex> socket_lock(socket_mtx_);
-            last_reconnect_attempt_ = std::chrono::steady_clock::now() - reconnect_backoff_;
+            {
+                std::lock_guard<std::mutex> socket_lock(socket_mtx_);
+                last_reconnect_attempt_ = std::chrono::steady_clock::now() - reconnect_backoff_;
+            }
+            {
+                std::lock_guard<std::mutex> lock(queue_mtx_);
+                stop_requested_ = false;
+            }
+            stop_flag_.store(false);
+            sender_thread_ = std::thread(&TcpOutput::senderLoop, this);
         }
         return is_opened_.load();
 }
@@ -230,99 +310,124 @@ bool TcpOutput::send(const FrameResult& result) {
             return false;
         }
 
-        if (endpoint_configured_ && !tcp_connected_.load()) {
-            attemptReconnect();
-        }
-
-        std::ostringstream json;
-        json << '{'
-             << "\"frame_id\":" << result.frame_id << ','
-             << "\"timestamp\":" << result.timestamp << ','
-             << "\"width\":" << result.width << ','
-             << "\"height\":" << result.height << ','
-             << "\"source_uri\":\"" << escape_json(result.source_uri) << "\",";
-
-        json << "\"detections\":[";
-        for (size_t i = 0; i < result.detections.size(); ++i) {
-            const auto& det = result.detections[i];
-            if (i > 0) json << ',';
-            json << '{'
-                 << "\"x\":" << det.x << ','
-                 << "\"y\":" << det.y << ','
-                 << "\"w\":" << det.w << ','
-                 << "\"h\":" << det.h << ','
-                 << "\"confidence\":" << det.confidence << ','
-                 << "\"class_id\":" << det.class_id << ','
-                 << "\"class_name\":\"" << escape_json(det.class_name) << "\"";
-            json << '}';
-        }
-        json << ']';
-
-        if (!result.image_bytes.empty()) {
-            json << ",\"image\":{"
-                 << "\"encoding\":\"" << escape_json(result.image_encoding.empty()
-                                                        ? std::string("jpeg")
-                                                        : result.image_encoding)
-                 << "\","
-                 << "\"contains_overlays\":"
-                 << (result.image_contains_overlays ? "true" : "false") << ','
-                 << "\"width\":" << result.image_width << ','
-                 << "\"height\":" << result.image_height << ','
-                 << "\"roi_applied\":"
-                 << (result.image_roi_applied ? "true" : "false") << ','
-                 << "\"roi\":{"
-                 << "\"x\":" << result.image_roi_x << ','
-                 << "\"y\":" << result.image_roi_y << ','
-                 << "\"w\":" << result.image_roi_w << ','
-                 << "\"h\":" << result.image_roi_h
-                 << "},"
-                 << "\"data_base64\":\"" << base64_encode(result.image_bytes) << "\""
-                 << '}';
-        }
-
-        json << "}\n";
-
-        const std::string payload = json.str();
-
-        if (enable_file_output_) {
-            std::lock_guard<std::mutex> file_lock(file_mtx_);
-            if (file_output_.is_open()) {
-                file_output_ << payload;
-                file_output_.flush();
+        {
+            std::lock_guard<std::mutex> lock(queue_mtx_);
+            if (stop_requested_) {
+                return false;
+            }
+            pending_.push_back(result);
+            if (pending_.size() > max_backlog_) {
+                pending_.pop_front();
+                const uint64_t dropped =
+                    dropped_frames_.fetch_add(1, std::memory_order_relaxed) + 1;
+                LOGW("TcpOutput: backlog full (max=", max_backlog_,
+                     "), dropping oldest frame (total dropped: ", dropped, ")");
             }
         }
+        queue_cv_.notify_one();
+        return true;
+}
 
-        {
-            std::lock_guard<std::mutex> lock(backlog_mtx_);
-            backlog_.push_back(QueuedPayload{payload, 0, next_payload_id_++});
-            if (backlog_.size() > max_backlog_) {
-                const uint64_t dropped = dropped_frames_.fetch_add(1, std::memory_order_relaxed) + 1;
-                LOGW("TcpOutput: backlog full (max=", max_backlog_, "), dropping oldest frame (total dropped: ", dropped, ")");
-                backlog_.pop_front();
+void TcpOutput::senderLoop() {
+        for (;;) {
+            FrameResult item;
+            {
+                std::unique_lock<std::mutex> lock(queue_mtx_);
+                queue_cv_.wait_for(lock, std::chrono::milliseconds(250), [&] {
+                    return stop_requested_ || !pending_.empty();
+                });
+                if (stop_requested_) {
+                    break;  // 剩余条目在循环外做有界收尾
+                }
+                if (pending_.empty()) {
+                    continue;
+                }
+
+                // 未连接且无文件输出时不出队：条目保留在有界窗口内等待重连成功。
+                if (!tcp_connected_.load() && !enable_file_output_) {
+                    lock.unlock();
+                    if (endpoint_configured_) {
+                        attemptReconnect();
+                    }
+                    if (!tcp_connected_.load()) {
+                        std::unique_lock<std::mutex> idle_lock(queue_mtx_);
+                        queue_cv_.wait_for(idle_lock, std::chrono::milliseconds(100),
+                                           [&] { return stop_requested_; });
+                    }
+                    continue;
+                }
+
+                item = std::move(pending_.front());
+                pending_.pop_front();
             }
-        }
 
-        bool delivered = false;
-        {
-            // Ensure only one sender drains backlog at a time.
-            std::lock_guard<std::mutex> flush_lock(flush_mtx_);
-            if (!tcp_connected_.load()) {
+            processItem(item, /*allow_tcp_retry=*/true);
+
+            if (endpoint_configured_ && !tcp_connected_.load() && !stop_flag_.load()) {
                 attemptReconnect();
             }
-            delivered = tcp_connected_.load() && flushBacklog();
         }
 
-        return delivered || (enable_file_output_ && file_output_.is_open());
+        // 关闭收尾：剩余条目仍写入文件（若启用）；TCP 仅在已连接时做单次有界尝试。
+        std::deque<FrameResult> rest;
+        {
+            std::lock_guard<std::mutex> lock(queue_mtx_);
+            rest.swap(pending_);
+        }
+        for (const auto& result : rest) {
+            processItem(result, /*allow_tcp_retry=*/false);
+        }
+}
+
+void TcpOutput::processItem(const FrameResult& result, bool allow_tcp_retry) {
+        std::string payload = serializePayload(result);
+
+        if (enable_file_output_ && file_output_.is_open()) {
+            file_output_ << payload;
+            file_output_.flush();
+        }
+
+        if (!endpoint_configured_ || !tcp_connected_.load()) {
+            return;
+        }
+
+        QueuedPayload inflight{std::move(payload), 0};
+        bool delivered = sendBuffer(inflight);
+        // sendBuffer 在内核缓冲满(EAGAIN)时短暂 poll 后返回 false 且保留 offset，
+        // 连接仍在则继续推进同一载荷；硬错误时它会断开连接使循环退出。
+        while (!delivered && allow_tcp_retry && tcp_connected_.load() && !stop_flag_.load()) {
+            delivered = sendBuffer(inflight);
+        }
+
+        if (delivered) {
+            total_sent_.fetch_add(1, std::memory_order_relaxed);
+        } else {
+            // 连接中断或关闭收尾未送完：放弃该帧，保证每个连接内的 NDJSON 行边界完整
+            // （不跨连接续传半行，避免接收端解析到脏数据）。
+            const uint64_t dropped = dropped_frames_.fetch_add(1, std::memory_order_relaxed) + 1;
+            LOGW("TcpOutput: frame not delivered (connection lost mid-send), dropped total: ",
+                 dropped);
+        }
 }
 
 void TcpOutput::close() {
+        is_opened_.store(false);
+        stop_flag_.store(true);
+        {
+            std::lock_guard<std::mutex> lock(queue_mtx_);
+            stop_requested_ = true;
+        }
+        queue_cv_.notify_all();
+        if (sender_thread_.joinable()) {
+            sender_thread_.join();
+        }
+
         {
             std::lock_guard<std::mutex> socket_lock(socket_mtx_);
             closeSocketLocked();
             has_reconnect_attempt_ = false;
             last_reconnect_attempt_ = {};
             reconnect_backoff_ = reconnect_backoff_initial_;
-            is_opened_.store(false);
         }
 
         if (file_output_.is_open()) {
@@ -330,9 +435,11 @@ void TcpOutput::close() {
         }
 
         {
-            std::lock_guard<std::mutex> lock(backlog_mtx_);
-            backlog_.clear();
+            std::lock_guard<std::mutex> lock(queue_mtx_);
+            pending_.clear();
+            stop_requested_ = false;  // 允许再次 open()
         }
+        stop_flag_.store(false);
 }
 
 bool TcpOutput::isOpened() const { return is_opened_.load(); }
@@ -342,8 +449,8 @@ OutputType TcpOutput::getType() const { return OutputType::TCP; }
 bool TcpOutput::isConnected() const { return tcp_connected_.load(); }
 
 size_t TcpOutput::backlogDepth() const {
-        std::lock_guard<std::mutex> lock(backlog_mtx_);
-        return backlog_.size();
+        std::lock_guard<std::mutex> lock(queue_mtx_);
+        return pending_.size();
 }
 
 std::chrono::milliseconds TcpOutput::reconnectBackoff() const {
@@ -437,7 +544,7 @@ bool TcpOutput::setup_socket_locked() {
             return false;
         }
 
-        // Wait for connect with bounded timeout to avoid blocking the pipeline.
+        // 有界等待连接完成；该函数只在发送线程/open() 中调用，不会阻塞推理管线。
         bool connected = false;
         if (conn_res == 0) {
             connected = true;
@@ -445,7 +552,7 @@ bool TcpOutput::setup_socket_locked() {
             pollfd pfd{};
             pfd.fd = socket_fd_;
             pfd.events = POLLOUT;
-            const int timeout_ms = 500; // short timeout to keep pipeline responsive
+            const int timeout_ms = 500;
             int rc = ::poll(&pfd, 1, timeout_ms);
             if (rc > 0 && (pfd.revents & POLLOUT)) {
                 int so_error = 0;
@@ -499,42 +606,6 @@ bool TcpOutput::attemptReconnect() {
         }
         reconnect_backoff_ = std::min(reconnect_backoff_ * 2, reconnect_backoff_max_);
         return false;
-}
-
-bool TcpOutput::flushBacklog() {
-        bool delivered_any = false;
-        while (tcp_connected_.load()) {
-            QueuedPayload current;
-            {
-                std::lock_guard<std::mutex> lock(backlog_mtx_);
-                if (backlog_.empty()) {
-                    break;
-                }
-                current = backlog_.front();
-            }
-
-            bool sent = sendBuffer(current);
-
-            {
-                std::lock_guard<std::mutex> lock(backlog_mtx_);
-                if (!backlog_.empty()) {
-                    if (sent) {
-                        backlog_.pop_front();
-                        delivered_any = true;
-                        total_sent_.fetch_add(1, std::memory_order_relaxed);
-                    } else if (backlog_.front().id == current.id) {
-                        // Guard: only write back offset if front hasn't been replaced by a
-                        // concurrent send() that dropped the oldest entry under backlog_mtx_.
-                        backlog_.front().offset = current.offset;
-                    }
-                }
-            }
-
-            if (!sent || !tcp_connected_.load()) {
-                break;
-            }
-        }
-        return delivered_any;
 }
 
 bool TcpOutput::sendBuffer(QueuedPayload& payload) {

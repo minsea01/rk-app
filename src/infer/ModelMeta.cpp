@@ -4,9 +4,11 @@
 #include <cctype>
 #include <filesystem>
 #include <fstream>
-#include <regex>
+#include <map>
 #include <sstream>
 #include <utility>
+
+#include <yaml-cpp/yaml.h>
 
 #include "rkapp/common/StringUtils.hpp"
 #include "rkapp/common/log.hpp"
@@ -73,87 +75,140 @@ std::string stripComments(const std::string& content) {
   return out;
 }
 
-int parseIntField(const std::string& content, const std::vector<std::string>& keys) {
-  for (const auto& key : keys) {
-    try {
-      std::smatch match;
-      const std::string pattern =
-          std::string("(?:^|[^A-Za-z0-9_])\\\"?") + key + "\\\"?\\s*[:=]\\s*(-?\\d+)";
-      std::regex re(pattern, std::regex::icase);
-      if (std::regex_search(content, match, re) && match.size() > 1) {
-        return std::stoi(match[1].str());
-      }
-    } catch (const std::exception&) {
-    }
+std::string trimCopy(const std::string& input) {
+  size_t begin = 0;
+  size_t end = input.size();
+  while (begin < end && std::isspace(static_cast<unsigned char>(input[begin]))) {
+    ++begin;
   }
-  return -1;
+  while (end > begin && std::isspace(static_cast<unsigned char>(input[end - 1]))) {
+    --end;
+  }
+  return input.substr(begin, end - begin);
 }
 
-int parseBoolField(const std::string& content, const std::vector<std::string>& keys) {
-  for (const auto& key : keys) {
-    try {
-      std::smatch match;
-      const std::string pattern =
-          std::string("(?:^|[^A-Za-z0-9_])\\\"?") + key +
-          "\\\"?\\s*[:=]\\s*(true|false|0|1)";
-      std::regex re(pattern, std::regex::icase);
-      if (std::regex_search(content, match, re) && match.size() > 1) {
-        const std::string value = rkapp::common::toLowerCopy(match[1].str());
-        if (value == "1" || value == "true") {
-          return 1;
-        }
-        if (value == "0" || value == "false") {
-          return 0;
-        }
-      }
-    } catch (const std::exception&) {
-    }
+std::string unquoteCopy(const std::string& input) {
+  if (input.size() >= 2 &&
+      ((input.front() == '"' && input.back() == '"') ||
+       (input.front() == '\'' && input.back() == '\''))) {
+    return input.substr(1, input.size() - 2);
   }
-  return -1;
+  return input;
 }
 
-std::vector<int> parseIntListField(const std::string& content, const std::string& key) {
-  std::vector<int> out;
+// 键统一转小写存放；YAML::Node 内部共享底层存储，离开 root 作用域后仍然有效。
+using MetaEntries = std::map<std::string, YAML::Node>;
+
+MetaEntries collectMetaEntries(const std::string& sanitized) {
+  MetaEntries entries;
+
+  // 1) 整文档解析：覆盖 JSON sidecar 与 "key: value" 风格的 YAML。
   try {
-    std::smatch match;
-    const std::string pattern =
-        std::string("(?:^|[^A-Za-z0-9_])\\\"?") + key + "\\\"?\\s*[:=]\\s*\\[([^\\]]+)\\]";
-    std::regex re(pattern, std::regex::icase);
-    if (!std::regex_search(content, match, re) || match.size() < 2) {
-      return out;
-    }
-    std::stringstream ss(match[1].str());
-    std::string token;
-    while (std::getline(ss, token, ',')) {
-      try {
-        const int parsed = std::stoi(token);
-        if (parsed > 0) {
-          out.push_back(parsed);
+    YAML::Node root = YAML::Load(sanitized);
+    if (root && root.IsMap()) {
+      for (const auto& kv : root) {
+        try {
+          entries[rkapp::common::toLowerCopy(kv.first.as<std::string>())] = kv.second;
+        } catch (const YAML::Exception&) {
         }
-      } catch (const std::exception&) {
       }
+      return entries;
     }
-  } catch (const std::exception&) {
+  } catch (const YAML::Exception&) {
+  }
+
+  // 2) 行级回退：兼容 "key=value" 的松散 .meta 格式与轻度损坏的 JSON。
+  std::istringstream lines(sanitized);
+  std::string line;
+  while (std::getline(lines, line)) {
+    const size_t sep = line.find_first_of(":=");
+    if (sep == std::string::npos) {
+      continue;
+    }
+    const std::string key = unquoteCopy(trimCopy(line.substr(0, sep)));
+    std::string value = trimCopy(line.substr(sep + 1));
+    if (!value.empty() && value.back() == ',') {
+      value.pop_back();
+      value = trimCopy(value);
+    }
+    if (key.empty() || value.empty()) {
+      continue;
+    }
+    try {
+      entries[rkapp::common::toLowerCopy(key)] = YAML::Load(value);
+    } catch (const YAML::Exception&) {
+    }
+  }
+  return entries;
+}
+
+int parseIntField(const MetaEntries& entries, const std::vector<std::string>& keys) {
+  for (const auto& key : keys) {
+    const auto it = entries.find(key);
+    if (it == entries.end()) {
+      continue;
+    }
+    try {
+      return it->second.as<int>();
+    } catch (const YAML::Exception&) {
+    }
+  }
+  return -1;
+}
+
+int parseBoolField(const MetaEntries& entries, const std::vector<std::string>& keys) {
+  for (const auto& key : keys) {
+    const auto it = entries.find(key);
+    if (it == entries.end()) {
+      continue;
+    }
+    try {
+      const int numeric = it->second.as<int>();
+      if (numeric == 0 || numeric == 1) {
+        return numeric;
+      }
+      continue;
+    } catch (const YAML::Exception&) {
+    }
+    try {
+      return it->second.as<bool>() ? 1 : 0;
+    } catch (const YAML::Exception&) {
+    }
+  }
+  return -1;
+}
+
+std::vector<int> parseIntListField(const MetaEntries& entries, const std::string& key) {
+  std::vector<int> out;
+  const auto it = entries.find(key);
+  if (it == entries.end() || !it->second.IsSequence()) {
+    return out;
+  }
+  for (const auto& element : it->second) {
+    try {
+      const int parsed = element.as<int>();
+      if (parsed > 0) {
+        out.push_back(parsed);
+      }
+    } catch (const YAML::Exception&) {
+    }
   }
   return out;
 }
 
-std::string parseEnumStringField(const std::string& content,
+std::string parseEnumStringField(const MetaEntries& entries,
                                  const std::string& key,
                                  const std::vector<std::string>& allowed) {
+  const auto it = entries.find(key);
+  if (it == entries.end()) {
+    return {};
+  }
   try {
-    std::smatch match;
-    const std::string pattern =
-        std::string("(?:^|[^A-Za-z0-9_])\\\"?") + key +
-        "\\\"?\\s*[:=]\\s*\\\"?([A-Za-z_]+)\\\"?";
-    std::regex re_quoted(pattern, std::regex::icase);
-    if (std::regex_search(content, match, re_quoted) && match.size() > 1) {
-      const std::string lowered = rkapp::common::toLowerCopy(match[1].str());
-      if (std::find(allowed.begin(), allowed.end(), lowered) != allowed.end()) {
-        return lowered;
-      }
+    const std::string lowered = rkapp::common::toLowerCopy(it->second.as<std::string>());
+    if (std::find(allowed.begin(), allowed.end(), lowered) != allowed.end()) {
+      return lowered;
     }
-  } catch (const std::exception&) {
+  } catch (const YAML::Exception&) {
   }
   return {};
 }
@@ -234,55 +289,55 @@ void mergeModelMetaMissingFields(ModelMeta& dst, const ModelMeta& src) {
 }
 
 ModelMeta parseModelMetaText(const std::string& content) {
-  const std::string sanitized = stripComments(content);
+  const MetaEntries entries = collectMetaEntries(stripComments(content));
 
   ModelMeta meta;
-  const int reg_max = parseIntField(sanitized, {"reg_max"});
+  const int reg_max = parseIntField(entries, {"reg_max"});
   if (reg_max > 0) {
     meta.reg_max = reg_max;
   }
 
-  auto strides = parseIntListField(sanitized, "strides");
+  auto strides = parseIntListField(entries, "strides");
   if (!strides.empty()) {
     meta.strides = std::move(strides);
   }
 
-  meta.head = parseEnumStringField(sanitized, "head", {"raw", "dfl"});
+  meta.head = parseEnumStringField(entries, "head", {"raw", "dfl"});
 
-  int output_index = parseIntField(sanitized, {"output_index", "output_idx"});
+  int output_index = parseIntField(entries, {"output_index", "output_idx"});
   if (output_index >= 0) {
     meta.output_index = output_index;
   }
 
-  const int num_classes = parseIntField(sanitized, {"num_classes", "classes", "nc"});
+  const int num_classes = parseIntField(entries, {"num_classes", "classes", "nc"});
   if (num_classes > 0) {
     meta.num_classes = num_classes;
   }
 
-  const int has_objectness = parseBoolField(sanitized, {"has_objectness", "objectness", "has_obj"});
+  const int has_objectness = parseBoolField(entries, {"has_objectness", "objectness", "has_obj"});
   if (has_objectness >= 0) {
     meta.has_objectness = has_objectness;
   }
 
   const int score_is_probability =
-      parseBoolField(sanitized,
+      parseBoolField(entries,
                      {"score_is_probability", "scores_are_probabilities", "score_is_prob"});
   if (score_is_probability >= 0) {
     meta.score_is_probability = score_is_probability;
   }
 
   const int coords_are_normalized = parseBoolField(
-      sanitized, {"coords_are_normalized", "normalized_coords", "coords_normalized"});
+      entries, {"coords_are_normalized", "normalized_coords", "coords_normalized"});
   if (coords_are_normalized >= 0) {
     meta.coords_are_normalized = coords_are_normalized;
   }
 
-  const std::string task = parseEnumStringField(sanitized, "task", {"detect", "pose", "segment"});
+  const std::string task = parseEnumStringField(entries, "task", {"detect", "pose", "segment"});
   if (!task.empty()) {
     meta.task = task;
   }
 
-  const int num_keypoints = parseIntField(sanitized, {"num_keypoints", "kpt_shape"});
+  const int num_keypoints = parseIntField(entries, {"num_keypoints", "kpt_shape"});
   if (num_keypoints > 0) {
     meta.num_keypoints = num_keypoints;
   }

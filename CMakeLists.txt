@@ -440,8 +440,8 @@ if (RKAPP_BUILD_WITH_ONNX)
     target_compile_definitions(rkapp_pipeline PUBLIC RKAPP_WITH_ONNX=1)
 endif()
 
-# Detection CLI application
-add_executable(detect_cli examples/detect_cli.cpp)
+# Detection CLI application（生产部署入口，源码位于 src/cli/）
+add_executable(detect_cli src/cli/detect_cli.cpp)
 target_link_libraries(detect_cli PRIVATE rkapp_pipeline ${OpenCV_LIBS})
 if(HAVE_YAML_CPP)
     target_link_libraries(detect_cli PRIVATE ${YAML_CPP_TARGET})

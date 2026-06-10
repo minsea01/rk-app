@@ -129,6 +129,21 @@ bool OnnxEngine::init(const ModelSpec& model_spec) {
 
 std::vector<Detection> OnnxEngine::infer(const cv::Mat& image) {
   std::lock_guard<std::recursive_mutex> lock(engine_mtx_);
+  // 预处理：letterbox 后复用 inferPreprocessed 完成推理与解码。
+  rkapp::preprocess::LetterboxInfo letterbox_info;
+  cv::Mat processed = rkapp::preprocess::Preprocess::letterbox(image, input_size_, letterbox_info);
+  if (processed.empty()) {
+    LOGE("OnnxEngine: Preprocess failed (empty output). Input may be invalid.");
+    return {};
+  }
+  return inferPreprocessed(processed, image.size(), letterbox_info);
+}
+
+std::vector<Detection> OnnxEngine::inferPreprocessed(
+    const cv::Mat& preprocessed_image,
+    const cv::Size& original_size,
+    const rkapp::preprocess::LetterboxInfo& letterbox_info) {
+  std::lock_guard<std::recursive_mutex> lock(engine_mtx_);
   if (!is_initialized_) {
     LOGE("OnnxEngine: Not initialized!");
     return {};
@@ -137,16 +152,15 @@ std::vector<Detection> OnnxEngine::infer(const cv::Mat& image) {
     LOGE("OnnxEngine: Model output layout previously marked unsupported; reinitialize with valid metadata");
     return {};
   }
+  if (preprocessed_image.cols != input_size_ || preprocessed_image.rows != input_size_) {
+    LOGE("OnnxEngine::inferPreprocessed: Input size mismatch. Expected ", input_size_, "x",
+         input_size_, ", got ", preprocessed_image.cols, "x", preprocessed_image.rows);
+    return {};
+  }
 
   try {
-    // 预处理：letterbox -> BGR2RGB -> 归一化 -> CHW。
-    rkapp::preprocess::LetterboxInfo letterbox_info;
-    cv::Mat processed = rkapp::preprocess::Preprocess::letterbox(image, input_size_, letterbox_info);
-    if (processed.empty()) {
-      LOGE("OnnxEngine: Preprocess failed (empty output). Input may be invalid.");
-      return {};
-    }
-    cv::Mat rgb = rkapp::preprocess::Preprocess::convertColor(processed, cv::COLOR_BGR2RGB);
+    // BGR2RGB -> 归一化 -> CHW。
+    cv::Mat rgb = rkapp::preprocess::Preprocess::convertColor(preprocessed_image, cv::COLOR_BGR2RGB);
     cv::Mat normalized = rkapp::preprocess::Preprocess::normalize(rgb, 1.0f / 255.0f);
     cv::Mat blob = rkapp::preprocess::Preprocess::hwc2chw(normalized);
 
@@ -174,7 +188,7 @@ std::vector<Detection> OnnxEngine::infer(const cv::Mat& image) {
 
     // 解析输出并执行 NMS。
     bool unsupported = false;
-    auto dets = onnx_internal::parseOutput(outputs[0], letterbox_info, image.size(), input_size_,
+    auto dets = onnx_internal::parseOutput(outputs[0], letterbox_info, original_size, input_size_,
                                            decode_params_, impl_->decode_meta,
                                            impl_->output_quant, unsupported);
     if (unsupported) {

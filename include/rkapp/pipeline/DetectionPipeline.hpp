@@ -11,9 +11,9 @@
 #include <opencv2/opencv.hpp>
 
 #include "rkapp/capture/ISource.hpp"
+#include "rkapp/common/StageTiming.hpp"
 #include "rkapp/infer/IInferEngine.hpp"
 #include "rkapp/preprocess/Preprocess.hpp"
-#include "rkapp/common/DmaBuf.hpp"
 
 namespace rkapp::pipeline {
 
@@ -123,18 +123,17 @@ PipelineConfigLoadResult loadPipelineConfigFile(const std::string& config_path);
  * @brief 单帧检测结果（含可选耗时）
  */
 struct PipelineResult {
+    // 处理是否成功完成；失败时其余字段不保证有效。
+    // 调用方应据此判断，而不是通过“结果为空”推断失败。
+    bool ok = false;
     std::vector<infer::Detection> detections;
     int64_t frame_id = -1;
     cv::Mat frame;  // 可选：原始图像（按调用方需要保留）
 
-    // 分阶段耗时（微秒，仅在 enable_profiling=true 时有意义）
-    struct Timing {
-        int64_t capture_us = 0;
-        int64_t preprocess_us = 0;
-        int64_t inference_us = 0;
-        int64_t postprocess_us = 0;
-        int64_t total_us = 0;
-    } timing;
+    // 分阶段耗时（微秒；capture_us/total_us 始终有效，
+    // 其余字段仅在 enable_profiling=true 时填充）
+    using Timing = common::StageTimingUs;
+    Timing timing;
 };
 
 /**

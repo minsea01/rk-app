@@ -1,0 +1,28 @@
+{
+  "obs_studio_config": {
+    "video_settings": {
+      "base_resolution": "1920x1080",
+      "output_resolution": "1920x1080", 
+      "fps": "30",
+      "format": "NV12"
+    },
+    "encoder_settings": {
+      "encoder": "obs_x264",
+      "bitrate": 5000,
+      "keyframe_interval": 2,
+      "preset": "veryfast",
+      "profile": "main"
+    },
+    "stream_settings": {
+      "service": "Custom",
+      "server": "rtmp://192.168.1.100:1935/live",
+      "stream_key": "industrial_camera_test"
+    }
+  },
+  "expected_performance": {
+    "network_usage_mbps": 8.0,
+    "cpu_usage_percent": 15,
+    "dropped_frames": 0,
+    "network_latency_ms": 5
+  }
+}

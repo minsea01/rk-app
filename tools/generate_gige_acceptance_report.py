@@ -5,7 +5,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import re
+import statistics
 from pathlib import Path
 from typing import Any
 
@@ -55,6 +57,27 @@ def _parse_prepare_log(path: Path) -> dict[str, Any]:
     return result
 
 
+def _percentile(values: list[float], q: float) -> float:
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    idx = max(0, min(len(ordered) - 1, math.ceil(q * len(ordered)) - 1))
+    return ordered[idx]
+
+
+def _latency_stats(values: list[float]) -> dict[str, Any]:
+    if not values:
+        return {}
+    return {
+        "mean_ms": round(statistics.mean(values), 3),
+        "p50_ms": round(_percentile(values, 0.50), 3),
+        "p95_ms": round(_percentile(values, 0.95), 3),
+        "p99_ms": round(_percentile(values, 0.99), 3),
+        "max_ms": round(max(values), 3),
+        "over_45ms_frames": sum(1 for value in values if value > 45.0),
+    }
+
+
 def build_summary(evidence_dir: Path) -> dict[str, Any]:
     tcp_rows = _read_jsonl(evidence_dir / "tcp_sink_results.jsonl")
     board_rows = _read_jsonl(evidence_dir / "board_detect_results.jsonl")
@@ -83,6 +106,31 @@ def build_summary(evidence_dir: Path) -> dict[str, Any]:
                 ),
             }
         )
+        process_latencies = [
+            float(row.get("latency_ms", row.get("timing", {}).get("process_ms", 0)))
+            for row in rows
+            if row.get("latency_ms") is not None or row.get("timing", {}).get("process_ms") is not None
+        ]
+        total_latencies = [
+            float(row.get("timing", {}).get("total_with_capture_wait_ms", 0))
+            for row in rows
+            if row.get("timing", {}).get("total_with_capture_wait_ms") is not None
+        ]
+        capture_waits = [
+            float(row.get("timing", {}).get("capture_wait_ms", 0))
+            for row in rows
+            if row.get("timing", {}).get("capture_wait_ms") is not None
+        ]
+        if process_latencies:
+            stats = _latency_stats(process_latencies)
+            stats["over_45ms_ratio"] = round(
+                stats["over_45ms_frames"] / len(process_latencies), 4
+            )
+            summary["process_latency"] = stats
+        if total_latencies:
+            summary["total_with_capture_wait_latency"] = _latency_stats(total_latencies)
+        if capture_waits:
+            summary["capture_wait_latency"] = _latency_stats(capture_waits)
 
     summary.update(_parse_prepare_log(evidence_dir / "gige_acceptance_board.log"))
     summary.update(_parse_iperf(evidence_dir / "iperf_upload_client.log"))
@@ -107,6 +155,10 @@ def write_report(evidence_dir: Path, summary: dict[str, Any]) -> None:
         f"- Board JSON rows: `{summary.get('board_result_rows', 0)}`",
         f"- Result FPS: `{summary.get('result_fps', 'n/a')}`",
         f"- Upload throughput: `{upload_text}`",
+        f"- Process latency: `{summary.get('process_latency', {}).get('mean_ms', 'n/a')} ms mean, "
+        f"{summary.get('process_latency', {}).get('p95_ms', 'n/a')} ms p95`",
+        f"- Capture wait: `{summary.get('capture_wait_latency', {}).get('mean_ms', 'n/a')} ms mean, "
+        f"{summary.get('capture_wait_latency', {}).get('p95_ms', 'n/a')} ms p95`",
         "",
         "## Notes",
         "",

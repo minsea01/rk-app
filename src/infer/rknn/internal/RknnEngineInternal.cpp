@@ -5,7 +5,6 @@
 #include <cmath>
 #include <fstream>
 #include <mutex>
-#include <regex>
 #include <sstream>
 
 #include "rkapp/common/StringUtils.hpp"
@@ -221,7 +220,7 @@ std::vector<Detection> decodeAndPostprocess(const float* logits,
       return;
     }
 
-    LOGI(log_tag, ": RAW decode with ", (has_objectness ? "objectness" : "no objectness"),
+    LOGD(log_tag, ": RAW decode with ", (has_objectness ? "objectness" : "no objectness"),
          ", cls_ch=", cls_ch, ", score_mode=",
          score_is_probability ? "identity" : "sigmoid", ", coord_mode=",
          coords_are_normalized ? "normalized" : "pixels");
@@ -279,7 +278,7 @@ std::vector<Detection> decodeAndPostprocess(const float* logits,
       }
     }
     if (dets.empty()) {
-      LOGI(log_tag, ": RAW top candidate before threshold/NMS idx=", max_seen_idx,
+      LOGD(log_tag, ": RAW top candidate before threshold/NMS idx=", max_seen_idx,
            ", conf=", max_seen_conf, ", box=[", max_seen_cx, ",", max_seen_cy, ",",
            max_seen_w, ",", max_seen_h, "]");
     }

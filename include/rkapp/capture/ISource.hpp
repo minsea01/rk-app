@@ -81,29 +81,20 @@ enum class ReadStatus {
     FatalError,
 };
 
-// 统一采集接口：上层流水线只依赖该抽象，不关心底层来源实现。
+// 统一采集接口：上层流水线只依赖 readFrameEx 这一个读取契约。
+// 历史上的 read(cv::Mat&)/readFrame(CaptureFrame&) 不再属于接口；
+// 具体源可按需提供同名便捷方法，但多态调用方一律使用 readFrameEx。
 class ISource {
 public:
     virtual ~ISource() = default;
-    
+
     // 打开输入源（路径、URL、设备节点等）。
     virtual bool open(const std::string& uri) = 0;
-    // 读取一帧到普通 cv::Mat（通用路径）。
-    virtual bool read(cv::Mat& frame) = 0;
-    // 读取一帧并可携带底层所有权（零拷贝路径可复用 owner）。
-    virtual bool readFrame(CaptureFrame& frame) {
-        frame.reset();
-        cv::Mat tmp;
-        if (!read(tmp)) return false;
-        frame.setMatFrame(std::move(tmp), PixelFormat::BGR888);
-        return true;
-    }
-    virtual ReadStatus readFrameEx(CaptureFrame& frame) {
-        if (readFrame(frame)) {
-            return ReadStatus::FrameReady;
-        }
-        return ReadStatus::EndOfStream;
-    }
+    // 读取一帧（可携带像素格式/stride/底层所有权元数据）。
+    // 实现方必须区分四种状态：FrameReady / EndOfStream / RecoverableError / FatalError。
+    // 直播类源应把瞬时失败映射为 RecoverableError，上层的重连与退避策略依赖该语义；
+    // 把失败一律报成 EndOfStream 会使流水线直接停机。
+    virtual ReadStatus readFrameEx(CaptureFrame& frame) = 0;
     virtual void release() = 0;
     virtual bool isOpened() const = 0;
     

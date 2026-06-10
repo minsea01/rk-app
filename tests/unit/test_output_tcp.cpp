@@ -31,14 +31,17 @@ TEST(TcpOutputTest, QueuesWhenServerUnavailable) {
     EXPECT_TRUE(output.isOpened());
     EXPECT_FALSE(output.isConnected());
 
-    EXPECT_FALSE(output.send(makeResult(1)));
+    // 异步契约：send() 返回“已接受待发”；服务端不可达时条目保留在有界队列中。
+    EXPECT_TRUE(output.send(makeResult(1)));
     EXPECT_EQ(output.backlogDepth(), 1U);
 
-    EXPECT_FALSE(output.send(makeResult(2)));
+    EXPECT_TRUE(output.send(makeResult(2)));
     EXPECT_EQ(output.backlogDepth(), 2U);
 
-    EXPECT_FALSE(output.send(makeResult(3)));
+    // 超过 queue:2 上限：丢最旧并计数。
+    EXPECT_TRUE(output.send(makeResult(3)));
     EXPECT_EQ(output.backlogDepth(), 2U);
+    EXPECT_EQ(output.droppedFrames(), 1U);
 
     output.close();
 }
@@ -48,15 +51,14 @@ TEST(TcpOutputTest, BackoffGrowUntilMax) {
     ASSERT_TRUE(output.open("127.0.0.1:65530,backoff:50,backoff_max:150"));
     EXPECT_TRUE(output.isOpened());
 
-    EXPECT_FALSE(output.send(makeResult(1)));
-    EXPECT_EQ(output.reconnectBackoff().count(), 100);
+    // 发送线程在有积压时自行驱动重连；退避指数增长直到上限。
+    EXPECT_TRUE(output.send(makeResult(1)));
 
-    std::this_thread::sleep_for(output.reconnectBackoff() + std::chrono::milliseconds(20));
-    EXPECT_FALSE(output.send(makeResult(2)));
-    EXPECT_EQ(output.reconnectBackoff().count(), 150);
-
-    std::this_thread::sleep_for(output.reconnectBackoff() + std::chrono::milliseconds(20));
-    EXPECT_FALSE(output.send(makeResult(3)));
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+    while (output.reconnectBackoff().count() < 150 &&
+           std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
     EXPECT_EQ(output.reconnectBackoff().count(), 150);
 
     output.close();

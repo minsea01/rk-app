@@ -15,10 +15,6 @@ namespace rkapp::common {
 class DmaBuf;
 }
 
-namespace rkapp::preprocess {
-struct LetterboxInfo;
-}
-
 namespace rkapp::infer {
 
 class RknnEngine : public IInferEngine {
@@ -45,7 +41,7 @@ public:
   std::vector<Detection> inferPreprocessed(
       const cv::Mat& preprocessed_image,
       const cv::Size& original_size,
-      const struct rkapp::preprocess::LetterboxInfo& letterbox_info);
+      const preprocess::LetterboxInfo& letterbox_info) override;
 
   // 预热：用一张虚拟图跑一次，减少首次推理抖动。
   void warmup() override;
@@ -71,9 +67,10 @@ public:
   std::vector<Detection> inferDmaBuf(
       rkapp::common::DmaBuf& input,
       const cv::Size& original_size,
-      const struct rkapp::preprocess::LetterboxInfo& letterbox_info);
+      const preprocess::LetterboxInfo& letterbox_info);
 
-  // 设置 NPU 核心掩码（例如 0x1/0x2/0x4/0x3/0x7）。
+  // 显式设置 NPU 核心掩码（例如 0x1/0x2/0x4/0x3/0x7），需在 init() 前调用；
+  // 未显式设置时由 ModelSpec::use_npu_multicore 决定（true=0x7，false=SDK 自动调度）。
   void setCoreMask(uint32_t core_mask);
   void setDecodeParams(const DecodeParams& params) override;
 
@@ -93,7 +90,8 @@ private:
   std::string model_path_;
   int input_size_ = 640;     // 推理输入边长（方形）
   bool is_initialized_ = false;
-  uint32_t core_mask_ = 0x7; // 默认三核并行；可被 setCoreMask 覆盖
+  uint32_t core_mask_ = 0x7;        // 生效值在 init() 时确定
+  bool core_mask_explicit_ = false; // setCoreMask 显式设置后不再被 ModelSpec 覆盖
   
   // 自动推断/缓存的解码参数（初始化成功后由 metadata 和输出张量共同确定）
   int num_classes_ = -1;

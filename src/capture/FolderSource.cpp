@@ -66,6 +66,17 @@ bool FolderSource::read(cv::Mat& frame) {
   return false;
 }
 
+ReadStatus FolderSource::readFrameEx(CaptureFrame& frame) {
+  frame.reset();
+  cv::Mat mat;
+  // read() 内部已跳过无法解码的文件，返回 false 即列表耗尽。
+  if (!read(mat)) {
+    return ReadStatus::EndOfStream;
+  }
+  frame.setMatFrame(std::move(mat), PixelFormat::BGR888);
+  return ReadStatus::FrameReady;
+}
+
 void FolderSource::release() {
   image_files_.clear();
   current_index_ = 0;

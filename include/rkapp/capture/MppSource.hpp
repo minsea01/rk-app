@@ -64,7 +64,7 @@ public:
      *
      * @note 对外统一返回 BGR（`cv::Mat CV_8UC3`）
      */
-    bool read(cv::Mat& frame) override;
+    bool read(cv::Mat& frame);
     ReadStatus readFrameEx(CaptureFrame& frame) override;
 
     void release() override;

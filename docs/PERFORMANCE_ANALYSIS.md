@@ -73,7 +73,7 @@ yolo predict model=artifacts/models/best.onnx source=assets/test.jpg imgsz=640 \
     - `config/detection/detect_host_test.yaml`
     - `config/detection/detect_demo.yaml`
 - C++ CLI 现已将 NMS 阈值传递给引擎的解码阶段，减少前置候选开销：
-  - `examples/detect_cli.cpp` 调用 `engine->setDecodeParams(...)`
+  - `src/cli/detect_cli.cpp` 调用 `engine->setDecodeParams(...)`
 
 ## 🎯 结论
 

@@ -3,10 +3,13 @@
 #include <chrono>
 #include <cctype>
 #include <cmath>
+#include <condition_variable>
 #include <cstdio>
+#include <deque>
 #include <filesystem>
 #include <iostream>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <thread>
@@ -368,6 +371,7 @@ void publishResult(const rkapp::pipeline::PipelineResult& result, rkapp::output:
   frame_result.height = result.frame.rows;
   frame_result.detections = result.detections;
   frame_result.source_uri = source_uri;
+  frame_result.timing = result.timing;
   auto encoded_image = encodeOutputImage(result, config.output);
   frame_result.image_bytes = std::move(encoded_image.bytes);
   if (!frame_result.image_bytes.empty()) {
@@ -376,18 +380,23 @@ void publishResult(const rkapp::pipeline::PipelineResult& result, rkapp::output:
     frame_result.image_width = encoded_image.width;
     frame_result.image_height = encoded_image.height;
     frame_result.image_roi_applied = encoded_image.roi_applied;
-    frame_result.image_roi_x = encoded_image.roi.x;
-    frame_result.image_roi_y = encoded_image.roi.y;
-    frame_result.image_roi_w = encoded_image.roi.width;
-    frame_result.image_roi_h = encoded_image.roi.height;
+    frame_result.image_roi = encoded_image.roi;
   }
   output->send(frame_result);
 }
 
-void logPerFrame(const rkapp::pipeline::PipelineResult& result) {
-  const double elapsed_ms = static_cast<double>(result.timing.total_us) / 1000.0;
-  LOGI("Frame ", result.frame_id, ": ", result.detections.size(), " detections (", elapsed_ms,
-       " ms)");
+void logPerFrame(const rkapp::pipeline::PipelineResult& result, int64_t output_us) {
+  const int64_t process_us = std::max<int64_t>(0, result.timing.total_us - result.timing.capture_us);
+  const double process_ms = static_cast<double>(process_us) / 1000.0;
+  const double total_ms = static_cast<double>(result.timing.total_us) / 1000.0;
+  const double capture_wait_ms = static_cast<double>(result.timing.capture_us) / 1000.0;
+  const double output_ms = static_cast<double>(output_us) / 1000.0;
+  LOGI("Frame ", result.frame_id, ": ", result.detections.size(), " detections (", process_ms,
+       " ms) total=", total_ms, " ms capture_wait=", capture_wait_ms,
+       " ms output=", output_ms, " ms preproc=",
+       static_cast<double>(result.timing.preprocess_us) / 1000.0, " ms infer=",
+       static_cast<double>(result.timing.inference_us) / 1000.0, " ms post=",
+       static_cast<double>(result.timing.postprocess_us) / 1000.0, " ms");
 }
 
 void logSummary(const rkapp::pipeline::DetectionPipeline& pipeline) {
@@ -463,22 +472,78 @@ int main(int argc, char* argv[]) {
 
   std::atomic<int64_t> handled_frames{0};
   auto handle_result = [&](const rkapp::pipeline::PipelineResult& result) {
-    logPerFrame(result);
     if (!options.save_vis_dir.empty()) {
       saveVisualization(result, vis_dir);
     }
+    const auto output_start = std::chrono::steady_clock::now();
     publishResult(result, output.get(), config, config.source.uri);
+    const auto output_us = std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::steady_clock::now() - output_start).count();
+    logPerFrame(result, output_us);
     handled_frames.fetch_add(1, std::memory_order_relaxed);
   };
 
   if (!config.runtime.async_mode) {
+    // 同步模式面向离线批处理，发布保持内联以保证严格按序。
     while (auto result = pipeline.next()) {
       handle_result(*result);
     }
   } else {
-    pipeline.runAsync([&](rkapp::pipeline::PipelineResult&& result) { handle_result(result); });
+    // 发布工作线程：绘制、JPEG 编码与结果发布全部在该线程执行；
+    // 管线工作线程的回调只做有界入队，编码成本不再计入帧周期。
+    constexpr size_t kPublishQueueMax = 8;
+    std::mutex publish_mtx;
+    std::condition_variable publish_cv;
+    std::deque<rkapp::pipeline::PipelineResult> publish_queue;
+    bool publish_stop = false;
+    uint64_t publish_dropped = 0;
+
+    std::thread publisher([&] {
+      for (;;) {
+        rkapp::pipeline::PipelineResult result;
+        {
+          std::unique_lock<std::mutex> lock(publish_mtx);
+          publish_cv.wait(lock, [&] { return publish_stop || !publish_queue.empty(); });
+          if (publish_queue.empty()) {
+            if (publish_stop) {
+              break;  // 停止且队列已排空才退出
+            }
+            continue;
+          }
+          result = std::move(publish_queue.front());
+          publish_queue.pop_front();
+        }
+        handle_result(result);
+      }
+    });
+
+    pipeline.runAsync([&](rkapp::pipeline::PipelineResult&& result) {
+      {
+        std::lock_guard<std::mutex> lock(publish_mtx);
+        publish_queue.push_back(std::move(result));
+        if (publish_queue.size() > kPublishQueueMax) {
+          publish_queue.pop_front();
+          ++publish_dropped;
+          if (publish_dropped == 1 || publish_dropped % 32 == 0) {
+            LOGW("detect_cli: publish queue full, dropped ", publish_dropped,
+                 " results so far");
+          }
+        }
+      }
+      publish_cv.notify_one();
+    });
     while (pipeline.isRunning()) {
       std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+
+    {
+      std::lock_guard<std::mutex> lock(publish_mtx);
+      publish_stop = true;
+    }
+    publish_cv.notify_all();
+    publisher.join();
+    if (publish_dropped > 0) {
+      LOGW("detect_cli: total publish-queue drops: ", publish_dropped);
     }
   }
 

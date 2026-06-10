@@ -55,15 +55,16 @@ runtime:
 
 output:
   type: tcp
+  enable_profiling: true
   tcp:
     host: "192.168.137.1"
     port: 9000
     queue_size: 32
     bind_ip: "192.168.137.226"
     bind_interface: "eth0"
-    include_image: true
-    image_quality: 88
-    image_interval: 1
+    include_image: false
+    image_quality: 80
+    image_interval: 30
     draw_detections: true
     image_roi:
       enable: false

@@ -1,15 +1,11 @@
- #pragma once
+#pragma once
 
 #include <opencv2/opencv.hpp>
 #include <string>
 
-namespace rkapp::preprocess {
+#include "rkapp/preprocess/LetterboxInfo.hpp"
 
-struct LetterboxInfo {
-    float scale;
-    float dx, dy;
-    int new_width, new_height;
-};
+namespace rkapp::preprocess {
 
 struct CameraCalibration {
     cv::Mat camera_matrix;

@@ -88,9 +88,14 @@ bool RknnEngine::init(const ModelSpec& model_spec) {
   ctx_ready = true;
 
   // core_mask 使用快照，避免读到并发修改中的状态。
+  // 未经 setCoreMask 显式指定时，由 ModelSpec::use_npu_multicore 决定：
+  // true -> 三核并行(0x7)；false -> 0（跳过 rknn_set_core_mask，交给 SDK 自动调度）。
   uint32_t core_mask_snapshot = 0;
   {
     std::lock_guard<std::mutex> state_lock(state_mutex_);
+    if (!core_mask_explicit_) {
+      core_mask_ = model_spec.use_npu_multicore ? 0x7u : 0u;
+    }
     core_mask_snapshot = core_mask_;
   }
   if (core_mask_snapshot != 0) {
@@ -737,6 +742,7 @@ int RknnEngine::getInputHeight() const {
 void RknnEngine::setCoreMask(uint32_t core_mask) {
   std::lock_guard<std::mutex> state_lock(state_mutex_);
   core_mask_ = core_mask;
+  core_mask_explicit_ = true;
 }
 
 void RknnEngine::setDecodeParams(const DecodeParams& params) {

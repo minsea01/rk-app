@@ -6,6 +6,7 @@
 #include <opencv2/opencv.hpp>
 
 #include "rkapp/infer/ModelSpec.hpp"
+#include "rkapp/preprocess/LetterboxInfo.hpp"
 
 namespace rkapp::infer {
 
@@ -36,8 +37,15 @@ public:
     
     // 初始化模型与运行时。
     virtual bool init(const ModelSpec& model_spec) = 0;
-    // 输入 BGR 图像，返回检测结果（原图坐标）。
+    // 输入 BGR 图像，返回检测结果（原图坐标）。内部自行完成 letterbox。
     virtual std::vector<Detection> infer(const cv::Mat& image) = 0;
+    // 输入已完成 letterbox 的图像（尺寸 = 模型输入尺寸），结果坐标按
+    // letterbox_info 映射回 original_size 坐标系。管线主路径由外部统一做
+    // 预处理后调用该入口，避免各后端重复/不一致地处理 letterbox。
+    virtual std::vector<Detection> inferPreprocessed(
+        const cv::Mat& preprocessed_image,
+        const cv::Size& original_size,
+        const preprocess::LetterboxInfo& letterbox_info) = 0;
     // 预热模型，降低首帧抖动。
     virtual void warmup() = 0;
     // 释放后端资源。

@@ -366,7 +366,9 @@ cv::Mat Preprocess::letterbox(const cv::Mat& src, cv::Size target_size, Letterbo
             return letterboxCpu(src, target_size, info);
         case AccelBackend::AUTO:
         default:
-            if (isRgaAvailable()) {
+            // RGA letterbox 仅支持 CV_8UC3；其余类型（如灰度）属于已知能力边界，
+            // 静默走 CPU，避免每帧打印回退告警。显式 RGA 模式仍保留告警。
+            if (isRgaAvailable() && src.type() == CV_8UC3) {
                 return letterboxRga(src, target_size, info);
             }
             return letterboxCpu(src, target_size, info);
